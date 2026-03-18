@@ -1,1307 +1,1833 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>全國公寓大廈管理委員聯誼會 - 財務報表系統</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap');
-        * { font-family: 'Noto Sans TC', 'Microsoft JhengHei', 'PingFang TC', sans-serif; }
-        body { background: #f1f5f9; }
-        .sidebar { transition: transform 0.3s ease; }
-        .page { display: none; }
-        .page.active { display: block; }
-        .nav-item { transition: all 0.2s ease; }
-        .nav-item:hover, .nav-item.active { background: rgba(255,255,255,0.15); }
-        .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-        .modal-overlay { background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
-        .btn-primary { background: #2563eb; color: #fff; }
-        .btn-primary:hover { background: #1d4ed8; }
-        .btn-danger { background: #ef4444; color: #fff; }
-        .btn-danger:hover { background: #dc2626; }
-        .btn-success { background: #16a34a; color: #fff; }
-        .btn-success:hover { background: #15803d; }
-        .btn-outline { border: 1px solid #d1d5db; color: #374151; background: #fff; }
-        .btn-outline:hover { background: #f9fafb; }
-        .badge-paid { background: #dcfce7; color: #166534; }
-        .badge-partial { background: #fef9c3; color: #854d0e; }
-        .badge-unpaid { background: #fee2e2; color: #991b1b; }
-        .badge-overdue { background: #fecaca; color: #7f1d1d; }
-        .badge-income { background: #dbeafe; color: #1e40af; }
-        .badge-expense { background: #fee2e2; color: #991b1b; }
-        .toast { animation: slideIn 0.3s ease, fadeOut 0.3s ease 2.7s; }
-        @keyframes slideIn { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
-        .stat-card { transition: transform 0.2s; }
-        .stat-card:hover { transform: translateY(-2px); }
-        input[type="date"], input[type="text"], input[type="number"], select, textarea {
-            border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 12px; width: 100%; font-size: 14px;
-        }
-        input:focus, select:focus, textarea:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
-        table { width: 100%; border-collapse: collapse; }
-        th { background: #f8fafc; font-weight: 600; text-align: left; padding: 12px 16px; font-size: 13px; color: #64748b; border-bottom: 2px solid #e2e8f0; }
-        td { padding: 12px 16px; border-bottom: 1px solid #f1f5f9; font-size: 14px; }
-        tr:hover td { background: #f8fafc; }
-        .sidebar-overlay { display: none; }
-        @media (max-width: 768px) {
-            .sidebar { transform: translateX(-100%); position: fixed; z-index: 50; }
-            .sidebar.open { transform: translateX(0); }
-            .sidebar-overlay.open { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 40; }
-            .main-content { margin-left: 0 !important; }
-        }
-        .amount-positive { color: #16a34a; }
-        .amount-negative { color: #ef4444; }
-        /* Drag & Drop */
-        .cat-item { cursor: grab; user-select: none; transition: background 0.15s, transform 0.15s, box-shadow 0.15s; }
-        .cat-item:active { cursor: grabbing; }
-        .cat-item.dragging { opacity: 0.4; transform: scale(0.95); }
-        .cat-item.drag-over { box-shadow: 0 -2px 0 0 #2563eb; }
-        .cat-arrow { cursor: pointer; padding: 2px 4px; border-radius: 4px; color: #9ca3af; transition: color 0.15s, background 0.15s; border: none; background: none; font-size: 14px; line-height: 1; }
-        .cat-arrow:hover { color: #2563eb; background: rgba(37,99,235,0.1); }
-        /* Auto-save indicator */
-        .save-indicator { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9ca3af; transition: all 0.3s; }
-        .save-indicator.saving { color: #f59e0b; }
-        .save-indicator.saved { color: #16a34a; }
-        .save-dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; transition: background 0.3s; }
-        .save-indicator.saving .save-dot { background: #f59e0b; animation: pulse 0.8s infinite; }
-        .save-indicator.saved .save-dot { background: #16a34a; }
-        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>全國公寓大廈管理委員聯誼會 - 財務報表系統</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        primary: { 50:'#eff6ff',100:'#dbeafe',200:'#bfdbfe',300:'#93c5fd',400:'#60a5fa',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',800:'#1e40af',900:'#1e3a8a' }
+      },
+      fontFamily: {
+        sans: ['"Noto Sans TC"', '"Microsoft JhengHei"', '"PingFang TC"', 'sans-serif']
+      }
+    }
+  }
+}
+</script>
+<style>
+  * { font-family: 'Noto Sans TC', 'Microsoft JhengHei', 'PingFang TC', sans-serif; }
+  body { background: #f1f5f9; }
+
+  /* Sidebar */
+  .sidebar-link { transition: all 0.2s ease; border-radius: 10px; }
+  .sidebar-link:hover { background: rgba(255,255,255,0.15); color: #fff; }
+  .sidebar-link.active { background: rgba(255,255,255,0.2); color: #fff; box-shadow: 0 0 0 1px rgba(255,255,255,0.1); }
+
+  /* Cards */
+  .card { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.08); }
+
+  /* Modal */
+  .modal-overlay { background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
+
+  /* Animations */
+  .fade-in { animation: fadeIn 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+  .page-enter { animation: pageEnter 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+  @keyframes pageEnter { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+
+  /* Toast */
+  .toast { animation: toastIn 0.35s cubic-bezier(0.4, 0, 0.2, 1), toastOut 0.3s ease 2.7s forwards; }
+  @keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
+
+  /* Mobile */
+  @media (max-width: 768px) {
+    #sidebar { transform: translateX(-100%); position: fixed; z-index: 40; }
+    #sidebar.open { transform: translateX(0); }
+    #main-content { margin-left: 0 !important; }
+    .overflow-x-auto { -webkit-overflow-scrolling: touch; }
+    .overflow-x-auto table { min-width: 600px; }
+  }
+
+  /* Tables */
+  table th { white-space: nowrap; font-weight: 600; color: #64748b; font-size: 13px; }
+  table td { font-size: 14px; }
+  table tbody tr { transition: background 0.15s; }
+
+  /* Form inputs */
+  input[type="date"], input[type="text"], input[type="number"], input[type="month"], select, textarea {
+    border: 1px solid #d1d5db; border-radius: 10px; padding: 9px 14px; width: 100%; font-size: 14px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+  }
+
+  /* Mobile cards */
+  .txn-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 14px 18px; margin-bottom: 10px; transition: box-shadow 0.2s; }
+  .txn-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
+  .txn-card:last-child { margin-bottom: 0; }
+
+  /* Status badges */
+  .status-unpaid { background: #fef2f2; color: #dc2626; }
+  .status-partial { background: #fffbeb; color: #d97706; }
+  .status-paid { background: #f0fdf4; color: #16a34a; }
+
+  /* Save indicator */
+  .save-dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; transition: background 0.3s; }
+  .save-indicator.saved .save-dot { background: #16a34a; }
+  .save-indicator.saving .save-dot { background: #f59e0b; animation: pulse 0.8s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+  /* Button styles */
+  .btn { padding: 8px 18px; border-radius: 10px; font-size: 14px; font-weight: 500; transition: all 0.2s; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .btn-primary { background: #2563eb; color: #fff; border: none; }
+  .btn-primary:hover { background: #1d4ed8; box-shadow: 0 4px 12px rgba(37,99,235,0.3); }
+  .btn-outline { background: #fff; color: #374151; border: 1px solid #d1d5db; }
+  .btn-outline:hover { background: #f9fafb; border-color: #9ca3af; }
+  .btn-success { background: #16a34a; color: #fff; border: none; }
+  .btn-success:hover { background: #15803d; box-shadow: 0 4px 12px rgba(22,163,74,0.3); }
+  .btn-danger { background: #ef4444; color: #fff; border: none; }
+  .btn-danger:hover { background: #dc2626; }
+</style>
 </head>
-<body class="min-h-screen">
+<body class="bg-slate-100 min-h-screen">
 
 <!-- Toast Container -->
-<div id="toastContainer" class="fixed top-4 right-4 z-[100] flex flex-col gap-2"></div>
+<div id="toast-container" class="fixed top-4 right-4 z-[100] flex flex-col gap-2"></div>
 
-<!-- Mobile Overlay -->
-<div id="sidebarOverlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
+<!-- Sidebar Overlay -->
+<div id="sidebar-overlay" class="hidden fixed inset-0 bg-black/30 z-30 md:hidden" style="backdrop-filter:blur(2px)"></div>
 
 <!-- Sidebar -->
-<aside id="sidebar" class="sidebar fixed left-0 top-0 h-full w-64 bg-gradient-to-b from-blue-700 to-blue-900 text-white flex flex-col z-50">
-    <div class="p-6 border-b border-blue-600">
-        <h1 class="text-lg font-bold leading-tight">全國公寓大廈</h1>
-        <h1 class="text-lg font-bold leading-tight">管理委員聯誼會</h1>
-        <p class="text-blue-200 text-xs mt-2">財務報表系統</p>
+<aside id="sidebar" class="w-64 bg-gradient-to-b from-blue-700 via-blue-800 to-blue-900 h-screen fixed top-0 left-0 flex flex-col z-40 transition-transform duration-300 shadow-xl">
+  <div class="p-6 border-b border-blue-600/50">
+    <div class="flex items-center gap-3 mb-2">
+      <img src="logo.jpg" alt="Logo" class="w-12 h-12 rounded-lg object-contain bg-white/90 p-1 shadow-sm flex-shrink-0">
+      <div>
+        <h1 class="text-sm font-bold text-white leading-tight">全國公寓大廈</h1>
+        <h1 class="text-sm font-bold text-white leading-tight">管理委員聯誼會</h1>
+      </div>
     </div>
-    <nav class="flex-1 p-4 space-y-1">
-        <a href="#dashboard" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg text-sm" data-page="dashboard">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
-            儀表板
-        </a>
-        <a href="#transactions" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg text-sm" data-page="transactions">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-            收支記帳
-        </a>
-        <a href="#income-statement" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg text-sm" data-page="income-statement">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-            損益表
-        </a>
-        <a href="#receivables" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg text-sm" data-page="receivables">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
-            應收帳款
-        </a>
-        <a href="#data-mgmt" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg text-sm" data-page="data-mgmt">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
-            資料管理
-        </a>
-    </nav>
-    <div class="p-4 border-t border-blue-600 text-xs text-blue-300">
-        <p>v1.0 &copy; 2026</p>
-    </div>
+    <p class="text-xs text-blue-200 mt-1">財務報表系統</p>
+  </div>
+  <nav class="flex-1 p-3 space-y-1 overflow-y-auto">
+    <a href="#dashboard" class="sidebar-link flex items-center gap-3 px-4 py-3 text-blue-100 text-sm font-medium" data-page="dashboard">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+      儀表板
+    </a>
+    <a href="#transactions" class="sidebar-link flex items-center gap-3 px-4 py-3 text-blue-100 text-sm font-medium" data-page="transactions">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      收支記帳
+    </a>
+    <a href="#pnl" class="sidebar-link flex items-center gap-3 px-4 py-3 text-blue-100 text-sm font-medium" data-page="pnl">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      損益表
+    </a>
+    <a href="#balance-sheet" class="sidebar-link flex items-center gap-3 px-4 py-3 text-blue-100 text-sm font-medium" data-page="balance-sheet">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6h18M3 12h18M3 18h18M9 6v12"/></svg>
+      資產負債表
+    </a>
+    <a href="#receivables" class="sidebar-link flex items-center gap-3 px-4 py-3 text-blue-100 text-sm font-medium" data-page="receivables">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+      應收帳款
+    </a>
+    <a href="#data" class="sidebar-link flex items-center gap-3 px-4 py-3 text-blue-100 text-sm font-medium" data-page="data">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
+      資料管理
+    </a>
+  </nav>
+  <div class="p-4 border-t border-blue-600/50 text-xs text-blue-300 text-center">v1.0 &copy; 2026</div>
 </aside>
 
 <!-- Main Content -->
-<main id="mainContent" class="main-content" style="margin-left: 256px;">
-    <!-- Top Bar -->
-    <header class="bg-white shadow-sm px-6 py-4 flex items-center justify-between sticky top-0 z-30">
-        <div class="flex items-center gap-3">
-            <button id="menuBtn" class="md:hidden p-2 rounded-lg hover:bg-gray-100" onclick="toggleSidebar()">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
-            </button>
-            <h2 id="pageTitle" class="text-xl font-bold text-gray-800">儀表板</h2>
-        </div>
-        <div class="flex items-center gap-4">
-            <div id="saveIndicator" class="save-indicator">
-                <span class="save-dot"></span>
-                <span id="saveText">已儲存</span>
-            </div>
-            <div class="text-sm text-gray-500" id="currentDate"></div>
-        </div>
-    </header>
-
-    <div class="p-6">
-        <!-- ========== Dashboard ========== -->
-        <div id="page-dashboard" class="page active">
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                <div class="card p-5 stat-card border-l-4 border-blue-500">
-                    <p class="text-sm text-gray-500 mb-1">本月收入</p>
-                    <p class="text-2xl font-bold text-blue-600" id="dashIncome">$0</p>
-                </div>
-                <div class="card p-5 stat-card border-l-4 border-red-500">
-                    <p class="text-sm text-gray-500 mb-1">本月支出</p>
-                    <p class="text-2xl font-bold text-red-500" id="dashExpense">$0</p>
-                </div>
-                <div class="card p-5 stat-card border-l-4 border-green-500">
-                    <p class="text-sm text-gray-500 mb-1">本月淨利</p>
-                    <p class="text-2xl font-bold text-green-600" id="dashNet">$0</p>
-                </div>
-                <div class="card p-5 stat-card border-l-4 border-orange-500">
-                    <p class="text-sm text-gray-500 mb-1">應收帳款餘額</p>
-                    <p class="text-2xl font-bold text-orange-500" id="dashReceivable">$0</p>
-                </div>
-            </div>
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                <div class="card p-5">
-                    <h3 class="font-bold text-gray-700 mb-4">收支趨勢（近6個月）</h3>
-                    <canvas id="chartTrend" height="200"></canvas>
-                </div>
-                <div class="card p-5">
-                    <h3 class="font-bold text-gray-700 mb-4">本月支出分佈</h3>
-                    <canvas id="chartExpDist" height="200"></canvas>
-                </div>
-            </div>
-            <div class="card p-5">
-                <h3 class="font-bold text-gray-700 mb-4">近期交易</h3>
-                <div class="overflow-x-auto">
-                    <table>
-                        <thead><tr><th>日期</th><th>類型</th><th>類別</th><th>說明</th><th class="text-right">金額</th></tr></thead>
-                        <tbody id="dashRecentTx"></tbody>
-                    </table>
-                </div>
-                <p id="dashNoTx" class="text-center text-gray-400 py-8 hidden">尚無交易記錄</p>
-            </div>
-        </div>
-
-        <!-- ========== Transactions ========== -->
-        <div id="page-transactions" class="page">
-            <div class="flex flex-wrap gap-3 mb-4 items-end">
-                <div>
-                    <label class="text-xs text-gray-500">搜尋</label>
-                    <input type="text" id="txSearch" placeholder="關鍵字搜尋..." oninput="renderTransactions()" class="!w-48">
-                </div>
-                <div>
-                    <label class="text-xs text-gray-500">類型</label>
-                    <select id="txFilterType" onchange="renderTransactions()" class="!w-32">
-                        <option value="">全部</option>
-                        <option value="income">收入</option>
-                        <option value="expense">支出</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="text-xs text-gray-500">起始日期</label>
-                    <input type="date" id="txDateFrom" onchange="renderTransactions()" class="!w-40">
-                </div>
-                <div>
-                    <label class="text-xs text-gray-500">結束日期</label>
-                    <input type="date" id="txDateTo" onchange="renderTransactions()" class="!w-40">
-                </div>
-                <div class="ml-auto">
-                    <button class="btn-primary px-4 py-2 rounded-lg text-sm font-medium" onclick="openTxModal()">+ 新增交易</button>
-                </div>
-            </div>
-            <div class="card overflow-x-auto">
-                <table>
-                    <thead><tr><th>日期</th><th>類型</th><th>類別</th><th>說明</th><th class="text-right">金額</th><th class="text-center">操作</th></tr></thead>
-                    <tbody id="txTableBody"></tbody>
-                </table>
-                <p id="txNoData" class="text-center text-gray-400 py-8 hidden">尚無交易記錄，點擊「+ 新增交易」開始記帳</p>
-            </div>
-            <div class="flex justify-between items-center mt-4 text-sm text-gray-500">
-                <span id="txSummary"></span>
-            </div>
-        </div>
-
-        <!-- ========== Income Statement ========== -->
-        <div id="page-income-statement" class="page">
-            <div class="flex flex-wrap gap-3 mb-4 items-end">
-                <div>
-                    <label class="text-xs text-gray-500">報表模式</label>
-                    <select id="isMode" onchange="renderIncomeStatement()" class="!w-32">
-                        <option value="monthly">月報</option>
-                        <option value="yearly">年報</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="text-xs text-gray-500">年度</label>
-                    <select id="isYear" onchange="renderIncomeStatement()" class="!w-28"></select>
-                </div>
-                <div id="isMonthWrap">
-                    <label class="text-xs text-gray-500">月份</label>
-                    <select id="isMonth" onchange="renderIncomeStatement()" class="!w-28">
-                        <option value="1">1月</option><option value="2">2月</option><option value="3">3月</option>
-                        <option value="4">4月</option><option value="5">5月</option><option value="6">6月</option>
-                        <option value="7">7月</option><option value="8">8月</option><option value="9">9月</option>
-                        <option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
-                    </select>
-                </div>
-                <div class="ml-auto">
-                    <button class="btn-outline px-4 py-2 rounded-lg text-sm" onclick="printIncomeStatement()">列印報表</button>
-                </div>
-            </div>
-            <div class="card p-6 mb-6" id="isReport">
-                <div class="text-center mb-6">
-                    <h3 class="text-xl font-bold text-gray-800">全國公寓大廈管理委員聯誼會</h3>
-                    <p class="text-gray-500" id="isTitle">損益表</p>
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div>
-                        <h4 class="font-bold text-blue-600 mb-3 pb-2 border-b">收入項目</h4>
-                        <div id="isIncomeItems"></div>
-                        <div class="flex justify-between font-bold text-blue-700 mt-3 pt-3 border-t-2 border-blue-200">
-                            <span>收入合計</span><span id="isIncomeTotal">$0</span>
-                        </div>
-                    </div>
-                    <div>
-                        <h4 class="font-bold text-red-600 mb-3 pb-2 border-b">支出項目</h4>
-                        <div id="isExpenseItems"></div>
-                        <div class="flex justify-between font-bold text-red-600 mt-3 pt-3 border-t-2 border-red-200">
-                            <span>支出合計</span><span id="isExpenseTotal">$0</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="mt-6 pt-4 border-t-2 border-gray-300">
-                    <div class="flex justify-between text-xl font-bold">
-                        <span>本期淨利（損）</span><span id="isNetIncome">$0</span>
-                    </div>
-                </div>
-            </div>
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div class="card p-5">
-                    <h3 class="font-bold text-gray-700 mb-4">收入結構</h3>
-                    <canvas id="chartIncDist" height="200"></canvas>
-                </div>
-                <div class="card p-5">
-                    <h3 class="font-bold text-gray-700 mb-4">支出結構</h3>
-                    <canvas id="chartExpDist2" height="200"></canvas>
-                </div>
-            </div>
-        </div>
-
-        <!-- ========== Receivables ========== -->
-        <div id="page-receivables" class="page">
-            <div class="flex flex-wrap gap-3 mb-4 items-end">
-                <div>
-                    <label class="text-xs text-gray-500">狀態篩選</label>
-                    <select id="arFilter" onchange="renderReceivables()" class="!w-32">
-                        <option value="">全部</option>
-                        <option value="unpaid">未付</option>
-                        <option value="partial">部分付款</option>
-                        <option value="paid">已付清</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="text-xs text-gray-500">搜尋</label>
-                    <input type="text" id="arSearch" placeholder="搜尋名稱/說明..." oninput="renderReceivables()" class="!w-48">
-                </div>
-                <div class="ml-auto">
-                    <button class="btn-primary px-4 py-2 rounded-lg text-sm font-medium" onclick="openArModal()">+ 新增應收帳款</button>
-                </div>
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                <div class="card p-4 border-l-4 border-red-400">
-                    <p class="text-xs text-gray-500">未收總額</p>
-                    <p class="text-xl font-bold text-red-500" id="arUnpaidTotal">$0</p>
-                </div>
-                <div class="card p-4 border-l-4 border-yellow-400">
-                    <p class="text-xs text-gray-500">逾期筆數</p>
-                    <p class="text-xl font-bold text-yellow-600" id="arOverdueCount">0</p>
-                </div>
-                <div class="card p-4 border-l-4 border-green-400">
-                    <p class="text-xs text-gray-500">已收總額</p>
-                    <p class="text-xl font-bold text-green-600" id="arPaidTotal">$0</p>
-                </div>
-            </div>
-            <div class="card overflow-x-auto">
-                <table>
-                    <thead><tr><th>對象</th><th>說明</th><th class="text-right">應收金額</th><th class="text-right">已收金額</th><th class="text-right">餘額</th><th>到期日</th><th>狀態</th><th class="text-center">操作</th></tr></thead>
-                    <tbody id="arTableBody"></tbody>
-                </table>
-                <p id="arNoData" class="text-center text-gray-400 py-8 hidden">尚無應收帳款記錄</p>
-            </div>
-        </div>
-
-        <!-- ========== Data Management ========== -->
-        <div id="page-data-mgmt" class="page">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div class="card p-6">
-                    <h3 class="font-bold text-gray-700 mb-4">匯出資料</h3>
-                    <div class="space-y-3">
-                        <button class="btn-primary w-full py-3 rounded-lg text-sm" onclick="exportTxCSV()">匯出交易記錄為 CSV</button>
-                        <button class="btn-primary w-full py-3 rounded-lg text-sm" onclick="exportTxExcel()">匯出交易記錄為 Excel</button>
-                        <button class="btn-success w-full py-3 rounded-lg text-sm" onclick="exportArExcel()">匯出應收帳款為 Excel</button>
-                        <button class="btn-outline w-full py-3 rounded-lg text-sm" onclick="exportBackup()">匯出完整備份 (JSON)</button>
-                    </div>
-                </div>
-                <div class="card p-6">
-                    <h3 class="font-bold text-gray-700 mb-4">匯入資料</h3>
-                    <div class="space-y-3">
-                        <div>
-                            <label class="block text-sm text-gray-600 mb-2">從 JSON 備份還原</label>
-                            <input type="file" id="importBackupFile" accept=".json" class="text-sm">
-                            <button class="btn-outline w-full py-2 rounded-lg text-sm mt-2" onclick="importBackup()">還原備份</button>
-                        </div>
-                        <hr>
-                        <div>
-                            <label class="block text-sm text-gray-600 mb-2">匯入交易 CSV</label>
-                            <input type="file" id="importCsvFile" accept=".csv" class="text-sm">
-                            <button class="btn-outline w-full py-2 rounded-lg text-sm mt-2" onclick="importCSV()">匯入 CSV</button>
-                            <p class="text-xs text-gray-400 mt-1">CSV 格式：日期,類型(income/expense),類別,說明,金額</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="card p-6">
-                    <h3 class="font-bold text-gray-700 mb-2">類別管理</h3>
-                    <p class="text-xs text-gray-400 mb-4">使用箭頭或拖曳調整順序，變更即時自動儲存</p>
-                    <div class="mb-4">
-                        <h4 class="text-sm font-medium text-blue-600 mb-2">收入類別</h4>
-                        <div id="catIncomeList" class="space-y-1"></div>
-                        <div class="flex gap-2 mt-2">
-                            <input type="text" id="newIncCat" placeholder="新增收入類別..." class="!w-auto flex-1">
-                            <button class="btn-primary px-3 py-1 rounded-lg text-sm" onclick="addCategory('income')">新增</button>
-                        </div>
-                    </div>
-                    <div>
-                        <h4 class="text-sm font-medium text-red-600 mb-2">支出類別</h4>
-                        <div id="catExpenseList" class="space-y-1"></div>
-                        <div class="flex gap-2 mt-2">
-                            <input type="text" id="newExpCat" placeholder="新增支出類別..." class="!w-auto flex-1">
-                            <button class="btn-primary px-3 py-1 rounded-lg text-sm" onclick="addCategory('expense')">新增</button>
-                        </div>
-                    </div>
-                </div>
-                <div class="card p-6">
-                    <h3 class="font-bold text-gray-700 mb-4">清除資料</h3>
-                    <p class="text-sm text-gray-500 mb-4">注意：清除後無法復原，請先備份！</p>
-                    <div class="space-y-3">
-                        <button class="btn-danger w-full py-3 rounded-lg text-sm" onclick="clearData('transactions')">清除所有交易記錄</button>
-                        <button class="btn-danger w-full py-3 rounded-lg text-sm" onclick="clearData('receivables')">清除所有應收帳款</button>
-                        <button class="btn-danger w-full py-3 rounded-lg text-sm" onclick="clearData('all')">清除全部資料</button>
-                    </div>
-                </div>
-            </div>
-        </div>
+<main id="main-content" class="md:ml-64 min-h-screen">
+  <!-- Top Header Bar -->
+  <header class="bg-white/80 backdrop-blur-md shadow-sm px-4 md:px-6 py-3 flex items-center justify-between sticky top-0 z-30 border-b border-gray-200/60">
+    <div class="flex items-center gap-3">
+      <button id="menu-toggle" class="md:hidden p-2 rounded-lg hover:bg-gray-100 transition">
+        <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <h2 id="page-title" class="text-lg md:text-xl font-bold text-gray-800">儀表板</h2>
     </div>
+    <div class="flex items-center gap-4">
+      <div class="save-indicator saved flex items-center gap-1.5 text-xs text-gray-400">
+        <span class="save-dot"></span>
+        <span class="hidden sm:inline">已儲存</span>
+      </div>
+      <span class="text-xs text-gray-400 hidden sm:inline" id="header-date"></span>
+    </div>
+  </header>
+
+  <div id="page-content" class="p-4 md:p-6 max-w-7xl mx-auto"></div>
 </main>
 
-<!-- Transaction Modal -->
-<div id="txModal" class="fixed inset-0 z-[60] hidden items-center justify-center">
-    <div class="modal-overlay absolute inset-0" onclick="closeTxModal()"></div>
-    <div class="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 relative z-10">
-        <h3 id="txModalTitle" class="text-lg font-bold mb-4">新增交易</h3>
-        <div class="space-y-4">
-            <div>
-                <label class="text-sm text-gray-600">日期 <span class="text-red-500">*</span></label>
-                <input type="date" id="txDate">
-            </div>
-            <div>
-                <label class="text-sm text-gray-600">類型 <span class="text-red-500">*</span></label>
-                <select id="txType" onchange="updateTxCategories()">
-                    <option value="income">收入</option>
-                    <option value="expense">支出</option>
-                </select>
-            </div>
-            <div>
-                <label class="text-sm text-gray-600">類別 <span class="text-red-500">*</span></label>
-                <select id="txCategory"></select>
-            </div>
-            <div>
-                <label class="text-sm text-gray-600">金額 <span class="text-red-500">*</span></label>
-                <input type="number" id="txAmount" min="0" placeholder="請輸入金額">
-            </div>
-            <div>
-                <label class="text-sm text-gray-600">說明</label>
-                <textarea id="txDesc" rows="2" placeholder="交易說明..."></textarea>
-            </div>
-        </div>
-        <div class="flex gap-3 mt-6">
-            <button class="btn-outline flex-1 py-2 rounded-lg text-sm" onclick="closeTxModal()">取消</button>
-            <button class="btn-primary flex-1 py-2 rounded-lg text-sm" onclick="saveTx()">儲存</button>
-        </div>
-        <input type="hidden" id="txEditId">
-    </div>
-</div>
-
-<!-- Receivable Modal -->
-<div id="arModal" class="fixed inset-0 z-[60] hidden items-center justify-center">
-    <div class="modal-overlay absolute inset-0" onclick="closeArModal()"></div>
-    <div class="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 relative z-10">
-        <h3 id="arModalTitle" class="text-lg font-bold mb-4">新增應收帳款</h3>
-        <div class="space-y-4">
-            <div>
-                <label class="text-sm text-gray-600">對象名稱 <span class="text-red-500">*</span></label>
-                <input type="text" id="arUnit" placeholder="例：A棟管委會">
-            </div>
-            <div>
-                <label class="text-sm text-gray-600">說明 <span class="text-red-500">*</span></label>
-                <textarea id="arDescField" rows="2" placeholder="應收款項說明..."></textarea>
-            </div>
-            <div>
-                <label class="text-sm text-gray-600">應收金額 <span class="text-red-500">*</span></label>
-                <input type="number" id="arAmount" min="0" placeholder="請輸入金額">
-            </div>
-            <div>
-                <label class="text-sm text-gray-600">到期日</label>
-                <input type="date" id="arDueDate">
-            </div>
-        </div>
-        <div class="flex gap-3 mt-6">
-            <button class="btn-outline flex-1 py-2 rounded-lg text-sm" onclick="closeArModal()">取消</button>
-            <button class="btn-primary flex-1 py-2 rounded-lg text-sm" onclick="saveAr()">儲存</button>
-        </div>
-        <input type="hidden" id="arEditId">
-    </div>
-</div>
-
-<!-- Payment Modal -->
-<div id="payModal" class="fixed inset-0 z-[60] hidden items-center justify-center">
-    <div class="modal-overlay absolute inset-0" onclick="closePayModal()"></div>
-    <div class="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 relative z-10">
-        <h3 class="text-lg font-bold mb-4">登記收款</h3>
-        <div class="space-y-4">
-            <div>
-                <label class="text-sm text-gray-600">收款日期</label>
-                <input type="date" id="payDate">
-            </div>
-            <div>
-                <label class="text-sm text-gray-600">收款金額</label>
-                <input type="number" id="payAmount" min="0" placeholder="請輸入收款金額">
-            </div>
-            <p class="text-sm text-gray-500">未收餘額：<span id="payRemaining" class="font-bold text-red-500"></span></p>
-        </div>
-        <div class="flex gap-3 mt-6">
-            <button class="btn-outline flex-1 py-2 rounded-lg text-sm" onclick="closePayModal()">取消</button>
-            <button class="btn-success flex-1 py-2 rounded-lg text-sm" onclick="savePayment()">確認收款</button>
-        </div>
-        <input type="hidden" id="payArId">
-    </div>
-</div>
-
-<!-- Payment History Modal -->
-<div id="payHistModal" class="fixed inset-0 z-[60] hidden items-center justify-center">
-    <div class="modal-overlay absolute inset-0" onclick="closePayHistModal()"></div>
-    <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 p-6 relative z-10">
-        <h3 class="text-lg font-bold mb-4">收款記錄</h3>
-        <div id="payHistContent"></div>
-        <div class="flex justify-end mt-4">
-            <button class="btn-outline px-4 py-2 rounded-lg text-sm" onclick="closePayHistModal()">關閉</button>
-        </div>
-    </div>
+<!-- Modal Container -->
+<div id="modal-container" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-overlay">
+  <div id="modal-body" class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto fade-in"></div>
 </div>
 
 <script>
-// ===== Storage =====
-const KEYS = {
-    transactions: 'fms_transactions',
-    receivables: 'fms_receivables',
-    categories: 'fms_categories'
+// ============================================================
+// DATA LAYER (localStorage + IndexedDB 備援)
+// ============================================================
+const STORAGE_KEYS = {
+  transactions: 'fms_transactions',
+  receivables: 'fms_receivables',
+  categories: 'fms_categories'
 };
 
 const DEFAULT_CATEGORIES = {
-    income: ['會費收入', '停車費', '場地租借', '利息收入', '其他收入'],
-    expense: ['維修保養', '水電費', '人事費用', '保險費', '清潔費', '管理費', '其他支出']
+  income: ['會費收入', '停車費', '場地租借', '利息收入', '其他收入'],
+  expense: ['維修保養', '水電費', '人事費用', '保險費', '清潔費', '管理費', '其他支出']
 };
 
+// --- IndexedDB 備援 ---
+const IDB_NAME = 'fms_backup';
+const IDB_VERSION = 1;
+const IDB_STORE = 'data';
+let _idb = null;
+
+function openIDB() {
+  return new Promise(function(resolve, reject) {
+    if (_idb) { resolve(_idb); return; }
+    try {
+      var req = indexedDB.open(IDB_NAME, IDB_VERSION);
+      req.onupgradeneeded = function(e) { e.target.result.createObjectStore(IDB_STORE); };
+      req.onsuccess = function(e) { _idb = e.target.result; resolve(_idb); };
+      req.onerror = function() { reject(new Error('IndexedDB 開啟失敗')); };
+    } catch (err) { reject(err); }
+  });
+}
+
+function idbGet(key) {
+  return openIDB().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction(IDB_STORE, 'readonly');
+      var req = tx.objectStore(IDB_STORE).get(key);
+      req.onsuccess = function() { resolve(req.result !== undefined ? req.result : null); };
+      req.onerror = function() { reject(req.error); };
+    });
+  });
+}
+
+function idbSet(key, val) {
+  return openIDB().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(val, key);
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function() { reject(tx.error); };
+    });
+  });
+}
+
+function idbDelete(key) {
+  return openIDB().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).delete(key);
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function() { reject(tx.error); };
+    });
+  });
+}
+
+// --- 檢測 localStorage 是否可用 ---
+let _localStorageAvailable = null;
+function isLocalStorageAvailable() {
+  if (_localStorageAvailable !== null) return _localStorageAvailable;
+  try {
+    var testKey = '__fms_ls_test__';
+    localStorage.setItem(testKey, '1');
+    var ok = localStorage.getItem(testKey) === '1';
+    localStorage.removeItem(testKey);
+    _localStorageAvailable = ok;
+    return ok;
+  } catch (e) {
+    _localStorageAvailable = false;
+    return false;
+  }
+}
+
+// --- 記憶體快取（localStorage 不可用時的備援） ---
+var _memCache = {};
+
+// --- 讀取 / 寫入 ---
 function getData(key) {
-    try { return JSON.parse(localStorage.getItem(key)) || []; } catch { return []; }
+  // 優先讀取 localStorage
+  try {
+    if (isLocalStorageAvailable()) {
+      var raw = localStorage.getItem(key);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        _memCache[key] = parsed; // 同步更新記憶體快取
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('[Storage] localStorage 讀取失敗 (' + key + '):', e.message);
+  }
+  // 備援：從記憶體快取讀取（已由 recoverFromIDB 填入）
+  if (_memCache[key] !== undefined) return _memCache[key];
+  return null;
 }
-let saveTimer = null;
-function setData(key, data) {
-    localStorage.setItem(key, JSON.stringify(data));
-    showSaveStatus();
+
+function setData(key, val) {
+  // 一定先寫入記憶體快取
+  _memCache[key] = val;
+
+  var lsOk = false;
+  try {
+    if (isLocalStorageAvailable()) {
+      localStorage.setItem(key, JSON.stringify(val));
+      lsOk = true;
+    }
+  } catch (e) {
+    console.error('[Storage] localStorage 寫入失敗 (' + key + '):', e.message);
+    if (e.name === 'QuotaExceededError') {
+      showToast('瀏覽器儲存空間已滿，請匯出備份後清除舊資料', 'error');
+    } else {
+      showToast('儲存失敗：' + e.message + '（資料將嘗試備援至 IndexedDB）', 'warning');
+    }
+  }
+  // 同步寫入 IndexedDB 備援
+  idbSet(key, val).catch(function(err) {
+    console.error('[Storage] IndexedDB 備援寫入失敗:', err.message);
+    if (!lsOk) {
+      showToast('所有儲存方式都失敗！請檢查瀏覽器設定是否封鎖網站資料儲存', 'error');
+    }
+  });
 }
-function showSaveStatus() {
-    const el = document.getElementById('saveIndicator');
-    const txt = document.getElementById('saveText');
-    el.className = 'save-indicator saving';
-    txt.textContent = '儲存中...';
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-        el.className = 'save-indicator saved';
-        txt.textContent = '已自動儲存';
-        setTimeout(() => { el.className = 'save-indicator'; txt.textContent = '已儲存'; }, 3000);
-    }, 400);
+
+function removeData(key) {
+  delete _memCache[key];
+  try { if (isLocalStorageAvailable()) localStorage.removeItem(key); } catch (e) { /* ignore */ }
+  idbDelete(key).catch(function() {});
 }
+
+// --- 初始化：從 IndexedDB 恢復遺失的 localStorage ---
+async function recoverFromIDB() {
+  var keys = [STORAGE_KEYS.transactions, STORAGE_KEYS.receivables, STORAGE_KEYS.categories];
+  if (isLocalStorageAvailable()) {
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      try {
+        var lsVal = localStorage.getItem(key);
+        if (!lsVal || lsVal === 'null') {
+          var idbVal = await idbGet(key);
+          if (idbVal) {
+            localStorage.setItem(key, JSON.stringify(idbVal));
+            _memCache[key] = idbVal;
+            console.info('[Storage] 已從 IndexedDB 恢復: ' + key);
+          }
+        } else {
+          // localStorage 有值，同步到記憶體和 IndexedDB
+          var parsed = JSON.parse(lsVal);
+          _memCache[key] = parsed;
+          idbSet(key, parsed).catch(function() {});
+        }
+      } catch (e) {
+        console.warn('[Storage] 恢復過程中發生錯誤:', e.message);
+      }
+    }
+  } else {
+    // localStorage 完全不可用，從 IndexedDB 讀取到記憶體快取
+    console.warn('[Storage] localStorage 不可用，將使用 IndexedDB 作為主要儲存');
+    for (var j = 0; j < keys.length; j++) {
+      try {
+        var idbVal2 = await idbGet(keys[j]);
+        if (idbVal2) _memCache[keys[j]] = idbVal2;
+      } catch (e) { /* ignore */ }
+    }
+  }
+}
+
+function getTransactions() { return getData(STORAGE_KEYS.transactions) || []; }
+function saveTransactions(arr) { setData(STORAGE_KEYS.transactions, arr); }
+function getReceivables() { return getData(STORAGE_KEYS.receivables) || []; }
+function saveReceivables(arr) { setData(STORAGE_KEYS.receivables, arr); }
 function getCategories() {
-    let cats = null;
-    try { cats = JSON.parse(localStorage.getItem(KEYS.categories)); } catch {}
-    if (!cats) { cats = { ...DEFAULT_CATEGORIES }; setData(KEYS.categories, cats); }
-    return cats;
+  var cats = getData(STORAGE_KEYS.categories);
+  if (!cats) { cats = { ...DEFAULT_CATEGORIES }; setData(STORAGE_KEYS.categories, cats); }
+  return cats;
 }
+function saveCategories(cats) { setData(STORAGE_KEYS.categories, cats); }
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
-function formatMoney(n) { return '$' + Number(n).toLocaleString('zh-TW'); }
-function today() { return new Date().toISOString().slice(0, 10); }
+function formatMoney(n) { return new Intl.NumberFormat('zh-TW').format(n); }
+function formatDate(d) { return d || ''; }
+function todayStr() { return new Date().toISOString().slice(0, 10); }
 
-// ===== Toast =====
-function toast(msg, type = 'success') {
-    const el = document.createElement('div');
-    const bg = type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-blue-500';
-    el.className = `toast ${bg} text-white px-4 py-2 rounded-lg shadow-lg text-sm`;
-    el.textContent = msg;
-    document.getElementById('toastContainer').appendChild(el);
-    setTimeout(() => el.remove(), 3000);
+// ============================================================
+// ROUTER
+// ============================================================
+const pages = { dashboard: renderDashboard, transactions: renderTransactions, pnl: renderPnl, 'balance-sheet': renderBalanceSheet, receivables: renderReceivables, data: renderData };
+const pageTitles = { dashboard: '儀表板', transactions: '收支記帳', pnl: '損益表', 'balance-sheet': '資產負債表', receivables: '應收帳款', data: '資料管理' };
+let currentCharts = [];
+
+function destroyCharts() {
+  currentCharts.forEach(c => { try { c.destroy(); } catch {} });
+  currentCharts = [];
 }
 
-// ===== Routing =====
-const pageTitles = {
-    dashboard: '儀表板',
-    transactions: '收支記帳',
-    'income-statement': '損益表',
-    receivables: '應收帳款',
-    'data-mgmt': '資料管理'
-};
-
-function navigate(page) {
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-    const target = document.getElementById('page-' + page);
-    if (target) target.classList.add('active');
-    const nav = document.querySelector(`[data-page="${page}"]`);
-    if (nav) nav.classList.add('active');
-    document.getElementById('pageTitle').textContent = pageTitles[page] || '';
-    if (page === 'dashboard') refreshDashboard();
-    if (page === 'transactions') renderTransactions();
-    if (page === 'income-statement') initIncomeStatement();
-    if (page === 'receivables') renderReceivables();
-    if (page === 'data-mgmt') renderCategories();
+function navigate() {
+  const hash = location.hash.slice(1) || 'dashboard';
+  const page = pages[hash] ? hash : 'dashboard';
+  destroyCharts();
+  const content = document.getElementById('page-content');
+  content.innerHTML = '';
+  content.className = 'p-4 md:p-6 max-w-7xl mx-auto page-enter';
+  pages[page]();
+  document.querySelectorAll('.sidebar-link').forEach(el => {
+    el.classList.toggle('active', el.dataset.page === page);
+  });
+  // Update page title
+  const titleEl = document.getElementById('page-title');
+  if (titleEl) titleEl.textContent = pageTitles[page] || '儀表板';
+  // close mobile sidebar
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.add('hidden');
 }
+window.addEventListener('hashchange', navigate);
 
-window.addEventListener('hashchange', () => {
-    const page = location.hash.slice(1) || 'dashboard';
-    navigate(page);
+// Mobile menu
+document.getElementById('menu-toggle').addEventListener('click', () => {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('hidden');
+});
+document.getElementById('sidebar-overlay').addEventListener('click', () => {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.add('hidden');
 });
 
-function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('open');
-    document.getElementById('sidebarOverlay').classList.toggle('open');
+// Toast notifications
+function showToast(message, type) {
+  type = type || 'info';
+  const container = document.getElementById('toast-container');
+  const colors = { success: 'bg-green-600', error: 'bg-red-600', warning: 'bg-amber-500', info: 'bg-blue-600' };
+  const icons = {
+    success: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>',
+    error: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>',
+    warning: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>',
+    info: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>'
+  };
+  const toast = document.createElement('div');
+  toast.className = 'toast flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-white text-sm font-medium ' + (colors[type] || colors.info);
+  toast.innerHTML = (icons[type] || icons.info) + '<span>' + message + '</span>';
+  container.appendChild(toast);
+  setTimeout(function() { toast.remove(); }, 3000);
 }
 
-// ===== Transactions =====
+// Save indicator flash
+function flashSaved() {
+  var indicator = document.querySelector('.save-indicator');
+  if (!indicator) return;
+  indicator.className = 'save-indicator saving flex items-center gap-1.5 text-xs text-amber-500';
+  setTimeout(function() {
+    indicator.className = 'save-indicator saved flex items-center gap-1.5 text-xs text-green-500';
+    var textEl = indicator.querySelector('span:last-child');
+    if (textEl) textEl.textContent = '已儲存';
+    setTimeout(function() {
+      indicator.className = 'save-indicator saved flex items-center gap-1.5 text-xs text-gray-400';
+    }, 1500);
+  }, 300);
+}
+
+// Modal
+function showModal(html) {
+  document.getElementById('modal-body').innerHTML = html;
+  document.getElementById('modal-container').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+}
+function closeModal() {
+  document.getElementById('modal-container').classList.add('hidden');
+  document.body.style.overflow = '';
+}
+document.getElementById('modal-container').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-container')) closeModal();
+});
+
+// ============================================================
+// PAGE: 儀表板 (Dashboard)
+// ============================================================
+function renderDashboard() {
+  const txns = getTransactions();
+  const recvs = getReceivables();
+  const now = new Date();
+  const thisMonth = now.toISOString().slice(0, 7);
+
+  const monthTxns = txns.filter(t => t.date && t.date.startsWith(thisMonth));
+  const monthIncome = monthTxns.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+  const monthExpense = monthTxns.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+  const monthNet = monthIncome - monthExpense;
+
+  const totalReceivable = recvs.filter(r => r.status !== 'paid').reduce((s, r) => s + (Number(r.amount) - Number(r.paidAmount || 0)), 0);
+  const overdueCount = recvs.filter(r => r.status !== 'paid' && r.dueDate && r.dueDate < todayStr()).length;
+
+  const recentTxns = [...txns].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || '')).slice(0, 8);
+
+  const container = document.getElementById('page-content');
+  container.innerHTML = `
+    <div class="mb-6">
+      <div class="flex items-center gap-3">
+        <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800">儀表板</h2>
+          <p class="text-gray-500 text-sm">財務總覽 — ${now.getFullYear()} 年 ${now.getMonth() + 1} 月</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div class="card bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-sm text-gray-500">本月收入</p>
+          <div class="w-10 h-10 rounded-xl bg-green-50 flex items-center justify-center">
+            <svg class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11l5-5m0 0l5 5m-5-5v12"/></svg>
+          </div>
+        </div>
+        <p class="text-2xl font-bold text-green-600">$${formatMoney(monthIncome)}</p>
+      </div>
+      <div class="card bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-sm text-gray-500">本月支出</p>
+          <div class="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center">
+            <svg class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 13l-5 5m0 0l-5-5m5 5V6"/></svg>
+          </div>
+        </div>
+        <p class="text-2xl font-bold text-red-500">$${formatMoney(monthExpense)}</p>
+      </div>
+      <div class="card bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-sm text-gray-500">本月淨利</p>
+          <div class="w-10 h-10 rounded-xl ${monthNet >= 0 ? 'bg-blue-50' : 'bg-red-50'} flex items-center justify-center">
+            <svg class="w-5 h-5 ${monthNet >= 0 ? 'text-blue-500' : 'text-red-500'}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+          </div>
+        </div>
+        <p class="text-2xl font-bold ${monthNet >= 0 ? 'text-primary-600' : 'text-red-600'}">$${formatMoney(monthNet)}</p>
+      </div>
+      <div class="card bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-sm text-gray-500">應收帳款餘額</p>
+          <div class="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center">
+            <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8V7m0 10v1"/></svg>
+          </div>
+        </div>
+        <p class="text-2xl font-bold text-amber-600">$${formatMoney(totalReceivable)}</p>
+        ${overdueCount > 0 ? `<p class="text-xs text-red-500 mt-1">${overdueCount} 筆已逾期</p>` : ''}
+      </div>
+    </div>
+
+    <!-- Charts + Recent -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      <div class="lg:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 class="font-semibold text-gray-700 mb-4">收支趨勢（近 6 個月）</h3>
+        <canvas id="chart-trend" height="200"></canvas>
+      </div>
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 class="font-semibold text-gray-700 mb-4">本月收支比例</h3>
+        <canvas id="chart-pie" height="200"></canvas>
+      </div>
+    </div>
+
+    <!-- Recent Transactions -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      <h3 class="font-semibold text-gray-700 mb-4">近期交易</h3>
+      <div id="dash-recent-container"></div>
+    </div>
+  `;
+
+  // Populate recent transactions with mobile-friendly layout
+  const recentEl = document.getElementById('dash-recent-container');
+  if (recentEl) {
+    if (recentTxns.length === 0) {
+      recentEl.innerHTML = '<p class="text-gray-400 text-sm">尚無交易記錄</p>';
+    } else {
+      let desktopHtml = '<div class="hidden md:block overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-gray-500 border-b">'
+        + '<th class="pb-2 pr-4">日期</th><th class="pb-2 pr-4">類型</th><th class="pb-2 pr-4">分類</th><th class="pb-2 pr-4">說明</th><th class="pb-2 text-right">金額</th>'
+        + '</tr></thead><tbody>';
+      let mobileHtml = '<div class="md:hidden space-y-2">';
+      recentTxns.forEach(function(t) {
+        const typeBadge = t.type === 'income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
+        const typeLabel = t.type === 'income' ? '收入' : '支出';
+        const amtClass = t.type === 'income' ? 'text-green-600' : 'text-red-500';
+        desktopHtml += '<tr class="border-b last:border-0 hover:bg-gray-50">'
+          + '<td class="py-2 pr-4 text-gray-600">' + t.date + '</td>'
+          + '<td class="py-2 pr-4"><span class="px-2 py-0.5 rounded text-xs font-medium ' + typeBadge + '">' + typeLabel + '</span></td>'
+          + '<td class="py-2 pr-4 text-gray-600">' + (t.category || '') + '</td>'
+          + '<td class="py-2 pr-4 text-gray-600">' + (t.description || '') + '</td>'
+          + '<td class="py-2 text-right font-medium ' + amtClass + '">$' + formatMoney(t.amount) + '</td></tr>';
+        mobileHtml += '<div class="flex items-center justify-between py-2 border-b last:border-0">'
+          + '<div class="flex-1 min-w-0">'
+          + '<div class="flex items-center gap-2 mb-0.5"><span class="px-1.5 py-0.5 rounded text-xs font-medium ' + typeBadge + '">' + typeLabel + '</span><span class="text-xs text-gray-400">' + t.date + '</span></div>'
+          + '<p class="text-sm text-gray-700 truncate">' + (t.category || '') + (t.description ? ' - ' + t.description : '') + '</p>'
+          + '</div>'
+          + '<span class="font-bold ' + amtClass + ' ml-3 whitespace-nowrap">$' + formatMoney(t.amount) + '</span>'
+          + '</div>';
+      });
+      desktopHtml += '</tbody></table></div>';
+      mobileHtml += '</div>';
+      recentEl.innerHTML = desktopHtml + mobileHtml;
+    }
+  }
+
+  // Trend chart (last 6 months)
+  const months = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push(d.toISOString().slice(0, 7));
+  }
+  const incomeByMonth = months.map(m => txns.filter(t => t.type === 'income' && t.date && t.date.startsWith(m)).reduce((s, t) => s + Number(t.amount), 0));
+  const expenseByMonth = months.map(m => txns.filter(t => t.type === 'expense' && t.date && t.date.startsWith(m)).reduce((s, t) => s + Number(t.amount), 0));
+
+  const trendCtx = document.getElementById('chart-trend');
+  if (trendCtx) {
+    currentCharts.push(new Chart(trendCtx, {
+      type: 'line',
+      data: {
+        labels: months.map(m => { const [y, mo] = m.split('-'); return `${y}/${mo}`; }),
+        datasets: [
+          { label: '收入', data: incomeByMonth, borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.1)', fill: true, tension: 0.3 },
+          { label: '支出', data: expenseByMonth, borderColor: '#dc2626', backgroundColor: 'rgba(220,38,38,0.1)', fill: true, tension: 0.3 }
+        ]
+      },
+      options: { responsive: true, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true, ticks: { callback: v => '$' + formatMoney(v) } } } }
+    }));
+  }
+
+  // Pie chart
+  const pieCtx = document.getElementById('chart-pie');
+  if (pieCtx && (monthIncome > 0 || monthExpense > 0)) {
+    currentCharts.push(new Chart(pieCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['收入', '支出'],
+        datasets: [{ data: [monthIncome, monthExpense], backgroundColor: ['#16a34a', '#dc2626'] }]
+      },
+      options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+    }));
+  }
+}
+
+// ============================================================
+// PAGE: 收支記帳 (Transactions)
+// ============================================================
+let txnFilters = { search: '', type: '', dateFrom: '', dateTo: '' };
+
 function renderTransactions() {
-    let txs = getData(KEYS.transactions);
-    const search = document.getElementById('txSearch').value.toLowerCase();
-    const filterType = document.getElementById('txFilterType').value;
-    const dateFrom = document.getElementById('txDateFrom').value;
-    const dateTo = document.getElementById('txDateTo').value;
+  const cats = getCategories();
+  const container = document.getElementById('page-content');
 
-    if (search) txs = txs.filter(t => (t.description || '').toLowerCase().includes(search) || t.category.toLowerCase().includes(search));
-    if (filterType) txs = txs.filter(t => t.type === filterType);
-    if (dateFrom) txs = txs.filter(t => t.date >= dateFrom);
-    if (dateTo) txs = txs.filter(t => t.date <= dateTo);
+  container.innerHTML = `
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+      <div class="flex items-center gap-3">
+        <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800">收支記帳</h2>
+          <p class="text-gray-500 text-sm">管理所有收入與支出記錄</p>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="showCategoryModal()" class="btn btn-outline">分類管理</button>
+        <button onclick="showTxnModal()" class="btn btn-primary">+ 新增記錄</button>
+      </div>
+    </div>
 
-    txs.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+    <!-- Filters -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        <input type="text" id="txn-search" placeholder="搜尋說明或分類..." value="${txnFilters.search}" oninput="txnFilters.search=this.value;refreshTxnTable()">
+        <select id="txn-type" onchange="txnFilters.type=this.value;refreshTxnTable()">
+          <option value="">全部類型</option>
+          <option value="income" ${txnFilters.type==='income'?'selected':''}>收入</option>
+          <option value="expense" ${txnFilters.type==='expense'?'selected':''}>支出</option>
+        </select>
+        <input type="date" id="txn-from" value="${txnFilters.dateFrom}" onchange="txnFilters.dateFrom=this.value;refreshTxnTable()">
+        <input type="date" id="txn-to" value="${txnFilters.dateTo}" onchange="txnFilters.dateTo=this.value;refreshTxnTable()">
+        <button onclick="txnFilters={search:'',type:'',dateFrom:'',dateTo:''};renderTransactions()" class="btn btn-outline text-sm">清除篩選</button>
+      </div>
+    </div>
 
-    const tbody = document.getElementById('txTableBody');
-    const noData = document.getElementById('txNoData');
+    <!-- Table -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div id="txn-table-container" class="overflow-x-auto"></div>
+    </div>
+  `;
+  refreshTxnTable();
+}
 
-    if (txs.length === 0) {
-        tbody.innerHTML = '';
-        noData.classList.remove('hidden');
+function buildTxnRow(t) {
+  const typeBadge = t.type === 'income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
+  const typeLabel = t.type === 'income' ? '收入' : '支出';
+  const amtClass = t.type === 'income' ? 'text-green-600' : 'text-red-500';
+  return '<tr class="border-b hover:bg-gray-50">'
+    + '<td class="px-4 py-3 text-gray-600">' + t.date + '</td>'
+    + '<td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-xs font-medium ' + typeBadge + '">' + typeLabel + '</span></td>'
+    + '<td class="px-4 py-3 text-gray-600">' + (t.category || '') + '</td>'
+    + '<td class="px-4 py-3 text-gray-600">' + (t.description || '') + '</td>'
+    + '<td class="px-4 py-3 text-right font-medium ' + amtClass + '">$' + formatMoney(t.amount) + '</td>'
+    + '<td class="px-4 py-3 text-center">'
+    + '<button onclick="showTxnModal(\'' + t.id + '\')" class="text-primary-600 hover:text-primary-800 text-xs mr-2">編輯</button>'
+    + '<button onclick="deleteTxn(\'' + t.id + '\')" class="text-red-500 hover:text-red-700 text-xs">刪除</button>'
+    + '</td></tr>';
+}
+
+function buildTxnCard(t) {
+  const typeBadge = t.type === 'income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
+  const typeLabel = t.type === 'income' ? '收入' : '支出';
+  const amtClass = t.type === 'income' ? 'text-green-600' : 'text-red-500';
+  let html = '<div class="txn-card">'
+    + '<div class="flex items-center justify-between mb-2">'
+    + '<span class="px-2 py-0.5 rounded text-xs font-medium ' + typeBadge + '">' + typeLabel + '</span>'
+    + '<span class="font-bold text-base ' + amtClass + '">$' + formatMoney(t.amount) + '</span>'
+    + '</div>'
+    + '<div class="flex items-center justify-between text-sm">'
+    + '<span class="text-gray-500">' + t.date + '</span>'
+    + '<span class="text-gray-700 font-medium">' + (t.category || '') + '</span>'
+    + '</div>';
+  if (t.description) html += '<p class="text-sm text-gray-500 mt-1">' + t.description + '</p>';
+  html += '<div class="flex justify-end gap-3 mt-2 pt-2 border-t">'
+    + '<button onclick="showTxnModal(\'' + t.id + '\')" class="text-primary-600 text-sm font-medium">編輯</button>'
+    + '<button onclick="deleteTxn(\'' + t.id + '\')" class="text-red-500 text-sm font-medium">刪除</button>'
+    + '</div></div>';
+  return html;
+}
+
+function refreshTxnTable() {
+  let txns = getTransactions();
+  const f = txnFilters;
+  if (f.type) txns = txns.filter(t => t.type === f.type);
+  if (f.search) { const s = f.search.toLowerCase(); txns = txns.filter(t => (t.description||'').toLowerCase().includes(s) || (t.category||'').toLowerCase().includes(s)); }
+  if (f.dateFrom) txns = txns.filter(t => t.date >= f.dateFrom);
+  if (f.dateTo) txns = txns.filter(t => t.date <= f.dateTo);
+  txns.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+  const totalIncome = txns.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+  const totalExpense = txns.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+
+  const el = document.getElementById('txn-table-container');
+
+  let html = '<div class="px-4 py-3 bg-gray-50 border-b flex flex-wrap gap-3 text-sm">'
+    + '<span class="text-gray-500">共 ' + txns.length + ' 筆</span>'
+    + '<span class="text-green-600 font-medium">收入: $' + formatMoney(totalIncome) + '</span>'
+    + '<span class="text-red-500 font-medium">支出: $' + formatMoney(totalExpense) + '</span>'
+    + '<span class="font-medium ' + (totalIncome - totalExpense >= 0 ? 'text-primary-600' : 'text-red-600') + '">淨額: $' + formatMoney(totalIncome - totalExpense) + '</span>'
+    + '</div>';
+
+  if (txns.length === 0) {
+    html += '<p class="p-6 text-gray-400 text-center">無符合條件的記錄</p>';
+  } else {
+    // Desktop table
+    html += '<div class="hidden md:block overflow-x-auto">'
+      + '<table class="w-full text-sm"><thead><tr class="text-left text-gray-500 border-b bg-gray-50">'
+      + '<th class="px-4 py-3">日期</th><th class="px-4 py-3">類型</th><th class="px-4 py-3">分類</th><th class="px-4 py-3">說明</th><th class="px-4 py-3 text-right">金額</th><th class="px-4 py-3 text-center">操作</th>'
+      + '</tr></thead><tbody>'
+      + txns.map(buildTxnRow).join('')
+      + '</tbody></table></div>';
+
+    // Mobile cards
+    html += '<div class="md:hidden p-3">'
+      + txns.map(buildTxnCard).join('')
+      + '</div>';
+  }
+
+  el.innerHTML = html;
+}
+
+function showTxnModal(id) {
+  const cats = getCategories();
+  let txn = id ? getTransactions().find(t => t.id === id) : null;
+  const isEdit = !!txn;
+  if (!txn) txn = { type: 'income', date: todayStr(), category: '', amount: '', description: '' };
+
+  const catOptions = (type) => (cats[type] || []).map(c => `<option value="${c}" ${txn.category === c ? 'selected' : ''}>${c}</option>`).join('');
+
+  showModal(`
+    <div class="p-6">
+      <h3 class="text-lg font-bold text-gray-800 mb-4">${isEdit ? '編輯' : '新增'}交易記錄</h3>
+      <form id="txn-form" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">類型</label>
+          <select id="txn-type-input" class="w-full border rounded-lg px-3 py-2 text-sm" onchange="updateTxnCatOptions()">
+            <option value="income" ${txn.type==='income'?'selected':''}>收入</option>
+            <option value="expense" ${txn.type==='expense'?'selected':''}>支出</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">日期</label>
+          <input type="date" id="txn-date-input" class="w-full border rounded-lg px-3 py-2 text-sm" value="${txn.date}" required>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">分類</label>
+          <select id="txn-cat-input" class="w-full border rounded-lg px-3 py-2 text-sm">
+            ${catOptions(txn.type)}
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">金額</label>
+          <input type="number" id="txn-amount-input" class="w-full border rounded-lg px-3 py-2 text-sm" value="${txn.amount}" min="0" step="1" required placeholder="請輸入金額">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">說明</label>
+          <input type="text" id="txn-desc-input" class="w-full border rounded-lg px-3 py-2 text-sm" value="${txn.description || ''}" placeholder="選填">
+        </div>
+        <div class="flex justify-end gap-2 pt-3">
+          <button type="button" onclick="closeModal()" class="btn btn-outline">取消</button>
+          <button type="submit" class="btn btn-primary">${isEdit ? '更新' : '新增'}</button>
+        </div>
+      </form>
+    </div>
+  `);
+
+  document.getElementById('txn-form').addEventListener('submit', e => {
+    e.preventDefault();
+    const data = {
+      type: document.getElementById('txn-type-input').value,
+      date: document.getElementById('txn-date-input').value,
+      category: document.getElementById('txn-cat-input').value,
+      amount: Number(document.getElementById('txn-amount-input').value),
+      description: document.getElementById('txn-desc-input').value
+    };
+    if (!data.date || !data.amount || data.amount <= 0) { showToast('請填寫日期和有效金額', 'warning'); return; }
+
+    const txns = getTransactions();
+    if (isEdit) {
+      const idx = txns.findIndex(t => t.id === id);
+      if (idx >= 0) txns[idx] = { ...txns[idx], ...data };
     } else {
-        noData.classList.add('hidden');
-        tbody.innerHTML = txs.map(t => `
-            <tr>
-                <td class="whitespace-nowrap">${t.date}</td>
-                <td><span class="px-2 py-1 rounded-full text-xs font-medium ${t.type === 'income' ? 'badge-income' : 'badge-expense'}">${t.type === 'income' ? '收入' : '支出'}</span></td>
-                <td>${t.category}</td>
-                <td>${escapeHtml(t.description || '-')}</td>
-                <td class="text-right font-medium ${t.type === 'income' ? 'amount-positive' : 'amount-negative'}">${formatMoney(t.amount)}</td>
-                <td class="text-center whitespace-nowrap">
-                    <button class="text-blue-500 hover:text-blue-700 text-sm mr-2" onclick="editTx('${t.id}')">編輯</button>
-                    <button class="text-red-500 hover:text-red-700 text-sm" onclick="deleteTx('${t.id}')">刪除</button>
-                </td>
-            </tr>
-        `).join('');
+      txns.push({ id: genId(), ...data, createdAt: new Date().toISOString() });
     }
-
-    const incTotal = txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-    const expTotal = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-    document.getElementById('txSummary').textContent = `共 ${txs.length} 筆 | 收入合計 ${formatMoney(incTotal)} | 支出合計 ${formatMoney(expTotal)} | 淨額 ${formatMoney(incTotal - expTotal)}`;
+    saveTransactions(txns);
+    closeModal();
+    refreshTxnTable();
+    showToast(isEdit ? '交易記錄已更新' : '交易記錄已新增', 'success');
+    flashSaved();
+  });
 }
 
-function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+function updateTxnCatOptions() {
+  const type = document.getElementById('txn-type-input').value;
+  const cats = getCategories();
+  const sel = document.getElementById('txn-cat-input');
+  sel.innerHTML = (cats[type] || []).map(c => `<option value="${c}">${c}</option>`).join('');
 }
 
-function openTxModal() {
-    document.getElementById('txModal').classList.remove('hidden');
-    document.getElementById('txModal').classList.add('flex');
-    document.getElementById('txDate').value = today();
-    document.getElementById('txEditId').value = '';
-    document.getElementById('txModalTitle').textContent = '新增交易';
-    document.getElementById('txType').value = 'income';
-    document.getElementById('txAmount').value = '';
-    document.getElementById('txDesc').value = '';
-    updateTxCategories();
+function deleteTxn(id) {
+  if (!confirm('確定要刪除此筆記錄？')) return;
+  const txns = getTransactions().filter(t => t.id !== id);
+  saveTransactions(txns);
+  refreshTxnTable();
+  showToast('交易記錄已刪除', 'info');
+  flashSaved();
 }
 
-function closeTxModal() {
-    document.getElementById('txModal').classList.add('hidden');
-    document.getElementById('txModal').classList.remove('flex');
+function showCategoryModal() {
+  const cats = getCategories();
+  showModal(`
+    <div class="p-6">
+      <h3 class="text-lg font-bold text-gray-800 mb-4">分類管理</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+        <div>
+          <h4 class="font-medium text-green-700 mb-2">收入類別</h4>
+          <div id="cat-income-list" class="space-y-1 mb-2">
+            ${cats.income.map((c, i) => `<div class="flex items-center gap-2"><span class="flex-1 text-sm bg-green-50 rounded px-2 py-1">${c}</span><button onclick="removeCat('income',${i})" class="text-red-400 hover:text-red-600 text-xs">✕</button></div>`).join('')}
+          </div>
+          <div class="flex gap-1">
+            <input type="text" id="new-cat-income" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="新類別">
+            <button onclick="addCat('income')" class="px-2 py-1 bg-green-600 text-white rounded text-xs">加入</button>
+          </div>
+        </div>
+        <div>
+          <h4 class="font-medium text-red-700 mb-2">支出類別</h4>
+          <div id="cat-expense-list" class="space-y-1 mb-2">
+            ${cats.expense.map((c, i) => `<div class="flex items-center gap-2"><span class="flex-1 text-sm bg-red-50 rounded px-2 py-1">${c}</span><button onclick="removeCat('expense',${i})" class="text-red-400 hover:text-red-600 text-xs">✕</button></div>`).join('')}
+          </div>
+          <div class="flex gap-1">
+            <input type="text" id="new-cat-expense" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="新類別">
+            <button onclick="addCat('expense')" class="px-2 py-1 bg-red-600 text-white rounded text-xs">加入</button>
+          </div>
+        </div>
+      </div>
+      <div class="flex justify-end mt-4">
+        <button onclick="closeModal()" class="btn btn-outline">關閉</button>
+      </div>
+    </div>
+  `);
 }
 
-function updateTxCategories() {
-    const type = document.getElementById('txType').value;
-    const cats = getCategories();
-    const sel = document.getElementById('txCategory');
-    sel.innerHTML = (cats[type] || []).map(c => `<option value="${c}">${c}</option>`).join('');
+function addCat(type) {
+  const input = document.getElementById('new-cat-' + type);
+  const val = input.value.trim();
+  if (!val) return;
+  const cats = getCategories();
+  if (!cats[type].includes(val)) {
+    cats[type].push(val);
+    saveCategories(cats);
+  }
+  showCategoryModal();
 }
 
-function editTx(id) {
-    const txs = getData(KEYS.transactions);
-    const t = txs.find(x => x.id === id);
-    if (!t) return;
-    document.getElementById('txModal').classList.remove('hidden');
-    document.getElementById('txModal').classList.add('flex');
-    document.getElementById('txModalTitle').textContent = '編輯交易';
-    document.getElementById('txEditId').value = id;
-    document.getElementById('txDate').value = t.date;
-    document.getElementById('txType').value = t.type;
-    updateTxCategories();
-    document.getElementById('txCategory').value = t.category;
-    document.getElementById('txAmount').value = t.amount;
-    document.getElementById('txDesc').value = t.description || '';
+function removeCat(type, idx) {
+  const cats = getCategories();
+  cats[type].splice(idx, 1);
+  saveCategories(cats);
+  showCategoryModal();
 }
 
-function saveTx() {
-    const date = document.getElementById('txDate').value;
-    const type = document.getElementById('txType').value;
-    const category = document.getElementById('txCategory').value;
-    const amount = parseFloat(document.getElementById('txAmount').value);
-    const description = document.getElementById('txDesc').value.trim();
-    const editId = document.getElementById('txEditId').value;
+// ============================================================
+// PAGE: 損益表 (P&L)
+// ============================================================
+let pnlMode = 'month'; // 'month' or 'year'
+let pnlDate = todayStr().slice(0, 7); // YYYY-MM or YYYY
 
-    if (!date || !category || !amount || amount <= 0) {
-        toast('請填寫完整資料', 'error');
-        return;
-    }
+function renderPnl() {
+  const container = document.getElementById('page-content');
+  const now = new Date();
 
-    let txs = getData(KEYS.transactions);
-    if (editId) {
-        const idx = txs.findIndex(t => t.id === editId);
-        if (idx >= 0) txs[idx] = { ...txs[idx], date, type, category, amount, description };
-        toast('交易已更新');
-    } else {
-        txs.push({ id: genId(), date, type, category, amount, description, createdAt: Date.now() });
-        toast('交易已新增');
-    }
-    setData(KEYS.transactions, txs);
-    closeTxModal();
-    renderTransactions();
-}
+  container.innerHTML = `
+    <div class="mb-6">
+      <div class="flex items-center gap-3">
+        <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800">損益表</h2>
+          <p class="text-gray-500 text-sm">查看收支明細與損益分析</p>
+        </div>
+      </div>
+    </div>
 
-function deleteTx(id) {
-    if (!confirm('確定要刪除這筆交易？')) return;
-    let txs = getData(KEYS.transactions);
-    txs = txs.filter(t => t.id !== id);
-    setData(KEYS.transactions, txs);
-    toast('交易已刪除');
-    renderTransactions();
-}
+    <!-- Controls -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4 flex flex-wrap items-center gap-3">
+      <div class="flex rounded-xl border overflow-hidden">
+        <button onclick="pnlMode='month';renderPnl()" class="px-5 py-2.5 text-sm font-medium transition-all ${pnlMode==='month'?'bg-primary-600 text-white':'bg-white text-gray-600 hover:bg-gray-50'}">月度</button>
+        <button onclick="pnlMode='year';pnlDate=todayStr().slice(0,4);renderPnl()" class="px-5 py-2.5 text-sm font-medium transition-all ${pnlMode==='year'?'bg-primary-600 text-white':'bg-white text-gray-600 hover:bg-gray-50'}">年度</button>
+      </div>
+      ${pnlMode === 'month' ? `
+        <input type="month" value="${pnlDate}" onchange="pnlDate=this.value;renderPnl()">
+      ` : `
+        <select onchange="pnlDate=this.value;renderPnl()">
+          ${Array.from({length:5}, (_, i) => now.getFullYear() - i).map(y => `<option value="${y}" ${pnlDate==String(y)?'selected':''}>${y} 年</option>`).join('')}
+        </select>
+      `}
+    </div>
 
-// ===== Income Statement =====
-function initIncomeStatement() {
-    const txs = getData(KEYS.transactions);
-    const years = new Set(txs.map(t => t.date.slice(0, 4)));
-    const curYear = new Date().getFullYear().toString();
-    if (!years.has(curYear)) years.add(curYear);
-    const yearSel = document.getElementById('isYear');
-    yearSel.innerHTML = [...years].sort().reverse().map(y => `<option value="${y}">${y}</option>`).join('');
-    yearSel.value = curYear;
-    document.getElementById('isMonth').value = new Date().getMonth() + 1;
-    renderIncomeStatement();
-}
+    <!-- P&L Content -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+      <div class="lg:col-span-2" id="pnl-table-area"></div>
+      <div class="space-y-4">
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5"><canvas id="chart-pnl-pie" height="250"></canvas></div>
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5"><canvas id="chart-pnl-bar" height="250"></canvas></div>
+      </div>
+    </div>
+  `;
 
-let chartInc = null, chartExp2 = null;
+  const txns = getTransactions();
+  const prefix = pnlMode === 'month' ? pnlDate : pnlDate;
+  const filtered = txns.filter(t => t.date && (pnlMode === 'month' ? t.date.startsWith(pnlDate) : t.date.startsWith(pnlDate)));
 
-function renderIncomeStatement() {
-    const mode = document.getElementById('isMode').value;
-    const year = document.getElementById('isYear').value;
-    const month = document.getElementById('isMonth').value;
-    document.getElementById('isMonthWrap').style.display = mode === 'monthly' ? '' : 'none';
+  const incomeItems = filtered.filter(t => t.type === 'income');
+  const expenseItems = filtered.filter(t => t.type === 'expense');
 
-    let txs = getData(KEYS.transactions);
-    if (mode === 'monthly') {
-        const prefix = `${year}-${month.padStart(2, '0')}`;
-        txs = txs.filter(t => t.date.startsWith(prefix));
-        document.getElementById('isTitle').textContent = `${year}年${month}月 損益表`;
-    } else {
-        txs = txs.filter(t => t.date.startsWith(year));
-        document.getElementById('isTitle').textContent = `${year}年 年度損益表`;
-    }
-
-    const incItems = {}, expItems = {};
-    txs.forEach(t => {
-        if (t.type === 'income') incItems[t.category] = (incItems[t.category] || 0) + t.amount;
-        else expItems[t.category] = (expItems[t.category] || 0) + t.amount;
+  // Group by category
+  function groupByCategory(items) {
+    const map = {};
+    items.forEach(t => {
+      const cat = t.category || '未分類';
+      map[cat] = (map[cat] || 0) + Number(t.amount);
     });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]);
+  }
 
-    const incTotal = Object.values(incItems).reduce((s, v) => s + v, 0);
-    const expTotal = Object.values(expItems).reduce((s, v) => s + v, 0);
-    const net = incTotal - expTotal;
+  const incomeGroups = groupByCategory(incomeItems);
+  const expenseGroups = groupByCategory(expenseItems);
+  const totalIncome = incomeGroups.reduce((s, [, v]) => s + v, 0);
+  const totalExpense = expenseGroups.reduce((s, [, v]) => s + v, 0);
+  const net = totalIncome - totalExpense;
 
-    document.getElementById('isIncomeItems').innerHTML = Object.entries(incItems).map(([k, v]) =>
-        `<div class="flex justify-between py-1 text-sm"><span class="text-gray-600">${escapeHtml(k)}</span><span>${formatMoney(v)}</span></div>`
-    ).join('') || '<p class="text-sm text-gray-400">無收入記錄</p>';
+  const periodLabel = pnlMode === 'month' ? `${pnlDate.replace('-', ' 年 ')} 月` : `${pnlDate} 年`;
 
-    document.getElementById('isExpenseItems').innerHTML = Object.entries(expItems).map(([k, v]) =>
-        `<div class="flex justify-between py-1 text-sm"><span class="text-gray-600">${escapeHtml(k)}</span><span>${formatMoney(v)}</span></div>`
-    ).join('') || '<p class="text-sm text-gray-400">無支出記錄</p>';
+  document.getElementById('pnl-table-area').innerHTML = `
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div class="px-5 py-4 border-b bg-gray-50">
+        <div class="flex items-center gap-3">
+          <img src="logo.jpg" alt="Logo" class="w-8 h-8 rounded-lg object-contain">
+          <h3 class="font-semibold text-gray-700">${periodLabel} 損益表</h3>
+        </div>
+      </div>
+      <div class="p-5">
+        <!-- Income -->
+        <h4 class="font-medium text-green-700 mb-2">收入</h4>
+        ${incomeGroups.length === 0 ? '<p class="text-sm text-gray-400 mb-3">無收入記錄</p>' : `
+        <table class="w-full text-sm mb-3">
+          ${incomeGroups.map(([cat, amt]) => `<tr class="border-b"><td class="py-2 text-gray-600">${cat}</td><td class="py-2 text-right text-green-600 font-medium">$${formatMoney(amt)}</td></tr>`).join('')}
+          <tr class="font-bold border-t-2"><td class="py-2">收入合計</td><td class="py-2 text-right text-green-700">$${formatMoney(totalIncome)}</td></tr>
+        </table>`}
 
-    document.getElementById('isIncomeTotal').textContent = formatMoney(incTotal);
-    document.getElementById('isExpenseTotal').textContent = formatMoney(expTotal);
-    const netEl = document.getElementById('isNetIncome');
-    netEl.textContent = formatMoney(net);
-    netEl.className = net >= 0 ? 'amount-positive' : 'amount-negative';
+        <!-- Expense -->
+        <h4 class="font-medium text-red-700 mb-2 mt-4">支出</h4>
+        ${expenseGroups.length === 0 ? '<p class="text-sm text-gray-400 mb-3">無支出記錄</p>' : `
+        <table class="w-full text-sm mb-3">
+          ${expenseGroups.map(([cat, amt]) => `<tr class="border-b"><td class="py-2 text-gray-600">${cat}</td><td class="py-2 text-right text-red-500 font-medium">$${formatMoney(amt)}</td></tr>`).join('')}
+          <tr class="font-bold border-t-2"><td class="py-2">支出合計</td><td class="py-2 text-right text-red-600">$${formatMoney(totalExpense)}</td></tr>
+        </table>`}
 
-    // Charts
-    const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
-    if (chartInc) chartInc.destroy();
-    if (chartExp2) chartExp2.destroy();
+        <!-- Net -->
+        <div class="mt-4 p-4 rounded-lg ${net >= 0 ? 'bg-blue-50' : 'bg-red-50'}">
+          <div class="flex justify-between items-center">
+            <span class="font-bold text-lg ${net >= 0 ? 'text-primary-700' : 'text-red-700'}">淨利（損）</span>
+            <span class="font-bold text-xl ${net >= 0 ? 'text-primary-700' : 'text-red-700'}">$${formatMoney(net)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
 
-    const incKeys = Object.keys(incItems);
-    const expKeys = Object.keys(expItems);
+  // Pie chart
+  const allGroups = [...incomeGroups.map(([c, a]) => ({cat: c, amt: a, type: 'income'})), ...expenseGroups.map(([c, a]) => ({cat: c, amt: a, type: 'expense'}))];
+  const pieCtx = document.getElementById('chart-pnl-pie');
+  if (pieCtx && allGroups.length > 0) {
+    const colors = ['#2563eb','#16a34a','#d97706','#dc2626','#7c3aed','#0891b2','#be185d','#65a30d','#ea580c','#4f46e5','#059669','#e11d48'];
+    currentCharts.push(new Chart(pieCtx, {
+      type: 'doughnut',
+      data: {
+        labels: allGroups.map(g => g.cat),
+        datasets: [{ data: allGroups.map(g => g.amt), backgroundColor: allGroups.map((_, i) => colors[i % colors.length]) }]
+      },
+      options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } }, title: { display: true, text: '收支分佈', font: { size: 13 } } } }
+    }));
+  }
 
-    chartInc = new Chart(document.getElementById('chartIncDist'), {
-        type: 'doughnut',
-        data: { labels: incKeys, datasets: [{ data: incKeys.map(k => incItems[k]), backgroundColor: colors }] },
-        options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
-    });
-
-    chartExp2 = new Chart(document.getElementById('chartExpDist2'), {
-        type: 'doughnut',
-        data: { labels: expKeys, datasets: [{ data: expKeys.map(k => expItems[k]), backgroundColor: colors }] },
-        options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
-    });
+  // Bar chart
+  const barCtx = document.getElementById('chart-pnl-bar');
+  if (barCtx) {
+    currentCharts.push(new Chart(barCtx, {
+      type: 'bar',
+      data: {
+        labels: ['收入', '支出', '淨利'],
+        datasets: [{ data: [totalIncome, totalExpense, net], backgroundColor: ['#16a34a', '#dc2626', net >= 0 ? '#2563eb' : '#f59e0b'] }]
+      },
+      options: { responsive: true, plugins: { legend: { display: false }, title: { display: true, text: '收支摘要', font: { size: 13 } } }, scales: { y: { beginAtZero: true, ticks: { callback: v => '$' + formatMoney(v) } } } }
+    }));
+  }
 }
 
-function printIncomeStatement() {
-    const content = document.getElementById('isReport').innerHTML;
-    const win = window.open('', '_blank');
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>損益表</title>
-        <style>body{font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;padding:40px;max-width:800px;margin:auto}
-        h3{text-align:center}p{text-align:center;color:#666}
-        .flex{display:flex;justify-content:space-between}
-        .font-bold{font-weight:bold}.text-sm{font-size:14px}
-        .text-xl{font-size:20px}.text-gray-600{color:#666}
-        .text-blue-600,.text-blue-700{color:#2563eb}.text-red-600{color:#ef4444}
-        .amount-positive{color:#16a34a}.amount-negative{color:#ef4444}
-        .border-b{border-bottom:1px solid #ddd;padding-bottom:8px;margin-bottom:8px}
-        .border-t{border-top:1px solid #ddd;padding-top:8px;margin-top:8px}
-        .border-t-2{border-top:2px solid #999;padding-top:12px;margin-top:12px}
-        .py-1{padding:4px 0}.mt-3{margin-top:12px}.pt-3{padding-top:12px}.mb-3{margin-bottom:12px}.pb-2{padding-bottom:8px}.mt-6{margin-top:24px}.pt-4{padding-top:16px}.mb-6{margin-bottom:24px}
-        .grid{display:grid;grid-template-columns:1fr 1fr;gap:32px}
-        @media print{body{padding:20px}}</style></head>
-        <body>${content}</body></html>`);
-    win.document.close();
-    win.print();
+// ============================================================
+// PAGE: 資產負債表 (Balance Sheet)
+// ============================================================
+let bsDate = todayStr();
+
+function renderBalanceSheet() {
+  const container = document.getElementById('page-content');
+  const now = new Date();
+
+  container.innerHTML = `
+    <div class="mb-6">
+      <div class="flex items-center gap-3">
+        <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800">資產負債表</h2>
+          <p class="text-gray-500 text-sm">查看組織資產、負債與淨資產狀況</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4 flex flex-wrap items-center gap-3">
+      <label class="text-sm text-gray-600 font-medium">截至日期：</label>
+      <input type="date" value="${bsDate}" onchange="bsDate=this.value;renderBalanceSheet()" style="width:auto">
+      <button onclick="printBalanceSheet()" class="ml-auto btn btn-outline">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+        列印
+      </button>
+    </div>
+
+    <!-- Balance Sheet Content -->
+    <div id="bs-report"></div>
+  `;
+
+  refreshBalanceSheet();
 }
 
-// ===== Receivables =====
-function renderReceivables() {
-    let ars = getData(KEYS.receivables);
-    const filter = document.getElementById('arFilter').value;
-    const search = document.getElementById('arSearch').value.toLowerCase();
+function refreshBalanceSheet() {
+  const txns = getTransactions().filter(t => t.date && t.date <= bsDate);
+  const recvs = getReceivables();
 
-    if (filter) ars = ars.filter(a => a.status === filter);
-    if (search) ars = ars.filter(a => a.unitName.toLowerCase().includes(search) || (a.description || '').toLowerCase().includes(search));
+  // Calculate totals
+  const totalIncome = txns.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+  const totalExpense = txns.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+  const cashBalance = totalIncome - totalExpense;
 
-    ars.sort((a, b) => (a.status === 'paid' ? 1 : 0) - (b.status === 'paid' ? 1 : 0) || (a.dueDate || '').localeCompare(b.dueDate || ''));
+  // Accounts Receivable (unpaid/partial amounts)
+  const accountsReceivable = recvs
+    .filter(r => r.status !== 'paid')
+    .reduce((s, r) => s + (Number(r.amount) - Number(r.paidAmount || 0)), 0);
 
-    const tbody = document.getElementById('arTableBody');
-    const noData = document.getElementById('arNoData');
-    const todayStr = today();
+  // Total Assets
+  const totalAssets = cashBalance + accountsReceivable;
 
-    if (ars.length === 0) {
-        tbody.innerHTML = '';
-        noData.classList.remove('hidden');
-    } else {
-        noData.classList.add('hidden');
-        tbody.innerHTML = ars.map(a => {
-            const remaining = a.amount - a.paidAmount;
-            const overdue = a.dueDate && a.dueDate < todayStr && a.status !== 'paid';
-            const statusLabel = a.status === 'paid' ? '已付清' : a.status === 'partial' ? '部分付款' : '未付';
-            const statusClass = a.status === 'paid' ? 'badge-paid' : a.status === 'partial' ? 'badge-partial' : 'badge-unpaid';
-            return `<tr>
-                <td class="font-medium">${escapeHtml(a.unitName)}</td>
-                <td>${escapeHtml(a.description)}</td>
-                <td class="text-right">${formatMoney(a.amount)}</td>
-                <td class="text-right">${formatMoney(a.paidAmount)}</td>
-                <td class="text-right font-medium ${remaining > 0 ? 'amount-negative' : ''}">${formatMoney(remaining)}</td>
-                <td class="whitespace-nowrap">${a.dueDate || '-'} ${overdue ? '<span class="badge-overdue px-1 py-0.5 rounded text-xs ml-1">逾期</span>' : ''}</td>
-                <td><span class="px-2 py-1 rounded-full text-xs font-medium ${statusClass}">${statusLabel}</span></td>
-                <td class="text-center whitespace-nowrap">
-                    ${a.status !== 'paid' ? `<button class="text-green-600 hover:text-green-800 text-sm mr-1" onclick="openPayModal('${a.id}')">收款</button>` : ''}
-                    <button class="text-blue-500 hover:text-blue-700 text-sm mr-1" onclick="viewPayHistory('${a.id}')">記錄</button>
-                    <button class="text-blue-500 hover:text-blue-700 text-sm mr-1" onclick="editAr('${a.id}')">編輯</button>
-                    <button class="text-red-500 hover:text-red-700 text-sm" onclick="deleteAr('${a.id}')">刪除</button>
-                </td>
-            </tr>`;
-        }).join('');
-    }
+  // Net Assets (Equity) = Total Assets (no liabilities tracked yet)
+  const retainedEarnings = totalAssets;
 
-    // Summary cards
-    const allArs = getData(KEYS.receivables);
-    const unpaidTotal = allArs.filter(a => a.status !== 'paid').reduce((s, a) => s + (a.amount - a.paidAmount), 0);
-    const overdueCount = allArs.filter(a => a.dueDate && a.dueDate < todayStr && a.status !== 'paid').length;
-    const paidTotal = allArs.reduce((s, a) => s + a.paidAmount, 0);
-    document.getElementById('arUnpaidTotal').textContent = formatMoney(unpaidTotal);
-    document.getElementById('arOverdueCount').textContent = overdueCount;
-    document.getElementById('arPaidTotal').textContent = formatMoney(paidTotal);
-}
+  const formattedDate = bsDate.replace(/(\d{4})-(\d{2})-(\d{2})/, '$1 年 $2 月 $3 日');
 
-function openArModal() {
-    document.getElementById('arModal').classList.remove('hidden');
-    document.getElementById('arModal').classList.add('flex');
-    document.getElementById('arModalTitle').textContent = '新增應收帳款';
-    document.getElementById('arEditId').value = '';
-    document.getElementById('arUnit').value = '';
-    document.getElementById('arDescField').value = '';
-    document.getElementById('arAmount').value = '';
-    document.getElementById('arDueDate').value = '';
-}
+  // Income breakdown by category
+  const incByCat = {};
+  txns.filter(t => t.type === 'income').forEach(t => {
+    incByCat[t.category || '未分類'] = (incByCat[t.category || '未分類'] || 0) + Number(t.amount);
+  });
+  const expByCat = {};
+  txns.filter(t => t.type === 'expense').forEach(t => {
+    expByCat[t.category || '未分類'] = (expByCat[t.category || '未分類'] || 0) + Number(t.amount);
+  });
 
-function closeArModal() {
-    document.getElementById('arModal').classList.add('hidden');
-    document.getElementById('arModal').classList.remove('flex');
-}
+  // Receivable details
+  const recvDetails = recvs
+    .filter(r => r.status !== 'paid')
+    .map(r => ({ name: r.unitName || '未知', amount: Number(r.amount) - Number(r.paidAmount || 0) }));
 
-function editAr(id) {
-    const ars = getData(KEYS.receivables);
-    const a = ars.find(x => x.id === id);
-    if (!a) return;
-    document.getElementById('arModal').classList.remove('hidden');
-    document.getElementById('arModal').classList.add('flex');
-    document.getElementById('arModalTitle').textContent = '編輯應收帳款';
-    document.getElementById('arEditId').value = id;
-    document.getElementById('arUnit').value = a.unitName;
-    document.getElementById('arDescField').value = a.description;
-    document.getElementById('arAmount').value = a.amount;
-    document.getElementById('arDueDate').value = a.dueDate || '';
-}
+  document.getElementById('bs-report').innerHTML = `
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+      <div class="card bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-5 shadow-md">
+        <p class="text-sm text-blue-100 mb-1">資產總額</p>
+        <p class="text-2xl font-bold text-white">$${formatMoney(totalAssets)}</p>
+      </div>
+      <div class="card bg-gradient-to-br from-amber-500 to-amber-600 rounded-2xl p-5 shadow-md">
+        <p class="text-sm text-amber-100 mb-1">負債總額</p>
+        <p class="text-2xl font-bold text-white">$${formatMoney(0)}</p>
+      </div>
+      <div class="card bg-gradient-to-br from-green-500 to-green-600 rounded-2xl p-5 shadow-md">
+        <p class="text-sm text-green-100 mb-1">淨資產（權益）</p>
+        <p class="text-2xl font-bold text-white">$${formatMoney(retainedEarnings)}</p>
+      </div>
+    </div>
 
-function saveAr() {
-    const unitName = document.getElementById('arUnit').value.trim();
-    const description = document.getElementById('arDescField').value.trim();
-    const amount = parseFloat(document.getElementById('arAmount').value);
-    const dueDate = document.getElementById('arDueDate').value;
-    const editId = document.getElementById('arEditId').value;
+    <!-- Balance Sheet Table -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden" id="bs-printable">
+      <div class="px-5 py-4 border-b bg-gray-50 text-center">
+        <div class="flex items-center justify-center gap-3 mb-1">
+          <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+          <h3 class="font-bold text-lg text-gray-800">全國公寓大廈管理委員聯誼會</h3>
+        </div>
+        <p class="text-sm text-gray-500">資產負債表　截至 ${formattedDate}</p>
+      </div>
+      <div class="p-5">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <!-- Left: Assets -->
+          <div>
+            <h4 class="font-bold text-blue-700 mb-3 pb-2 border-b-2 border-blue-200 text-base">資產</h4>
 
-    if (!unitName || !description || !amount || amount <= 0) {
-        toast('請填寫完整資料', 'error');
-        return;
-    }
+            <div class="mb-4">
+              <h5 class="font-medium text-gray-700 mb-2 text-sm">流動資產</h5>
+              <table class="w-full text-sm">
+                <tr class="border-b">
+                  <td class="py-2 text-gray-600 pl-4">現金及銀行存款</td>
+                  <td class="py-2 text-right font-medium ${cashBalance >= 0 ? 'text-blue-600' : 'text-red-600'}">$${formatMoney(cashBalance)}</td>
+                </tr>
+                <tr class="border-b">
+                  <td class="py-2 text-gray-600 pl-4">應收帳款</td>
+                  <td class="py-2 text-right font-medium text-blue-600">$${formatMoney(accountsReceivable)}</td>
+                </tr>
+              </table>
+              ${recvDetails.length > 0 ? `
+              <div class="ml-8 mt-1 mb-2">
+                ${recvDetails.map(r => `
+                  <div class="flex justify-between text-xs text-gray-400 py-0.5">
+                    <span>${r.name}</span>
+                    <span>$${formatMoney(r.amount)}</span>
+                  </div>
+                `).join('')}
+              </div>` : ''}
+            </div>
 
-    let ars = getData(KEYS.receivables);
-    if (editId) {
-        const idx = ars.findIndex(a => a.id === editId);
-        if (idx >= 0) {
-            ars[idx] = { ...ars[idx], unitName, description, amount, dueDate };
-            if (ars[idx].paidAmount >= amount) ars[idx].status = 'paid';
-            else if (ars[idx].paidAmount > 0) ars[idx].status = 'partial';
-            else ars[idx].status = 'unpaid';
-        }
-        toast('應收帳款已更新');
-    } else {
-        ars.push({ id: genId(), unitName, description, amount, paidAmount: 0, status: 'unpaid', dueDate, payments: [], createdAt: Date.now() });
-        toast('應收帳款已新增');
-    }
-    setData(KEYS.receivables, ars);
-    closeArModal();
-    renderReceivables();
-}
+            <div class="mt-4 p-3 rounded-lg bg-blue-50">
+              <div class="flex justify-between font-bold text-blue-700">
+                <span>資產合計</span>
+                <span>$${formatMoney(totalAssets)}</span>
+              </div>
+            </div>
+          </div>
 
-function deleteAr(id) {
-    if (!confirm('確定要刪除這筆應收帳款？')) return;
-    let ars = getData(KEYS.receivables);
-    ars = ars.filter(a => a.id !== id);
-    setData(KEYS.receivables, ars);
-    toast('應收帳款已刪除');
-    renderReceivables();
-}
+          <!-- Right: Liabilities + Equity -->
+          <div>
+            <h4 class="font-bold text-red-700 mb-3 pb-2 border-b-2 border-red-200 text-base">負債</h4>
+            <div class="mb-4">
+              <p class="text-sm text-gray-400 pl-4 py-2">目前無負債記錄</p>
+            </div>
+            <div class="flex justify-between font-bold text-red-600 text-sm mb-6">
+              <span class="pl-4">負債合計</span>
+              <span>$${formatMoney(0)}</span>
+            </div>
 
-function openPayModal(id) {
-    const ars = getData(KEYS.receivables);
-    const a = ars.find(x => x.id === id);
-    if (!a) return;
-    document.getElementById('payModal').classList.remove('hidden');
-    document.getElementById('payModal').classList.add('flex');
-    document.getElementById('payDate').value = today();
-    document.getElementById('payAmount').value = '';
-    document.getElementById('payArId').value = id;
-    document.getElementById('payRemaining').textContent = formatMoney(a.amount - a.paidAmount);
-}
+            <h4 class="font-bold text-green-700 mb-3 pb-2 border-b-2 border-green-200 text-base">淨資產（權益）</h4>
+            <table class="w-full text-sm">
+              <tr class="border-b">
+                <td class="py-2 text-gray-600 pl-4">累計盈餘</td>
+                <td class="py-2 text-right font-medium text-green-600">$${formatMoney(retainedEarnings)}</td>
+              </tr>
+            </table>
 
-function closePayModal() {
-    document.getElementById('payModal').classList.add('hidden');
-    document.getElementById('payModal').classList.remove('flex');
-}
+            <div class="mt-4 p-3 rounded-lg bg-green-50">
+              <div class="flex justify-between font-bold text-green-700">
+                <span>負債及淨資產合計</span>
+                <span>$${formatMoney(retainedEarnings)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
 
-function savePayment() {
-    const id = document.getElementById('payArId').value;
-    const payDate = document.getElementById('payDate').value;
-    const payAmount = parseFloat(document.getElementById('payAmount').value);
-
-    if (!payDate || !payAmount || payAmount <= 0) {
-        toast('請填寫收款資料', 'error');
-        return;
-    }
-
-    let ars = getData(KEYS.receivables);
-    const idx = ars.findIndex(a => a.id === id);
-    if (idx < 0) return;
-
-    const remaining = ars[idx].amount - ars[idx].paidAmount;
-    if (payAmount > remaining) {
-        toast('收款金額不能超過未收餘額', 'error');
-        return;
-    }
-
-    ars[idx].payments.push({ date: payDate, amount: payAmount });
-    ars[idx].paidAmount += payAmount;
-    ars[idx].status = ars[idx].paidAmount >= ars[idx].amount ? 'paid' : 'partial';
-
-    setData(KEYS.receivables, ars);
-    closePayModal();
-    toast('收款已登記');
-    renderReceivables();
-}
-
-function viewPayHistory(id) {
-    const ars = getData(KEYS.receivables);
-    const a = ars.find(x => x.id === id);
-    if (!a) return;
-    document.getElementById('payHistModal').classList.remove('hidden');
-    document.getElementById('payHistModal').classList.add('flex');
-
-    let html = `<p class="text-sm text-gray-500 mb-3">${escapeHtml(a.unitName)} - ${escapeHtml(a.description)}</p>`;
-    if (a.payments.length === 0) {
-        html += '<p class="text-gray-400 text-sm">尚無收款記錄</p>';
-    } else {
-        html += '<table><thead><tr><th>日期</th><th class="text-right">金額</th></tr></thead><tbody>';
-        a.payments.forEach(p => {
-            html += `<tr><td>${p.date}</td><td class="text-right amount-positive">${formatMoney(p.amount)}</td></tr>`;
-        });
-        html += `</tbody></table>`;
-        html += `<div class="mt-3 pt-3 border-t flex justify-between text-sm font-medium"><span>已收合計</span><span class="amount-positive">${formatMoney(a.paidAmount)}</span></div>`;
-        html += `<div class="flex justify-between text-sm font-medium"><span>未收餘額</span><span class="amount-negative">${formatMoney(a.amount - a.paidAmount)}</span></div>`;
-    }
-    document.getElementById('payHistContent').innerHTML = html;
-}
-
-function closePayHistModal() {
-    document.getElementById('payHistModal').classList.add('hidden');
-    document.getElementById('payHistModal').classList.remove('flex');
-}
-
-// ===== Dashboard =====
-let chartTrend = null, chartExpDist = null;
-
-function refreshDashboard() {
-    const txs = getData(KEYS.transactions);
-    const ars = getData(KEYS.receivables);
-    const now = new Date();
-    const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-
-    const monthTxs = txs.filter(t => t.date.startsWith(curMonth));
-    const monthInc = monthTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-    const monthExp = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-    const arBalance = ars.filter(a => a.status !== 'paid').reduce((s, a) => s + (a.amount - a.paidAmount), 0);
-
-    document.getElementById('dashIncome').textContent = formatMoney(monthInc);
-    document.getElementById('dashExpense').textContent = formatMoney(monthExp);
-    const netEl = document.getElementById('dashNet');
-    netEl.textContent = formatMoney(monthInc - monthExp);
-    netEl.className = `text-2xl font-bold ${monthInc - monthExp >= 0 ? 'text-green-600' : 'text-red-500'}`;
-    document.getElementById('dashReceivable').textContent = formatMoney(arBalance);
-
-    // Recent transactions
-    const recent = [...txs].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt).slice(0, 8);
-    const recentBody = document.getElementById('dashRecentTx');
-    const noTx = document.getElementById('dashNoTx');
-    if (recent.length === 0) {
-        recentBody.innerHTML = '';
-        noTx.classList.remove('hidden');
-    } else {
-        noTx.classList.add('hidden');
-        recentBody.innerHTML = recent.map(t => `
-            <tr>
-                <td class="whitespace-nowrap">${t.date}</td>
-                <td><span class="px-2 py-1 rounded-full text-xs font-medium ${t.type === 'income' ? 'badge-income' : 'badge-expense'}">${t.type === 'income' ? '收入' : '支出'}</span></td>
-                <td>${escapeHtml(t.category)}</td>
-                <td>${escapeHtml(t.description || '-')}</td>
-                <td class="text-right font-medium ${t.type === 'income' ? 'amount-positive' : 'amount-negative'}">${formatMoney(t.amount)}</td>
-            </tr>
-        `).join('');
-    }
-
-    // Trend chart (last 6 months)
-    if (chartTrend) chartTrend.destroy();
-    if (chartExpDist) chartExpDist.destroy();
-
-    const months = [];
-    for (let i = 5; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-    }
-
-    const incData = months.map(m => txs.filter(t => t.date.startsWith(m) && t.type === 'income').reduce((s, t) => s + t.amount, 0));
-    const expData = months.map(m => txs.filter(t => t.date.startsWith(m) && t.type === 'expense').reduce((s, t) => s + t.amount, 0));
-    const labels = months.map(m => { const [y, mo] = m.split('-'); return `${y}/${mo}`; });
-
-    chartTrend = new Chart(document.getElementById('chartTrend'), {
-        type: 'line',
-        data: {
-            labels,
-            datasets: [
-                { label: '收入', data: incData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.3 },
-                { label: '支出', data: expData, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.3 }
-            ]
-        },
-        options: { responsive: true, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true } } }
-    });
-
-    // Expense distribution
-    const expByCategory = {};
-    monthTxs.filter(t => t.type === 'expense').forEach(t => {
-        expByCategory[t.category] = (expByCategory[t.category] || 0) + t.amount;
-    });
-    const catKeys = Object.keys(expByCategory);
-    const catColors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
-    chartExpDist = new Chart(document.getElementById('chartExpDist'), {
-        type: 'doughnut',
-        data: { labels: catKeys, datasets: [{ data: catKeys.map(k => expByCategory[k]), backgroundColor: catColors }] },
-        options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
-    });
-}
-
-// ===== Categories (with drag & drop reorder) =====
-let dragType = null, dragIdx = null;
-
-function renderCategories() {
-    const cats = getCategories();
-    document.getElementById('catIncomeList').innerHTML = buildCatList(cats.income, 'income', 'bg-blue-50');
-    document.getElementById('catExpenseList').innerHTML = buildCatList(cats.expense, 'expense', 'bg-red-50');
-}
-
-function buildCatList(items, type, bgClass) {
-    return items.map((c, i) => {
-        const isFirst = i === 0;
-        const isLast = i === items.length - 1;
-        return `<div class="cat-item flex items-center gap-1 ${bgClass} px-3 py-1.5 rounded text-sm"
-                draggable="true"
-                ondragstart="onCatDragStart(event, '${type}', ${i})"
-                ondragover="onCatDragOver(event, ${i})"
-                ondragleave="onCatDragLeave(event)"
-                ondrop="onCatDrop(event, '${type}', ${i})"
-                ondragend="onCatDragEnd(event)"
-                data-idx="${i}">
-            <span class="flex gap-0.5 mr-1">
-                <button class="cat-arrow" onclick="moveCategory('${type}', ${i}, -1)" ${isFirst ? 'disabled style="opacity:0.3;cursor:default"' : ''} title="上移">&#9650;</button>
-                <button class="cat-arrow" onclick="moveCategory('${type}', ${i}, 1)" ${isLast ? 'disabled style="opacity:0.3;cursor:default"' : ''} title="下移">&#9660;</button>
+        <!-- Balance check -->
+        <div class="mt-6 pt-4 border-t-2 border-gray-300">
+          <div class="flex justify-between items-center p-3 rounded-lg ${totalAssets === retainedEarnings ? 'bg-green-50' : 'bg-red-50'}">
+            <span class="font-bold ${totalAssets === retainedEarnings ? 'text-green-700' : 'text-red-700'}">
+              ${totalAssets === retainedEarnings ? '平衡驗證通過' : '不平衡'}
             </span>
-            <span class="flex-1">${escapeHtml(c)}</span>
-            <button class="text-red-400 hover:text-red-600 text-xs ml-2" onclick="removeCategory('${type}', ${i})">x</button>
-        </div>`;
-    }).join('');
+            <span class="text-sm text-gray-500">資產 $${formatMoney(totalAssets)} = 負債 + 淨資產 $${formatMoney(retainedEarnings)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Income/Expense Breakdown -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 class="font-semibold text-gray-700 mb-3">累計收入明細</h3>
+        ${Object.keys(incByCat).length === 0 ? '<p class="text-sm text-gray-400">無收入記錄</p>' : `
+        <table class="w-full text-sm">
+          ${Object.entries(incByCat).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => `
+            <tr class="border-b"><td class="py-2 text-gray-600">${cat}</td><td class="py-2 text-right text-green-600 font-medium">$${formatMoney(amt)}</td></tr>
+          `).join('')}
+          <tr class="font-bold border-t-2"><td class="py-2">合計</td><td class="py-2 text-right text-green-700">$${formatMoney(totalIncome)}</td></tr>
+        </table>`}
+      </div>
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 class="font-semibold text-gray-700 mb-3">累計支出明細</h3>
+        ${Object.keys(expByCat).length === 0 ? '<p class="text-sm text-gray-400">無支出記錄</p>' : `
+        <table class="w-full text-sm">
+          ${Object.entries(expByCat).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => `
+            <tr class="border-b"><td class="py-2 text-gray-600">${cat}</td><td class="py-2 text-right text-red-500 font-medium">$${formatMoney(amt)}</td></tr>
+          `).join('')}
+          <tr class="font-bold border-t-2"><td class="py-2">合計</td><td class="py-2 text-right text-red-600">$${formatMoney(totalExpense)}</td></tr>
+        </table>`}
+      </div>
+    </div>
+  `;
 }
 
-function moveCategory(type, idx, dir) {
-    const cats = getCategories();
-    const arr = cats[type];
-    const newIdx = idx + dir;
-    if (newIdx < 0 || newIdx >= arr.length) return;
-    [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
-    setData(KEYS.categories, cats);
-    renderCategories();
+function printBalanceSheet() {
+  const el = document.getElementById('bs-printable');
+  if (!el) return;
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>資產負債表</title>
+    <style>
+      body{font-family:"Microsoft JhengHei","PingFang TC",sans-serif;padding:30px;max-width:900px;margin:auto;color:#333}
+      h3{text-align:center;margin-bottom:4px}p{text-align:center;color:#666;margin-top:0}
+      table{width:100%;border-collapse:collapse}
+      td{padding:6px 8px}
+      tr.border-b{border-bottom:1px solid #e5e7eb}
+      .text-right{text-align:right}
+      .font-bold{font-weight:bold}
+      .font-medium{font-weight:500}
+      .text-sm{font-size:14px}.text-xs{font-size:12px}.text-base{font-size:16px}
+      .text-gray-600{color:#4b5563}.text-gray-400{color:#9ca3af}.text-gray-500{color:#6b7280}.text-gray-700{color:#374151}.text-gray-800{color:#1f2937}
+      .text-blue-600,.text-blue-700{color:#2563eb}.text-red-600,.text-red-700{color:#dc2626}
+      .text-green-600,.text-green-700{color:#16a34a}.text-amber-600{color:#d97706}
+      .pl-4{padding-left:16px}
+      .grid{display:grid;grid-template-columns:1fr 1fr;gap:32px}
+      .mb-3{margin-bottom:12px}.mb-4{margin-bottom:16px}.mt-4{margin-top:16px}.mt-6{margin-top:24px}
+      .pb-2{padding-bottom:8px}.pt-4{padding-top:16px}
+      .p-3{padding:12px}.p-5{padding:20px}
+      .border-b-2{border-bottom:2px solid #ddd}
+      .border-t-2{border-top:2px solid #999}
+      .bg-blue-50{background:#eff6ff;padding:10px;border-radius:6px}
+      .bg-green-50{background:#f0fdf4;padding:10px;border-radius:6px}
+      .bg-red-50{background:#fef2f2;padding:10px;border-radius:6px}
+      .rounded-lg{border-radius:8px}
+      @media print{body{padding:15px}}
+    </style></head><body>${el.innerHTML}</body></html>`);
+  win.document.close();
+  win.print();
 }
 
-function onCatDragStart(e, type, idx) {
-    dragType = type; dragIdx = idx;
-    e.target.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
+// ============================================================
+// PAGE: 應收帳款 (Receivables)
+// ============================================================
+let recvFilter = '';
+
+function renderReceivables() {
+  const container = document.getElementById('page-content');
+
+  container.innerHTML = `
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+      <div class="flex items-center gap-3">
+        <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800">應收帳款</h2>
+          <p class="text-gray-500 text-sm">追蹤與管理未收款項</p>
+        </div>
+      </div>
+      <button onclick="showRecvModal()" class="btn btn-primary">+ 新增應收帳款</button>
+    </div>
+
+    <!-- Status Filter -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4 flex flex-wrap gap-2">
+      <button onclick="recvFilter='';refreshRecvTable()" class="px-4 py-2 rounded-xl text-sm font-medium transition-all ${recvFilter===''?'bg-primary-600 text-white shadow-md':'bg-gray-100 text-gray-600 hover:bg-gray-200'}">全部</button>
+      <button onclick="recvFilter='unpaid';refreshRecvTable()" class="px-4 py-2 rounded-xl text-sm font-medium transition-all ${recvFilter==='unpaid'?'bg-red-600 text-white shadow-md':'bg-gray-100 text-gray-600 hover:bg-gray-200'}">未付款</button>
+      <button onclick="recvFilter='partial';refreshRecvTable()" class="px-4 py-2 rounded-xl text-sm font-medium transition-all ${recvFilter==='partial'?'bg-amber-600 text-white shadow-md':'bg-gray-100 text-gray-600 hover:bg-gray-200'}">部分付款</button>
+      <button onclick="recvFilter='paid';refreshRecvTable()" class="px-4 py-2 rounded-xl text-sm font-medium transition-all ${recvFilter==='paid'?'bg-green-600 text-white shadow-md':'bg-gray-100 text-gray-600 hover:bg-gray-200'}">已付清</button>
+    </div>
+
+    <!-- Summary -->
+    <div id="recv-summary" class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4"></div>
+
+    <!-- Table -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div id="recv-table-container" class="overflow-x-auto"></div>
+    </div>
+  `;
+  refreshRecvTable();
 }
-function onCatDragOver(e, idx) {
+
+function refreshRecvTable() {
+  let recvs = getReceivables();
+  const today = todayStr();
+
+  // Summary
+  const totalAmount = recvs.reduce((s, r) => s + Number(r.amount), 0);
+  const totalPaid = recvs.reduce((s, r) => s + Number(r.paidAmount || 0), 0);
+  const totalUnpaid = totalAmount - totalPaid;
+  const overdueCount = recvs.filter(r => r.status !== 'paid' && r.dueDate && r.dueDate < today).length;
+
+  document.getElementById('recv-summary').innerHTML = `
+    <div class="card bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+      <p class="text-sm text-gray-500 mb-1">應收總額</p>
+      <p class="text-xl font-bold text-gray-800">$${formatMoney(totalAmount)}</p>
+    </div>
+    <div class="card bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+      <p class="text-sm text-gray-500 mb-1">未收金額</p>
+      <p class="text-xl font-bold text-amber-600">$${formatMoney(totalUnpaid)}</p>
+    </div>
+    <div class="card bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+      <p class="text-sm text-gray-500 mb-1">逾期筆數</p>
+      <p class="text-xl font-bold text-red-600">${overdueCount} 筆</p>
+    </div>
+  `;
+
+  if (recvFilter) recvs = recvs.filter(r => r.status === recvFilter);
+  recvs.sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
+
+  const statusLabels = { unpaid: '未付款', partial: '部分付款', paid: '已付清' };
+  const statusClasses = { unpaid: 'status-unpaid', partial: 'status-partial', paid: 'status-paid' };
+
+  const el = document.getElementById('recv-table-container');
+  if (recvs.length === 0) {
+    el.innerHTML = '<p class="p-6 text-gray-400 text-center">無符合條件的記錄</p>';
+    return;
+  }
+
+  // Build desktop table rows
+  let desktopRows = '';
+  let mobileCards = '';
+  recvs.forEach(function(r) {
+    const isOverdue = r.status !== 'paid' && r.dueDate && r.dueDate < today;
+    const remaining = Number(r.amount) - Number(r.paidAmount || 0);
+    const statusLabel = statusLabels[r.status] || r.status;
+    const statusClass = statusClasses[r.status] || '';
+    const disabledPay = r.status === 'paid' ? 'disabled style="opacity:0.3"' : '';
+
+    // Desktop row
+    desktopRows += '<tr class="border-b hover:bg-gray-50 ' + (isOverdue ? 'bg-red-50/50' : '') + '">'
+      + '<td class="px-4 py-3 font-medium text-gray-800">' + (r.unitName || '') + '</td>'
+      + '<td class="px-4 py-3 text-gray-600">' + (r.description || '') + '</td>'
+      + '<td class="px-4 py-3 text-right font-medium">$' + formatMoney(r.amount) + '</td>'
+      + '<td class="px-4 py-3 text-right text-green-600">$' + formatMoney(r.paidAmount || 0) + '</td>'
+      + '<td class="px-4 py-3 ' + (isOverdue ? 'text-red-600 font-medium' : 'text-gray-600') + '">' + (r.dueDate || '') + (isOverdue ? ' (逾期)' : '') + '</td>'
+      + '<td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-xs font-medium ' + statusClass + '">' + statusLabel + '</span></td>'
+      + '<td class="px-4 py-3 text-center whitespace-nowrap">'
+      + '<button onclick="showPaymentModal(\'' + r.id + '\')" class="text-green-600 hover:text-green-800 text-xs mr-1" ' + disabledPay + '>收款</button>'
+      + '<button onclick="showRecvModal(\'' + r.id + '\')" class="text-primary-600 hover:text-primary-800 text-xs mr-1">編輯</button>'
+      + '<button onclick="deleteRecv(\'' + r.id + '\')" class="text-red-500 hover:text-red-700 text-xs">刪除</button>'
+      + '</td></tr>';
+
+    // Mobile card
+    mobileCards += '<div class="txn-card ' + (isOverdue ? 'border-red-300' : '') + '">'
+      + '<div class="flex items-center justify-between mb-2">'
+      + '<span class="font-medium text-gray-800">' + (r.unitName || '') + '</span>'
+      + '<span class="px-2 py-0.5 rounded text-xs font-medium ' + statusClass + '">' + statusLabel + '</span>'
+      + '</div>'
+      + '<p class="text-sm text-gray-500 mb-2">' + (r.description || '') + '</p>'
+      + '<div class="grid grid-cols-2 gap-2 text-sm mb-2">'
+      + '<div><span class="text-gray-400">應收：</span><span class="font-medium">$' + formatMoney(r.amount) + '</span></div>'
+      + '<div><span class="text-gray-400">已收：</span><span class="text-green-600 font-medium">$' + formatMoney(r.paidAmount || 0) + '</span></div>'
+      + '<div><span class="text-gray-400">餘額：</span><span class="text-amber-600 font-medium">$' + formatMoney(remaining) + '</span></div>'
+      + '<div><span class="text-gray-400">到期：</span><span class="' + (isOverdue ? 'text-red-600 font-medium' : 'text-gray-600') + '">' + (r.dueDate || '-') + (isOverdue ? ' 逾期' : '') + '</span></div>'
+      + '</div>'
+      + '<div class="flex justify-end gap-3 pt-2 border-t">'
+      + (r.status !== 'paid' ? '<button onclick="showPaymentModal(\'' + r.id + '\')" class="text-green-600 text-sm font-medium">收款</button>' : '')
+      + '<button onclick="showRecvModal(\'' + r.id + '\')" class="text-primary-600 text-sm font-medium">編輯</button>'
+      + '<button onclick="deleteRecv(\'' + r.id + '\')" class="text-red-500 text-sm font-medium">刪除</button>'
+      + '</div></div>';
+  });
+
+  el.innerHTML = ''
+    + '<div class="hidden md:block overflow-x-auto">'
+    + '<table class="w-full text-sm"><thead><tr class="text-left text-gray-500 border-b bg-gray-50">'
+    + '<th class="px-4 py-3">單位名稱</th><th class="px-4 py-3">說明</th><th class="px-4 py-3 text-right">應收金額</th><th class="px-4 py-3 text-right">已收金額</th><th class="px-4 py-3">到期日</th><th class="px-4 py-3">狀態</th><th class="px-4 py-3 text-center">操作</th>'
+    + '</tr></thead><tbody>' + desktopRows + '</tbody></table></div>'
+    + '<div class="md:hidden p-3">' + mobileCards + '</div>';
+}
+
+function showRecvModal(id) {
+  let recv = id ? getReceivables().find(r => r.id === id) : null;
+  const isEdit = !!recv;
+  if (!recv) recv = { unitName: '', description: '', amount: '', dueDate: '', paidAmount: 0, status: 'unpaid', payments: [] };
+
+  showModal(`
+    <div class="p-6">
+      <h3 class="text-lg font-bold text-gray-800 mb-4">${isEdit ? '編輯' : '新增'}應收帳款</h3>
+      <form id="recv-form" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">單位名稱</label>
+          <input type="text" id="recv-unit" class="w-full border rounded-lg px-3 py-2 text-sm" value="${recv.unitName || ''}" required placeholder="例：A棟管委會">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">說明</label>
+          <input type="text" id="recv-desc" class="w-full border rounded-lg px-3 py-2 text-sm" value="${recv.description || ''}" placeholder="例：2026年第一季會費">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">應收金額</label>
+            <input type="number" id="recv-amount" class="w-full border rounded-lg px-3 py-2 text-sm" value="${recv.amount}" min="0" step="1" required>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">到期日</label>
+            <input type="date" id="recv-due" class="w-full border rounded-lg px-3 py-2 text-sm" value="${recv.dueDate || ''}">
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-3">
+          <button type="button" onclick="closeModal()" class="btn btn-outline">取消</button>
+          <button type="submit" class="btn btn-primary">${isEdit ? '更新' : '新增'}</button>
+        </div>
+      </form>
+    </div>
+  `);
+
+  document.getElementById('recv-form').addEventListener('submit', e => {
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    e.currentTarget.classList.add('drag-over');
+    const data = {
+      unitName: document.getElementById('recv-unit').value.trim(),
+      description: document.getElementById('recv-desc').value.trim(),
+      amount: Number(document.getElementById('recv-amount').value),
+      dueDate: document.getElementById('recv-due').value
+    };
+    if (!data.unitName || !data.amount || data.amount <= 0) { showToast('請填寫單位名稱和有效金額', 'warning'); return; }
+
+    const recvs = getReceivables();
+    if (isEdit) {
+      const idx = recvs.findIndex(r => r.id === id);
+      if (idx >= 0) {
+        recvs[idx] = { ...recvs[idx], ...data };
+        recalcRecvStatus(recvs[idx]);
+      }
+    } else {
+      recvs.push({ id: genId(), ...data, paidAmount: 0, status: 'unpaid', payments: [], createdAt: new Date().toISOString() });
+    }
+    saveReceivables(recvs);
+    closeModal();
+    refreshRecvTable();
+    showToast(isEdit ? '應收帳款已更新' : '應收帳款已新增', 'success');
+    flashSaved();
+  });
 }
-function onCatDragLeave(e) {
-    e.currentTarget.classList.remove('drag-over');
+
+function recalcRecvStatus(recv) {
+  const paid = Number(recv.paidAmount || 0);
+  const total = Number(recv.amount);
+  if (paid >= total) recv.status = 'paid';
+  else if (paid > 0) recv.status = 'partial';
+  else recv.status = 'unpaid';
 }
-function onCatDrop(e, type, targetIdx) {
+
+function showPaymentModal(id) {
+  const recvs = getReceivables();
+  const recv = recvs.find(r => r.id === id);
+  if (!recv || recv.status === 'paid') return;
+  const remaining = Number(recv.amount) - Number(recv.paidAmount || 0);
+
+  showModal(`
+    <div class="p-6">
+      <h3 class="text-lg font-bold text-gray-800 mb-4">記錄收款</h3>
+      <div class="bg-gray-50 rounded-lg p-3 mb-4 text-sm">
+        <p><span class="text-gray-500">單位：</span><span class="font-medium">${recv.unitName}</span></p>
+        <p><span class="text-gray-500">應收：</span>$${formatMoney(recv.amount)} / <span class="text-gray-500">已收：</span>$${formatMoney(recv.paidAmount || 0)} / <span class="text-amber-600 font-medium">剩餘：$${formatMoney(remaining)}</span></p>
+      </div>
+
+      ${(recv.payments && recv.payments.length > 0) ? `
+        <h4 class="text-sm font-medium text-gray-700 mb-2">收款紀錄</h4>
+        <div class="space-y-1 mb-4 max-h-32 overflow-y-auto">
+          ${recv.payments.map(p => `<div class="flex justify-between text-sm bg-green-50 rounded px-3 py-1"><span>${p.date}</span><span class="text-green-600 font-medium">$${formatMoney(p.amount)}</span><span class="text-gray-400">${p.note || ''}</span></div>`).join('')}
+        </div>` : ''}
+
+      <form id="payment-form" class="space-y-4">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">收款金額</label>
+            <input type="number" id="pay-amount" class="w-full border rounded-lg px-3 py-2 text-sm" max="${remaining}" min="1" step="1" value="${remaining}" required>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">收款日期</label>
+            <input type="date" id="pay-date" class="w-full border rounded-lg px-3 py-2 text-sm" value="${todayStr()}" required>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">備註</label>
+          <input type="text" id="pay-note" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="選填">
+        </div>
+        <div class="flex justify-end gap-2 pt-3">
+          <button type="button" onclick="closeModal()" class="btn btn-outline">取消</button>
+          <button type="submit" class="btn btn-success">確認收款</button>
+        </div>
+      </form>
+    </div>
+  `);
+
+  document.getElementById('payment-form').addEventListener('submit', e => {
     e.preventDefault();
-    e.currentTarget.classList.remove('drag-over');
-    if (dragType !== type || dragIdx === null || dragIdx === targetIdx) return;
-    const cats = getCategories();
-    const arr = cats[type];
-    const [item] = arr.splice(dragIdx, 1);
-    arr.splice(targetIdx, 0, item);
-    setData(KEYS.categories, cats);
-    renderCategories();
-}
-function onCatDragEnd(e) {
-    e.target.classList.remove('dragging');
-    document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
-    dragType = null; dragIdx = null;
+    const amt = Number(document.getElementById('pay-amount').value);
+    const date = document.getElementById('pay-date').value;
+    const note = document.getElementById('pay-note').value.trim();
+    if (!amt || amt <= 0 || amt > remaining) { showToast('請輸入有效的收款金額（不超過剩餘金額）', 'warning'); return; }
+
+    const recvs = getReceivables();
+    const idx = recvs.findIndex(r => r.id === id);
+    if (idx >= 0) {
+      if (!recvs[idx].payments) recvs[idx].payments = [];
+      recvs[idx].payments.push({ date, amount: amt, note });
+      recvs[idx].paidAmount = (Number(recvs[idx].paidAmount) || 0) + amt;
+      recalcRecvStatus(recvs[idx]);
+      saveReceivables(recvs);
+    }
+    closeModal();
+    refreshRecvTable();
+    showToast('收款 $' + formatMoney(amt) + ' 已記錄', 'success');
+    flashSaved();
+  });
 }
 
-function addCategory(type) {
-    const inputId = type === 'income' ? 'newIncCat' : 'newExpCat';
-    const name = document.getElementById(inputId).value.trim();
-    if (!name) return;
-    const cats = getCategories();
-    if (cats[type].includes(name)) { toast('類別已存在', 'error'); return; }
-    cats[type].push(name);
-    setData(KEYS.categories, cats);
-    document.getElementById(inputId).value = '';
-    renderCategories();
-    toast('類別已新增');
+function deleteRecv(id) {
+  if (!confirm('確定要刪除此筆應收帳款？')) return;
+  const recvs = getReceivables().filter(r => r.id !== id);
+  saveReceivables(recvs);
+  refreshRecvTable();
+  showToast('應收帳款已刪除', 'info');
+  flashSaved();
 }
 
-function removeCategory(type, idx) {
-    if (!confirm('確定要刪除此類別？')) return;
-    const cats = getCategories();
-    cats[type].splice(idx, 1);
-    setData(KEYS.categories, cats);
-    renderCategories();
-    toast('類別已刪除');
+// ============================================================
+// PAGE: 資料管理 (Data Management)
+// ============================================================
+function renderData() {
+  const container = document.getElementById('page-content');
+  const txnCount = getTransactions().length;
+  const recvCount = getReceivables().length;
+
+  container.innerHTML = `
+    <div class="mb-6">
+      <div class="flex items-center gap-3">
+        <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800">資料管理</h2>
+          <p class="text-gray-500 text-sm">匯出、備份與還原您的財務資料</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Data Overview -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+      <div class="card bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+        <div class="flex items-center gap-3">
+          <div class="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center">
+            <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+          </div>
+          <div>
+            <p class="text-sm text-gray-500">交易記錄</p>
+            <p class="text-2xl font-bold text-gray-800">${txnCount} 筆</p>
+          </div>
+        </div>
+      </div>
+      <div class="card bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+        <div class="flex items-center gap-3">
+          <div class="w-12 h-12 rounded-xl bg-amber-50 flex items-center justify-center">
+            <svg class="w-6 h-6 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2z"/></svg>
+          </div>
+          <div>
+            <p class="text-sm text-gray-500">應收帳款</p>
+            <p class="text-2xl font-bold text-gray-800">${recvCount} 筆</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Export -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-4">
+      <h3 class="font-semibold text-gray-700 mb-4">匯出資料</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <button onclick="exportCSV()" class="flex items-center gap-3 px-4 py-3.5 border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 text-sm transition-all group">
+          <div class="w-9 h-9 rounded-lg bg-green-50 flex items-center justify-center group-hover:bg-green-100 transition">
+            <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          </div>
+          匯出交易 CSV
+        </button>
+        <button onclick="exportExcel()" class="flex items-center gap-3 px-4 py-3.5 border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 text-sm transition-all group">
+          <div class="w-9 h-9 rounded-lg bg-emerald-50 flex items-center justify-center group-hover:bg-emerald-100 transition">
+            <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          </div>
+          匯出交易 Excel
+        </button>
+        <button onclick="exportRecvExcel()" class="flex items-center gap-3 px-4 py-3.5 border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 text-sm transition-all group">
+          <div class="w-9 h-9 rounded-lg bg-amber-50 flex items-center justify-center group-hover:bg-amber-100 transition">
+            <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          </div>
+          匯出應收帳款 Excel
+        </button>
+        <button onclick="exportBackup()" class="flex items-center gap-3 px-4 py-3.5 border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 text-sm transition-all group">
+          <div class="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center group-hover:bg-blue-100 transition">
+            <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+          </div>
+          完整備份 JSON
+        </button>
+      </div>
+    </div>
+
+    <!-- Import -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-4">
+      <h3 class="font-semibold text-gray-700 mb-4">匯入資料</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="p-4 rounded-xl bg-gray-50 border border-gray-100">
+          <p class="text-sm font-medium text-gray-700 mb-1">從 JSON 備份還原</p>
+          <p class="text-xs text-gray-400 mb-3">注意：還原將覆蓋現有所有資料</p>
+          <input type="file" id="import-json" accept=".json" class="hidden" onchange="importBackup(this)">
+          <button onclick="document.getElementById('import-json').click()" class="btn btn-primary text-sm">選擇 JSON 檔案</button>
+        </div>
+        <div class="p-4 rounded-xl bg-gray-50 border border-gray-100">
+          <p class="text-sm font-medium text-gray-700 mb-1">從 CSV 匯入交易</p>
+          <p class="text-xs text-gray-400 mb-3">CSV 欄位：日期, 類型, 分類, 金額, 說明</p>
+          <input type="file" id="import-csv" accept=".csv" class="hidden" onchange="importCSV(this)">
+          <button onclick="document.getElementById('import-csv').click()" class="btn btn-success text-sm">選擇 CSV 檔案</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Danger Zone -->
+    <div class="bg-white rounded-2xl border-2 border-red-100 p-5">
+      <h3 class="font-semibold text-red-600 mb-3">危險區域</h3>
+      <p class="text-sm text-gray-500 mb-3">此操作無法復原，建議先執行完整備份</p>
+      <button onclick="clearAllData()" class="btn btn-danger text-sm">清除所有資料</button>
+    </div>
+  `;
 }
 
-// ===== Data Management =====
-function exportTxCSV() {
-    const txs = getData(KEYS.transactions);
-    if (txs.length === 0) { toast('沒有交易記錄可匯出', 'error'); return; }
-    let csv = '\uFEFF日期,類型,類別,說明,金額\n';
-    txs.sort((a, b) => a.date.localeCompare(b.date)).forEach(t => {
-        const desc = (t.description || '').replace(/"/g, '""');
-        csv += `${t.date},${t.type === 'income' ? '收入' : '支出'},${t.category},"${desc}",${t.amount}\n`;
-    });
-    downloadFile(csv, '交易記錄.csv', 'text/csv;charset=utf-8');
-    toast('CSV 匯出成功');
+// Export functions
+function exportCSV() {
+  const txns = getTransactions();
+  if (txns.length === 0) { showToast('沒有交易資料可匯出', 'warning'); return; }
+  const header = '日期,類型,分類,金額,說明';
+  const rows = txns.map(t => `${t.date},${t.type === 'income' ? '收入' : '支出'},${t.category || ''},${t.amount},"${(t.description || '').replace(/"/g, '""')}"`);
+  const csv = '\uFEFF' + header + '\n' + rows.join('\n');
+  downloadFile(csv, `交易記錄_${todayStr()}.csv`, 'text/csv;charset=utf-8');
+  showToast('交易 CSV 已匯出', 'success');
 }
 
-function exportTxExcel() {
-    const txs = getData(KEYS.transactions);
-    if (txs.length === 0) { toast('沒有交易記錄可匯出', 'error'); return; }
-    const data = txs.sort((a, b) => a.date.localeCompare(b.date)).map(t => ({
-        '日期': t.date, '類型': t.type === 'income' ? '收入' : '支出',
-        '類別': t.category, '說明': t.description || '', '金額': t.amount
-    }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    ws['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 30 }, { wch: 12 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, '交易記錄');
-    XLSX.writeFile(wb, '交易記錄.xlsx');
-    toast('Excel 匯出成功');
+function exportExcel() {
+  const txns = getTransactions();
+  if (txns.length === 0) { showToast('沒有交易資料可匯出', 'warning'); return; }
+  const data = txns.map(t => ({
+    '日期': t.date,
+    '類型': t.type === 'income' ? '收入' : '支出',
+    '分類': t.category || '',
+    '金額': Number(t.amount),
+    '說明': t.description || ''
+  }));
+  const ws = XLSX.utils.json_to_sheet(data);
+  ws['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 30 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '交易記錄');
+  XLSX.writeFile(wb, `交易記錄_${todayStr()}.xlsx`);
+  showToast('交易 Excel 已匯出', 'success');
 }
 
-function exportArExcel() {
-    const ars = getData(KEYS.receivables);
-    if (ars.length === 0) { toast('沒有應收帳款可匯出', 'error'); return; }
-    const statusMap = { unpaid: '未付', partial: '部分付款', paid: '已付清' };
-    const data = ars.map(a => ({
-        '對象': a.unitName, '說明': a.description, '應收金額': a.amount,
-        '已收金額': a.paidAmount, '餘額': a.amount - a.paidAmount,
-        '到期日': a.dueDate || '', '狀態': statusMap[a.status] || a.status
-    }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    ws['!cols'] = [{ wch: 15 }, { wch: 25 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, '應收帳款');
-    XLSX.writeFile(wb, '應收帳款.xlsx');
-    toast('應收帳款 Excel 匯出成功');
+function exportRecvExcel() {
+  const recvs = getReceivables();
+  if (recvs.length === 0) { showToast('沒有應收帳款資料可匯出', 'warning'); return; }
+  const statusLabels = { unpaid: '未付款', partial: '部分付款', paid: '已付清' };
+  const data = recvs.map(r => ({
+    '單位名稱': r.unitName || '',
+    '說明': r.description || '',
+    '應收金額': Number(r.amount),
+    '已收金額': Number(r.paidAmount || 0),
+    '未收金額': Number(r.amount) - Number(r.paidAmount || 0),
+    '到期日': r.dueDate || '',
+    '狀態': statusLabels[r.status] || r.status
+  }));
+  const ws = XLSX.utils.json_to_sheet(data);
+  ws['!cols'] = [{ wch: 15 }, { wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '應收帳款');
+  XLSX.writeFile(wb, `應收帳款_${todayStr()}.xlsx`);
+  showToast('應收帳款 Excel 已匯出', 'success');
 }
 
 function exportBackup() {
-    const backup = {
-        version: '1.0',
-        exportDate: new Date().toISOString(),
-        transactions: getData(KEYS.transactions),
-        receivables: getData(KEYS.receivables),
-        categories: getCategories()
-    };
-    downloadFile(JSON.stringify(backup, null, 2), `財務備份_${today()}.json`, 'application/json');
-    toast('備份匯出成功');
-}
-
-function importBackup() {
-    const file = document.getElementById('importBackupFile').files[0];
-    if (!file) { toast('請選擇備份檔案', 'error'); return; }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        try {
-            const data = JSON.parse(e.target.result);
-            if (!confirm(`確定要還原備份？\n交易: ${(data.transactions || []).length} 筆\n應收帳款: ${(data.receivables || []).length} 筆\n\n現有資料將被覆蓋！`)) return;
-            if (data.transactions) setData(KEYS.transactions, data.transactions);
-            if (data.receivables) setData(KEYS.receivables, data.receivables);
-            if (data.categories) setData(KEYS.categories, data.categories);
-            toast('備份還原成功');
-            navigate(location.hash.slice(1) || 'dashboard');
-        } catch { toast('備份檔案格式錯誤', 'error'); }
-    };
-    reader.readAsText(file);
-}
-
-function importCSV() {
-    const file = document.getElementById('importCsvFile').files[0];
-    if (!file) { toast('請選擇 CSV 檔案', 'error'); return; }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        try {
-            const lines = e.target.result.split('\n').filter(l => l.trim());
-            if (lines.length < 2) { toast('CSV 檔案為空', 'error'); return; }
-            const txs = getData(KEYS.transactions);
-            let count = 0;
-            for (let i = 1; i < lines.length; i++) {
-                const parts = lines[i].match(/(".*?"|[^,]+)/g);
-                if (!parts || parts.length < 5) continue;
-                const date = parts[0].replace(/"/g, '').trim();
-                const typeStr = parts[1].replace(/"/g, '').trim();
-                const type = typeStr === '收入' || typeStr === 'income' ? 'income' : 'expense';
-                const category = parts[2].replace(/"/g, '').trim();
-                const description = parts[3].replace(/"/g, '').trim();
-                const amount = parseFloat(parts[4].replace(/"/g, '').trim());
-                if (date && category && amount > 0) {
-                    txs.push({ id: genId(), date, type, category, amount, description, createdAt: Date.now() });
-                    count++;
-                }
-            }
-            setData(KEYS.transactions, txs);
-            toast(`成功匯入 ${count} 筆交易`);
-            document.getElementById('importCsvFile').value = '';
-        } catch { toast('CSV 格式錯誤', 'error'); }
-    };
-    reader.readAsText(file);
-}
-
-function clearData(scope) {
-    const msgs = { transactions: '所有交易記錄', receivables: '所有應收帳款', all: '全部資料（交易+應收帳款+類別設定）' };
-    if (!confirm(`確定要清除${msgs[scope]}？此操作無法復原！`)) return;
-    if (scope === 'transactions' || scope === 'all') localStorage.removeItem(KEYS.transactions);
-    if (scope === 'receivables' || scope === 'all') localStorage.removeItem(KEYS.receivables);
-    if (scope === 'all') localStorage.removeItem(KEYS.categories);
-    toast('資料已清除');
-    navigate(location.hash.slice(1) || 'dashboard');
+  const backup = {
+    version: '1.0',
+    exportDate: new Date().toISOString(),
+    transactions: getTransactions(),
+    receivables: getReceivables(),
+    categories: getCategories()
+  };
+  const json = JSON.stringify(backup, null, 2);
+  downloadFile(json, `財務備份_${todayStr()}.json`, 'application/json');
+  showToast('完整備份已匯出', 'success');
 }
 
 function downloadFile(content, filename, type) {
-    const blob = new Blob([content], { type });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename; a.click();
-    URL.revokeObjectURL(url);
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
 }
 
-// ===== Init =====
-document.getElementById('currentDate').textContent = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
-getCategories(); // init defaults
-const initPage = location.hash.slice(1) || 'dashboard';
-navigate(initPage);
+function importBackup(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (!confirm('還原將覆蓋現有所有資料，確定要繼續嗎？')) { input.value = ''; return; }
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (data.transactions) saveTransactions(data.transactions);
+      if (data.receivables) saveReceivables(data.receivables);
+      if (data.categories) saveCategories(data.categories);
+      showToast('還原完成！共匯入 ' + (data.transactions||[]).length + ' 筆交易、' + (data.receivables||[]).length + ' 筆應收帳款', 'success');
+      flashSaved();
+      renderData();
+    } catch (err) {
+      showToast('檔案格式錯誤：' + err.message, 'error');
+    }
+  };
+  reader.readAsText(file);
+  input.value = '';
+}
+
+function importCSV(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const text = e.target.result;
+      const lines = text.split('\n').filter(l => l.trim());
+      if (lines.length < 2) { showToast('CSV 檔案無資料列', 'warning'); return; }
+
+      const txns = getTransactions();
+      let count = 0;
+      for (let i = 1; i < lines.length; i++) {
+        // Simple CSV parsing (handles quoted fields)
+        const fields = parseCSVLine(lines[i]);
+        if (fields.length < 4) continue;
+        const date = fields[0].trim();
+        let type = fields[1].trim().toLowerCase();
+        if (type === '收入') type = 'income';
+        else if (type === '支出') type = 'expense';
+        if (type !== 'income' && type !== 'expense') continue;
+        const category = (fields[2] || '').trim();
+        const amount = Number((fields[3] || '').trim());
+        const description = (fields[4] || '').trim();
+        if (!date || !amount || amount <= 0) continue;
+        txns.push({ id: genId(), date, type, category, amount, description, createdAt: new Date().toISOString() });
+        count++;
+      }
+      saveTransactions(txns);
+      showToast('匯入完成！共新增 ' + count + ' 筆交易', 'success');
+      flashSaved();
+      renderData();
+    } catch (err) {
+      showToast('CSV 匯入錯誤：' + err.message, 'error');
+    }
+  };
+  reader.readAsText(file);
+  input.value = '';
+}
+
+function parseCSVLine(line) {
+  const result = [];
+  let current = '';
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuote) {
+      if (ch === '"' && line[i + 1] === '"') { current += '"'; i++; }
+      else if (ch === '"') inQuote = false;
+      else current += ch;
+    } else {
+      if (ch === '"') inQuote = true;
+      else if (ch === ',') { result.push(current); current = ''; }
+      else current += ch;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+function clearAllData() {
+  if (!confirm('確定要清除所有資料嗎？此操作無法復原！')) return;
+  if (!confirm('再次確認：所有交易記錄、應收帳款和分類設定都將被刪除。')) return;
+  removeData(STORAGE_KEYS.transactions);
+  removeData(STORAGE_KEYS.receivables);
+  removeData(STORAGE_KEYS.categories);
+  showToast('所有資料已清除', 'info');
+  flashSaved();
+  renderData();
+}
+
+// ============================================================
+// INIT
+// ============================================================
+document.addEventListener('DOMContentLoaded', async () => {
+  // 先從 IndexedDB 恢復遺失的資料
+  try { await recoverFromIDB(); } catch (e) { console.warn('IDB recovery failed:', e); }
+
+  getCategories(); // Initialize default categories
+  // Set header date
+  const headerDate = document.getElementById('header-date');
+  if (headerDate) {
+    const now = new Date();
+    headerDate.textContent = now.getFullYear() + '/' + String(now.getMonth() + 1).padStart(2, '0') + '/' + String(now.getDate()).padStart(2, '0');
+  }
+  navigate();
+
+  // 驗證儲存是否正常運作
+  if (!isLocalStorageAvailable()) {
+    showToast('偵測到瀏覽器 localStorage 不可用，可能是無痕模式或隱私設定。資料將使用備援儲存，但建議切換至一般瀏覽模式。', 'warning');
+  }
+});
 </script>
 </body>
 </html>
