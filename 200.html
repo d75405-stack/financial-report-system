@@ -119,7 +119,7 @@ tailwind.config = {
 <aside id="sidebar" class="w-64 bg-gradient-to-b from-blue-700 via-blue-800 to-blue-900 h-screen fixed top-0 left-0 flex flex-col z-40 transition-transform duration-300 shadow-xl">
   <div class="p-6 border-b border-blue-600/50">
     <div class="flex items-center gap-3 mb-2">
-      <img src="logo.jpg" alt="Logo" class="w-12 h-12 rounded-lg object-contain bg-white/90 p-1 shadow-sm flex-shrink-0">
+      <img src="./logo.jpg" alt="Logo" class="w-12 h-12 rounded-lg object-contain bg-white/90 p-1 shadow-sm flex-shrink-0">
       <div>
         <h1 class="text-sm font-bold text-white leading-tight">全國公寓大廈</h1>
         <h1 class="text-sm font-bold text-white leading-tight">管理委員聯誼會</h1>
@@ -151,6 +151,15 @@ tailwind.config = {
     <a href="#data" class="sidebar-link flex items-center gap-3 px-4 py-3 text-blue-100 text-sm font-medium" data-page="data">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
       資料管理
+    </a>
+    <div class="my-2 border-t border-blue-600/30"></div>
+    <a href="#community-form" class="sidebar-link flex items-center gap-3 px-4 py-3 text-blue-100 text-sm font-medium" data-page="community-form">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      社區調查
+    </a>
+    <a href="#community-browse" class="sidebar-link flex items-center gap-3 px-4 py-3 text-blue-100 text-sm font-medium" data-page="community-browse">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+      社區資料
     </a>
   </nav>
   <div class="p-4 border-t border-blue-600/50 text-xs text-blue-300 text-center">v1.0 &copy; 2026</div>
@@ -190,7 +199,8 @@ tailwind.config = {
 const STORAGE_KEYS = {
   transactions: 'fms_transactions',
   receivables: 'fms_receivables',
-  categories: 'fms_categories'
+  categories: 'fms_categories',
+  communities: 'fms_communities'
 };
 
 const DEFAULT_CATEGORIES = {
@@ -324,7 +334,7 @@ function removeData(key) {
 
 // --- 初始化：從 IndexedDB 恢復遺失的 localStorage ---
 async function recoverFromIDB() {
-  var keys = [STORAGE_KEYS.transactions, STORAGE_KEYS.receivables, STORAGE_KEYS.categories];
+  var keys = [STORAGE_KEYS.transactions, STORAGE_KEYS.receivables, STORAGE_KEYS.categories, STORAGE_KEYS.communities];
   if (isLocalStorageAvailable()) {
     for (var i = 0; i < keys.length; i++) {
       var key = keys[i];
@@ -369,6 +379,11 @@ function getCategories() {
   return cats;
 }
 function saveCategories(cats) { setData(STORAGE_KEYS.categories, cats); }
+function getCommunities() { return getData(STORAGE_KEYS.communities) || []; }
+function saveCommunities(arr) { setData(STORAGE_KEYS.communities, arr); }
+function findDuplicateCommunity(name, address) {
+  return getCommunities().filter(c => c.community_name === name && c.address === (address || ''));
+}
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function formatMoney(n) { return new Intl.NumberFormat('zh-TW').format(n); }
 function formatDate(d) { return d || ''; }
@@ -377,8 +392,8 @@ function todayStr() { return new Date().toISOString().slice(0, 10); }
 // ============================================================
 // ROUTER
 // ============================================================
-const pages = { dashboard: renderDashboard, transactions: renderTransactions, pnl: renderPnl, 'balance-sheet': renderBalanceSheet, receivables: renderReceivables, data: renderData };
-const pageTitles = { dashboard: '儀表板', transactions: '收支記帳', pnl: '損益表', 'balance-sheet': '資產負債表', receivables: '應收帳款', data: '資料管理' };
+const pages = { dashboard: renderDashboard, transactions: renderTransactions, pnl: renderPnl, 'balance-sheet': renderBalanceSheet, receivables: renderReceivables, data: renderData, 'community-form': renderCommunityForm, 'community-browse': renderCommunityBrowse };
+const pageTitles = { dashboard: '儀表板', transactions: '收支記帳', pnl: '損益表', 'balance-sheet': '資產負債表', receivables: '應收帳款', data: '資料管理', 'community-form': '社區調查', 'community-browse': '社區資料' };
 let currentCharts = [];
 
 function destroyCharts() {
@@ -486,7 +501,7 @@ function renderDashboard() {
   container.innerHTML = `
     <div class="mb-6">
       <div class="flex items-center gap-3">
-        <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+        <img src="./logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
         <div>
           <h2 class="text-2xl font-bold text-gray-800">儀表板</h2>
           <p class="text-gray-500 text-sm">財務總覽 — ${now.getFullYear()} 年 ${now.getMonth() + 1} 月</p>
@@ -638,7 +653,7 @@ function renderTransactions() {
   container.innerHTML = `
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
       <div class="flex items-center gap-3">
-        <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+        <img src="./logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
         <div>
           <h2 class="text-2xl font-bold text-gray-800">收支記帳</h2>
           <p class="text-gray-500 text-sm">管理所有收入與支出記錄</p>
@@ -904,7 +919,7 @@ function renderPnl() {
   container.innerHTML = `
     <div class="mb-6">
       <div class="flex items-center gap-3">
-        <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+        <img src="./logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
         <div>
           <h2 class="text-2xl font-bold text-gray-800">損益表</h2>
           <p class="text-gray-500 text-sm">查看收支明細與損益分析</p>
@@ -966,7 +981,7 @@ function renderPnl() {
     <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
       <div class="px-5 py-4 border-b bg-gray-50">
         <div class="flex items-center gap-3">
-          <img src="logo.jpg" alt="Logo" class="w-8 h-8 rounded-lg object-contain">
+          <img src="./logo.jpg" alt="Logo" class="w-8 h-8 rounded-lg object-contain">
           <h3 class="font-semibold text-gray-700">${periodLabel} 損益表</h3>
         </div>
       </div>
@@ -1039,7 +1054,7 @@ function renderBalanceSheet() {
   container.innerHTML = `
     <div class="mb-6">
       <div class="flex items-center gap-3">
-        <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+        <img src="./logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
         <div>
           <h2 class="text-2xl font-bold text-gray-800">資產負債表</h2>
           <p class="text-gray-500 text-sm">查看組織資產、負債與淨資產狀況</p>
@@ -1122,7 +1137,7 @@ function refreshBalanceSheet() {
     <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden" id="bs-printable">
       <div class="px-5 py-4 border-b bg-gray-50 text-center">
         <div class="flex items-center justify-center gap-3 mb-1">
-          <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+          <img src="./logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
           <h3 class="font-bold text-lg text-gray-800">全國公寓大廈管理委員聯誼會</h3>
         </div>
         <p class="text-sm text-gray-500">資產負債表　截至 ${formattedDate}</p>
@@ -1276,7 +1291,7 @@ function renderReceivables() {
   container.innerHTML = `
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
       <div class="flex items-center gap-3">
-        <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+        <img src="./logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
         <div>
           <h2 class="text-2xl font-bold text-gray-800">應收帳款</h2>
           <p class="text-gray-500 text-sm">追蹤與管理未收款項</p>
@@ -1550,7 +1565,7 @@ function renderData() {
   container.innerHTML = `
     <div class="mb-6">
       <div class="flex items-center gap-3">
-        <img src="logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
+        <img src="./logo.jpg" alt="Logo" class="w-10 h-10 rounded-lg object-contain">
         <div>
           <h2 class="text-2xl font-bold text-gray-800">資料管理</h2>
           <p class="text-gray-500 text-sm">匯出、備份與還原您的財務資料</p>
@@ -1699,7 +1714,8 @@ function exportBackup() {
     exportDate: new Date().toISOString(),
     transactions: getTransactions(),
     receivables: getReceivables(),
-    categories: getCategories()
+    categories: getCategories(),
+    communities: getCommunities()
   };
   const json = JSON.stringify(backup, null, 2);
   downloadFile(json, `財務備份_${todayStr()}.json`, 'application/json');
@@ -1725,7 +1741,8 @@ function importBackup(input) {
       if (data.transactions) saveTransactions(data.transactions);
       if (data.receivables) saveReceivables(data.receivables);
       if (data.categories) saveCategories(data.categories);
-      showToast('還原完成！共匯入 ' + (data.transactions||[]).length + ' 筆交易、' + (data.receivables||[]).length + ' 筆應收帳款', 'success');
+      if (data.communities) saveCommunities(data.communities);
+      showToast('還原完成！共匯入 ' + (data.transactions||[]).length + ' 筆交易、' + (data.receivables||[]).length + ' 筆應收帳款、' + (data.communities||[]).length + ' 筆社區資料', 'success');
       flashSaved();
       renderData();
     } catch (err) {
@@ -1796,12 +1813,544 @@ function parseCSVLine(line) {
   return result;
 }
 
+// ============================================================
+// COMMUNITY SURVEY FORM
+// ============================================================
+function renderCommunityForm() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="max-w-3xl mx-auto">
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 md:p-8">
+        <div class="flex items-center gap-3 mb-6">
+          <div class="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+            <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          </div>
+          <div>
+            <h2 class="text-lg font-bold text-gray-800">社區調查表單</h2>
+            <p class="text-xs text-gray-400">填寫社區基本資料與管理資訊</p>
+          </div>
+        </div>
+        <form id="community-form-el" onsubmit="submitCommunityForm(event)" class="space-y-5">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">會員編號 <span class="text-red-500">*</span></label>
+              <input type="text" name="member_id" required placeholder="請輸入會員編號">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">社區名稱 <span class="text-red-500">*</span></label>
+              <input type="text" name="community_name" required placeholder="請輸入社區名稱">
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">社區地址</label>
+            <input type="text" name="address" placeholder="請輸入社區地址">
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">縣市</label>
+              <input type="text" name="city" placeholder="例：台北市">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">區域</label>
+              <input type="text" name="district" placeholder="例：大安區">
+            </div>
+          </div>
+          <div class="border-t border-gray-100 pt-4">
+            <h3 class="text-sm font-semibold text-gray-600 mb-3">社區規模</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">總坪數</label>
+                <input type="number" name="total_area" min="0" step="0.01" placeholder="坪">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">總戶數</label>
+                <input type="number" name="total_units" min="0" placeholder="戶">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">停車位數量</label>
+                <input type="number" name="parking_spaces" min="0" placeholder="個">
+              </div>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">公設比(%)</label>
+              <input type="number" name="common_area_ratio" min="0" max="100" step="0.1" placeholder="%">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">屋齡（年）</label>
+              <input type="number" name="building_age" min="0" step="0.1" placeholder="年">
+            </div>
+            <div></div>
+          </div>
+          <div class="border-t border-gray-100 pt-4">
+            <h3 class="text-sm font-semibold text-gray-600 mb-3">管理費用</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">每月管理費（元/坪）</label>
+                <input type="number" name="monthly_fee" min="0" step="0.01" placeholder="元/坪">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">社區每月總管理費</label>
+                <input type="number" name="total_monthly" min="0" placeholder="元">
+              </div>
+            </div>
+          </div>
+          <div class="border-t border-gray-100 pt-4">
+            <h3 class="text-sm font-semibold text-gray-600 mb-3">管理公司資訊</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">物業管理公司</label>
+                <input type="text" name="property_company" placeholder="公司名稱">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">清潔公司</label>
+                <input type="text" name="cleaning_company" placeholder="公司名稱">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">保全公司</label>
+                <input type="text" name="security_company" placeholder="公司名稱">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">電梯維護公司</label>
+                <input type="text" name="elevator_company" placeholder="公司名稱">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">機電維護公司</label>
+                <input type="text" name="mechanical_company" placeholder="公司名稱">
+              </div>
+            </div>
+          </div>
+          <div class="border-t border-gray-100 pt-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">推薦程度</label>
+                <select name="recommend">
+                  <option value="">請選擇</option>
+                  <option value="非常推薦">非常推薦</option>
+                  <option value="推薦">推薦</option>
+                  <option value="普通">普通</option>
+                  <option value="不推薦">不推薦</option>
+                </select>
+              </div>
+            </div>
+            <div class="mt-4">
+              <label class="block text-sm font-medium text-gray-700 mb-1">備註</label>
+              <textarea name="notes" rows="3" placeholder="其他補充資訊..."></textarea>
+            </div>
+          </div>
+          <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
+            <button type="reset" class="btn btn-outline">清空表單</button>
+            <button type="submit" class="btn btn-primary">提交調查</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function submitCommunityForm(e) {
+  e.preventDefault();
+  const form = e.target;
+  const fd = new FormData(form);
+  const data = {};
+  const fields = ['member_id','community_name','address','city','district','total_area','total_units','monthly_fee','total_monthly','property_company','cleaning_company','security_company','elevator_company','mechanical_company','parking_spaces','common_area_ratio','building_age','recommend','notes'];
+  fields.forEach(f => {
+    const v = (fd.get(f) || '').trim();
+    if (['total_area','total_units','monthly_fee','total_monthly','parking_spaces','common_area_ratio','building_age'].includes(f)) {
+      data[f] = v ? Number(v) : null;
+    } else {
+      data[f] = v || '';
+    }
+  });
+  if (!data.member_id) { showToast('請輸入會員編號', 'warning'); return; }
+  if (!data.community_name) { showToast('請輸入社區名稱', 'warning'); return; }
+
+  const duplicates = findDuplicateCommunity(data.community_name, data.address);
+  if (duplicates.length > 0) {
+    showModal(`
+      <div class="p-6">
+        <h3 class="text-lg font-bold text-gray-800 mb-2">發現重複社區</h3>
+        <p class="text-sm text-gray-500 mb-4">已存在相同名稱與地址的社區紀錄（共 ${duplicates.length} 筆），請選擇處理方式：</p>
+        <div class="space-y-2 mb-4 max-h-40 overflow-y-auto">
+          ${duplicates.map(d => `<div class="text-xs bg-gray-50 rounded-lg p-2">提交者：${d.member_id}｜時間：${new Date(d.submitted_at).toLocaleString('zh-TW')}</div>`).join('')}
+        </div>
+        <div class="flex gap-3 justify-end">
+          <button onclick="closeModal()" class="btn btn-outline text-sm">取消</button>
+          <button onclick="saveCommunityRecord(${JSON.stringify(data).replace(/"/g,'&quot;')}, true)" class="btn btn-primary text-sm">更新最新一筆</button>
+          <button onclick="saveCommunityRecord(${JSON.stringify(data).replace(/"/g,'&quot;')}, false)" class="btn btn-success text-sm">新增為新紀錄</button>
+        </div>
+      </div>
+    `);
+  } else {
+    saveCommunityRecord(data, false);
+  }
+}
+
+function saveCommunityRecord(data, update) {
+  const communities = getCommunities();
+  if (update) {
+    const dupes = communities.filter(c => c.community_name === data.community_name && c.address === (data.address || ''));
+    if (dupes.length > 0) {
+      const latest = dupes.sort((a, b) => (b.submitted_at || '').localeCompare(a.submitted_at || ''))[0];
+      const idx = communities.findIndex(c => c.id === latest.id);
+      if (idx !== -1) {
+        communities[idx] = { ...communities[idx], ...data, submitted_at: new Date().toISOString() };
+      }
+    }
+  } else {
+    data.id = genId();
+    data.submitted_at = new Date().toISOString();
+    communities.push(data);
+  }
+  saveCommunities(communities);
+  closeModal();
+  showToast(update ? '已更新社區資料' : '社區調查已提交', 'success');
+  flashSaved();
+  const form = document.getElementById('community-form-el');
+  if (form) form.reset();
+}
+
+// ============================================================
+// COMMUNITY BROWSE
+// ============================================================
+let _communityMemberId = '';
+let _communitySearch = '';
+let _communitySortKey = 'submitted_at';
+let _communitySortAsc = false;
+let _communitySelected = new Set();
+
+function renderCommunityBrowse() {
+  const el = document.getElementById('page-content');
+  if (!_communityMemberId) {
+    el.innerHTML = `
+      <div class="max-w-md mx-auto mt-16">
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center">
+          <div class="w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center mx-auto mb-4">
+            <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+          </div>
+          <h3 class="text-lg font-bold text-gray-800 mb-2">會員驗證</h3>
+          <p class="text-sm text-gray-500 mb-5">請輸入您的會員編號以瀏覽社區資料</p>
+          <div class="flex gap-2">
+            <input type="text" id="cb-member-input" placeholder="會員編號" class="flex-1" onkeydown="if(event.key==='Enter'){verifyCommunityMember()}">
+            <button onclick="verifyCommunityMember()" class="btn btn-primary">驗證</button>
+          </div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+  renderCommunityBrowseContent();
+}
+
+function verifyCommunityMember() {
+  const input = document.getElementById('cb-member-input');
+  const val = (input ? input.value : '').trim();
+  if (!val) { showToast('請輸入會員編號', 'warning'); return; }
+  _communityMemberId = val;
+  renderCommunityBrowseContent();
+}
+
+function renderCommunityBrowseContent() {
+  const el = document.getElementById('page-content');
+  let communities = getCommunities();
+  const total = communities.length;
+  const avgFee = total ? Math.round(communities.reduce((s, c) => s + (c.monthly_fee || 0), 0) / communities.filter(c => c.monthly_fee).length || 0) : 0;
+  const avgUnits = total ? Math.round(communities.reduce((s, c) => s + (c.total_units || 0), 0) / communities.filter(c => c.total_units).length || 0) : 0;
+
+  if (_communitySearch) {
+    const q = _communitySearch.toLowerCase();
+    communities = communities.filter(c =>
+      (c.community_name || '').toLowerCase().includes(q) ||
+      (c.address || '').toLowerCase().includes(q) ||
+      (c.city || '').toLowerCase().includes(q) ||
+      (c.district || '').toLowerCase().includes(q) ||
+      (c.property_company || '').toLowerCase().includes(q) ||
+      (c.member_id || '').toLowerCase().includes(q)
+    );
+  }
+
+  communities.sort((a, b) => {
+    let va = a[_communitySortKey], vb = b[_communitySortKey];
+    if (typeof va === 'number' && typeof vb === 'number') return _communitySortAsc ? va - vb : vb - va;
+    va = (va || '').toString(); vb = (vb || '').toString();
+    return _communitySortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+  });
+
+  const sortBtn = (key, label) => {
+    const active = _communitySortKey === key;
+    const arrow = active ? (_communitySortAsc ? ' ↑' : ' ↓') : '';
+    return `<th class="px-3 py-3 text-left cursor-pointer hover:text-blue-600 select-none" onclick="toggleCommunitySort('${key}')">${label}${arrow}</th>`;
+  };
+
+  el.innerHTML = `
+    <div class="space-y-4">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="bg-white rounded-xl border border-gray-100 p-4 text-center">
+          <div class="text-2xl font-bold text-blue-600">${total}</div>
+          <div class="text-xs text-gray-500 mt-1">總社區數</div>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 p-4 text-center">
+          <div class="text-2xl font-bold text-green-600">${formatMoney(avgFee)}</div>
+          <div class="text-xs text-gray-500 mt-1">平均管理費(元/坪)</div>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 p-4 text-center">
+          <div class="text-2xl font-bold text-purple-600">${formatMoney(avgUnits)}</div>
+          <div class="text-xs text-gray-500 mt-1">平均戶數</div>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 p-4 text-center">
+          <div class="text-2xl font-bold text-orange-600">${communities.length}</div>
+          <div class="text-xs text-gray-500 mt-1">搜尋結果</div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+        <div class="flex flex-wrap items-center gap-3 mb-4">
+          <div class="flex-1 min-w-[200px]">
+            <input type="text" id="cb-search" placeholder="搜尋社區名稱、地址、物業公司..." value="${_communitySearch}" oninput="communitySearchInput(this.value)">
+          </div>
+          <button onclick="exportCommunityExcel()" class="btn btn-success text-sm">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            匯出 Excel
+          </button>
+          <button onclick="mergeCommunityRecords()" class="btn btn-outline text-sm" id="cb-merge-btn" style="display:none">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+            合併選取
+          </button>
+          <button onclick="_communityMemberId='';renderCommunityBrowse()" class="btn btn-outline text-sm text-gray-400">登出</button>
+        </div>
+
+        <div class="overflow-x-auto rounded-xl border border-gray-100">
+          <table class="w-full text-left">
+            <thead class="bg-gray-50/80 border-b border-gray-100">
+              <tr>
+                <th class="px-3 py-3 w-8"><input type="checkbox" onchange="toggleAllCommunitySelect(this.checked)" class="rounded"></th>
+                ${sortBtn('community_name', '社區名稱')}
+                ${sortBtn('city', '縣市')}
+                ${sortBtn('total_units', '戶數')}
+                ${sortBtn('monthly_fee', '管理費(元/坪)')}
+                ${sortBtn('building_age', '屋齡')}
+                ${sortBtn('property_company', '物業公司')}
+                ${sortBtn('submitted_at', '提交時間')}
+                <th class="px-3 py-3">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${communities.length === 0 ? '<tr><td colspan="9" class="px-4 py-8 text-center text-gray-400 text-sm">尚無社區資料</td></tr>' :
+                communities.map(c => `
+                  <tr class="border-b border-gray-50 hover:bg-blue-50/30 transition cursor-pointer" onclick="showCommunityDetail('${c.id}')">
+                    <td class="px-3 py-3" onclick="event.stopPropagation()"><input type="checkbox" class="cb-check rounded" data-id="${c.id}" ${_communitySelected.has(c.id)?'checked':''} onchange="toggleCommunitySelect('${c.id}', this.checked)"></td>
+                    <td class="px-3 py-3 font-medium text-gray-800">${c.community_name || ''}</td>
+                    <td class="px-3 py-3 text-gray-600">${c.city || ''}${c.district ? ' ' + c.district : ''}</td>
+                    <td class="px-3 py-3 text-gray-600">${c.total_units != null ? c.total_units : '-'}</td>
+                    <td class="px-3 py-3 text-gray-600">${c.monthly_fee != null ? formatMoney(c.monthly_fee) : '-'}</td>
+                    <td class="px-3 py-3 text-gray-600">${c.building_age != null ? c.building_age + '年' : '-'}</td>
+                    <td class="px-3 py-3 text-gray-600">${c.property_company || '-'}</td>
+                    <td class="px-3 py-3 text-gray-400 text-xs">${c.submitted_at ? new Date(c.submitted_at).toLocaleDateString('zh-TW') : '-'}</td>
+                    <td class="px-3 py-3" onclick="event.stopPropagation()">
+                      <button onclick="showCommunityDetail('${c.id}')" class="text-blue-600 hover:text-blue-800 text-xs font-medium">詳情</button>
+                    </td>
+                  </tr>
+                `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function communitySearchInput(val) {
+  _communitySearch = val;
+  renderCommunityBrowseContent();
+}
+
+function toggleCommunitySort(key) {
+  if (_communitySortKey === key) { _communitySortAsc = !_communitySortAsc; }
+  else { _communitySortKey = key; _communitySortAsc = true; }
+  renderCommunityBrowseContent();
+}
+
+function toggleCommunitySelect(id, checked) {
+  if (checked) _communitySelected.add(id); else _communitySelected.delete(id);
+  const mergeBtn = document.getElementById('cb-merge-btn');
+  if (mergeBtn) mergeBtn.style.display = _communitySelected.size >= 2 ? '' : 'none';
+}
+
+function toggleAllCommunitySelect(checked) {
+  document.querySelectorAll('.cb-check').forEach(cb => {
+    cb.checked = checked;
+    toggleCommunitySelect(cb.dataset.id, checked);
+  });
+}
+
+function showCommunityDetail(id) {
+  const communities = getCommunities();
+  const c = communities.find(x => x.id === id);
+  if (!c) return;
+  const field = (label, val) => val != null && val !== '' ? `<div class="flex justify-between py-2 border-b border-gray-50"><span class="text-gray-500 text-sm">${label}</span><span class="text-gray-800 text-sm font-medium">${val}</span></div>` : '';
+  const isOwner = c.member_id === _communityMemberId;
+  showModal(`
+    <div class="p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-bold text-gray-800">${c.community_name}</h3>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+      </div>
+      <div class="space-y-0">
+        ${field('會員編號', c.member_id)}
+        ${field('社區地址', c.address)}
+        ${field('縣市', c.city)}
+        ${field('區域', c.district)}
+        ${field('總坪數', c.total_area)}
+        ${field('總戶數', c.total_units)}
+        ${field('停車位數量', c.parking_spaces)}
+        ${field('公設比', c.common_area_ratio != null ? c.common_area_ratio + '%' : null)}
+        ${field('屋齡', c.building_age != null ? c.building_age + '年' : null)}
+        ${field('每月管理費(元/坪)', c.monthly_fee != null ? formatMoney(c.monthly_fee) : null)}
+        ${field('社區每月總管理費', c.total_monthly != null ? formatMoney(c.total_monthly) + ' 元' : null)}
+        ${field('物業管理公司', c.property_company)}
+        ${field('清潔公司', c.cleaning_company)}
+        ${field('保全公司', c.security_company)}
+        ${field('電梯維護公司', c.elevator_company)}
+        ${field('機電維護公司', c.mechanical_company)}
+        ${field('推薦程度', c.recommend)}
+        ${field('備註', c.notes)}
+        ${field('提交時間', c.submitted_at ? new Date(c.submitted_at).toLocaleString('zh-TW') : '')}
+      </div>
+      ${isOwner ? `<div class="mt-4 flex justify-end"><button onclick="editCommunityDetail('${c.id}')" class="btn btn-primary text-sm">編輯</button></div>` : ''}
+    </div>
+  `);
+}
+
+function editCommunityDetail(id) {
+  const communities = getCommunities();
+  const c = communities.find(x => x.id === id);
+  if (!c) return;
+  const inp = (label, name, type, val) => `<div><label class="block text-xs font-medium text-gray-600 mb-1">${label}</label><input type="${type}" name="${name}" value="${val != null ? val : ''}" class="text-sm"></div>`;
+  showModal(`
+    <div class="p-6">
+      <h3 class="text-lg font-bold text-gray-800 mb-4">編輯社區資料</h3>
+      <form id="edit-community-form" onsubmit="saveEditCommunity(event,'${id}')" class="space-y-3">
+        <div class="grid grid-cols-2 gap-3">
+          ${inp('社區名稱', 'community_name', 'text', c.community_name)}
+          ${inp('社區地址', 'address', 'text', c.address)}
+          ${inp('縣市', 'city', 'text', c.city)}
+          ${inp('區域', 'district', 'text', c.district)}
+          ${inp('總坪數', 'total_area', 'number', c.total_area)}
+          ${inp('總戶數', 'total_units', 'number', c.total_units)}
+          ${inp('管理費(元/坪)', 'monthly_fee', 'number', c.monthly_fee)}
+          ${inp('每月總管理費', 'total_monthly', 'number', c.total_monthly)}
+          ${inp('物業管理公司', 'property_company', 'text', c.property_company)}
+          ${inp('清潔公司', 'cleaning_company', 'text', c.cleaning_company)}
+          ${inp('保全公司', 'security_company', 'text', c.security_company)}
+          ${inp('電梯維護公司', 'elevator_company', 'text', c.elevator_company)}
+          ${inp('機電維護公司', 'mechanical_company', 'text', c.mechanical_company)}
+          ${inp('停車位數量', 'parking_spaces', 'number', c.parking_spaces)}
+          ${inp('公設比(%)', 'common_area_ratio', 'number', c.common_area_ratio)}
+          ${inp('屋齡(年)', 'building_age', 'number', c.building_age)}
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">推薦程度</label>
+          <select name="recommend" class="text-sm">
+            <option value="">請選擇</option>
+            <option value="非常推薦" ${c.recommend==='非常推薦'?'selected':''}>非常推薦</option>
+            <option value="推薦" ${c.recommend==='推薦'?'selected':''}>推薦</option>
+            <option value="普通" ${c.recommend==='普通'?'selected':''}>普通</option>
+            <option value="不推薦" ${c.recommend==='不推薦'?'selected':''}>不推薦</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">備註</label>
+          <textarea name="notes" rows="2" class="text-sm">${c.notes || ''}</textarea>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="showCommunityDetail('${id}')" class="btn btn-outline text-sm">取消</button>
+          <button type="submit" class="btn btn-primary text-sm">儲存</button>
+        </div>
+      </form>
+    </div>
+  `);
+}
+
+function saveEditCommunity(e, id) {
+  e.preventDefault();
+  const form = e.target;
+  const fd = new FormData(form);
+  const communities = getCommunities();
+  const idx = communities.findIndex(c => c.id === id);
+  if (idx === -1) return;
+  const numFields = ['total_area','total_units','monthly_fee','total_monthly','parking_spaces','common_area_ratio','building_age'];
+  const fields = ['community_name','address','city','district','total_area','total_units','monthly_fee','total_monthly','property_company','cleaning_company','security_company','elevator_company','mechanical_company','parking_spaces','common_area_ratio','building_age','recommend','notes'];
+  fields.forEach(f => {
+    const v = (fd.get(f) || '').trim();
+    communities[idx][f] = numFields.includes(f) ? (v ? Number(v) : null) : v;
+  });
+  communities[idx].submitted_at = new Date().toISOString();
+  saveCommunities(communities);
+  closeModal();
+  showToast('社區資料已更新', 'success');
+  flashSaved();
+  renderCommunityBrowseContent();
+}
+
+function mergeCommunityRecords() {
+  if (_communitySelected.size < 2) { showToast('請至少選取兩筆紀錄', 'warning'); return; }
+  if (!confirm('確定要合併選取的 ' + _communitySelected.size + ' 筆紀錄？將保留最新資料。')) return;
+  const communities = getCommunities();
+  const selected = communities.filter(c => _communitySelected.has(c.id));
+  if (selected.length < 2) return;
+  selected.sort((a, b) => (b.submitted_at || '').localeCompare(a.submitted_at || ''));
+  const merged = { ...selected[0] };
+  for (let i = 1; i < selected.length; i++) {
+    Object.keys(selected[i]).forEach(k => {
+      if ((merged[k] === null || merged[k] === '' || merged[k] === undefined) && selected[i][k] != null && selected[i][k] !== '') {
+        merged[k] = selected[i][k];
+      }
+    });
+  }
+  merged.submitted_at = new Date().toISOString();
+  const removeIds = new Set(selected.slice(1).map(s => s.id));
+  const remaining = communities.filter(c => !removeIds.has(c.id));
+  const mergedIdx = remaining.findIndex(c => c.id === merged.id);
+  if (mergedIdx !== -1) remaining[mergedIdx] = merged;
+  saveCommunities(remaining);
+  _communitySelected.clear();
+  showToast('已合併 ' + selected.length + ' 筆紀錄', 'success');
+  flashSaved();
+  renderCommunityBrowseContent();
+}
+
+function exportCommunityExcel() {
+  const communities = getCommunities();
+  if (communities.length === 0) { showToast('無資料可匯出', 'warning'); return; }
+  let filtered = communities;
+  if (_communitySearch) {
+    const q = _communitySearch.toLowerCase();
+    filtered = communities.filter(c =>
+      (c.community_name || '').toLowerCase().includes(q) ||
+      (c.address || '').toLowerCase().includes(q) ||
+      (c.city || '').toLowerCase().includes(q) ||
+      (c.property_company || '').toLowerCase().includes(q) ||
+      (c.member_id || '').toLowerCase().includes(q)
+    );
+  }
+  const headers = ['會員編號','社區名稱','地址','縣市','區域','總坪數','總戶數','管理費(元/坪)','每月總管理費','物業管理公司','清潔公司','保全公司','電梯維護公司','機電維護公司','停車位數量','公設比(%)','屋齡(年)','推薦程度','備註','提交時間'];
+  const keys = ['member_id','community_name','address','city','district','total_area','total_units','monthly_fee','total_monthly','property_company','cleaning_company','security_company','elevator_company','mechanical_company','parking_spaces','common_area_ratio','building_age','recommend','notes','submitted_at'];
+  const rows = filtered.map(c => keys.map(k => k === 'submitted_at' && c[k] ? new Date(c[k]).toLocaleString('zh-TW') : (c[k] != null ? c[k] : '')));
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '社區資料');
+  XLSX.writeFile(wb, `社區資料_${todayStr()}.xlsx`);
+  showToast('社區資料 Excel 已匯出', 'success');
+}
+
 function clearAllData() {
   if (!confirm('確定要清除所有資料嗎？此操作無法復原！')) return;
   if (!confirm('再次確認：所有交易記錄、應收帳款和分類設定都將被刪除。')) return;
   removeData(STORAGE_KEYS.transactions);
   removeData(STORAGE_KEYS.receivables);
   removeData(STORAGE_KEYS.categories);
+  removeData(STORAGE_KEYS.communities);
   showToast('所有資料已清除', 'info');
   flashSaved();
   renderData();
