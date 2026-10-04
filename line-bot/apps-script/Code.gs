@@ -234,7 +234,9 @@ function canSee_(target, member) {
 function handleApi_(req) {
   const action = String(req.action || '');
   if (action.indexOf('admin.') === 0) {
-    if (!req.adminToken || req.adminToken !== prop_('ADMIN_TOKEN')) throw new Error('管理密碼錯誤');
+    // 忽略前後空白：在指令碼屬性改密碼時很容易多打空格。
+    const expected = String(prop_('ADMIN_TOKEN')).trim();
+    if (!expected || String(req.adminToken || '').trim() !== expected) throw new Error('管理密碼錯誤');
     // 備份可能要跑數十秒，不佔用全域鎖，避免 LIFF 與後台其他操作等候逾時。
     if (action === 'admin.backup') {
       backupRoot_();

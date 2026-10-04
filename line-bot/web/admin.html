@@ -16,7 +16,11 @@
   <form id="login" class="card hidden" style="max-width:400px;margin:60px auto">
     <h1>里辦 LINE 管理後台</h1>
     <label>管理密碼 <span class="hint">（Apps Script 的 ADMIN_TOKEN）</span></label>
-    <input type="password" name="token" required autocomplete="current-password">
+    <div class="row">
+      <input type="password" name="token" id="token-input" required autocomplete="current-password">
+      <button type="button" class="ghost" id="toggle-token" style="flex:0 0 auto">顯示</button>
+    </div>
+    <p class="muted">密碼可在試算表「LINE 系統 → 查看設定狀態」查看。</p>
     <button class="block" type="submit">登入</button>
   </form>
 
@@ -194,6 +198,13 @@ $('#login').addEventListener('submit', e => {
   adminToken = e.target.token.value.trim();
   try { sessionStorage.setItem('adminToken', adminToken); } catch (_) {}
   start();
+});
+
+$('#toggle-token').addEventListener('click', e => {
+  const input = $('#token-input');
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  e.target.textContent = show ? '隱藏' : '顯示';
 });
 
 $('#logout').addEventListener('click', () => {
