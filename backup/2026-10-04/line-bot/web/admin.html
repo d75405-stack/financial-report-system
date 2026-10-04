@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>里辦 LINE 管理後台</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+<script src="common.js"></script>
+</head>
+<body>
+<div class="wrap wide">
+  <!-- 登入 -->
+  <form id="login" class="card hidden" style="max-width:400px;margin:60px auto">
+    <h1>里辦 LINE 管理後台</h1>
+    <label>管理密碼 <span class="hint">（Apps Script 的 ADMIN_TOKEN）</span></label>
+    <div class="row">
+      <input type="password" name="token" id="token-input" required autocomplete="current-password">
+      <button type="button" class="ghost" id="toggle-token" style="flex:0 0 auto">顯示</button>
+    </div>
+    <p class="muted">密碼可在試算表「LINE 系統 → 查看設定狀態」查看。</p>
+    <button class="block" type="submit">登入</button>
+  </form>
+
+  <div id="app" class="hidden">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <h1 style="flex:0 1 auto">里辦 LINE 管理後台</h1>
+      <button class="ghost small" id="logout" style="flex:0 0 auto">登出</button>
+    </div>
+    <div class="tabs">
+      <button data-tab="summary" class="active">總覽</button>
+      <button data-tab="reports">回報</button>
+      <button data-tab="broadcast">推播宣達</button>
+      <button data-tab="lawyer">律師諮詢</button>
+      <button data-tab="members">成員</button>
+    </div>
+
+    <!-- 總覽 -->
+    <section id="tab-summary">
+      <div class="stats" id="stats"></div>
+      <div class="card" id="backup-info"></div>
+      <div class="card" id="setup-info"></div>
+    </section>
+
+    <!-- 回報 -->
+    <section id="tab-reports" class="hidden">
+      <div class="card">
+        <div class="filters">
+          <select id="report-status"><option value="">全部狀態</option></select>
+          <select id="report-category"><option value="">全部類別</option></select>
+          <input id="report-search" placeholder="搜尋內容、回報人">
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>時間</th><th>回報人</th><th>類別</th><th>內容</th><th>照片</th><th>狀態</th><th>處理人／備註</th><th></th></tr></thead>
+          <tbody id="report-rows"></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- 推播宣達 -->
+    <section id="tab-broadcast" class="hidden">
+      <form class="card" id="form-broadcast">
+        <h2>發送宣達</h2>
+        <label>對象</label>
+        <select name="target" id="broadcast-target"></select>
+        <label>標題</label>
+        <input name="title" required maxlength="50" placeholder="例：颱風停班停課通知">
+        <label>內容</label>
+        <textarea name="content" required maxlength="4000"></textarea>
+        <p class="muted" id="quota-hint"></p>
+        <button type="submit">發送</button>
+      </form>
+      <div class="card">
+        <h2>發送紀錄</h2>
+        <ul class="list" id="announcements"></ul>
+      </div>
+    </section>
+
+    <!-- 律師諮詢 -->
+    <section id="tab-lawyer" class="hidden">
+      <form class="card" id="form-slot">
+        <h2>新增諮詢時段</h2>
+        <div class="row">
+          <div><label>日期</label><input type="date" name="date" required></div>
+          <div><label>開始</label><input type="time" name="start" required value="14:00"></div>
+          <div><label>結束</label><input type="time" name="end" required value="16:00"></div>
+        </div>
+        <div class="row">
+          <div><label>律師</label><input name="lawyer" maxlength="30"></div>
+          <div><label>名額</label><input type="number" name="capacity" min="1" max="50" value="4"></div>
+          <div><label>備註</label><input name="note" maxlength="200" placeholder="例：里活動中心 2 樓"></div>
+        </div>
+        <button type="submit" style="margin-top:12px">新增時段</button>
+      </form>
+      <div class="card">
+        <h2>時段</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>日期</th><th>時間</th><th>律師</th><th>預約／名額</th><th>備註</th><th></th></tr></thead>
+          <tbody id="slot-rows"></tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h2>預約名單</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>時段</th><th>姓名</th><th>電話</th><th>類別</th><th>問題簡述</th><th>狀態</th></tr></thead>
+          <tbody id="booking-rows"></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- 成員 -->
+    <section id="tab-members" class="hidden">
+      <div class="card">
+        <p class="muted" id="member-hint"></p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>姓名</th><th>手機</th><th>職務</th><th>組別</th><th>狀態</th><th>加入時間</th><th></th></tr></thead>
+          <tbody id="member-rows"></tbody>
+        </table></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- 回報處理 -->
+<dialog id="dlg-report">
+  <form method="dialog" id="form-report">
+    <h2 id="dlg-report-title"></h2>
+    <p class="muted" id="dlg-report-content" style="white-space:pre-wrap"></p>
+    <label>狀態</label>
+    <select name="status" id="dlg-report-status"></select>
+    <label>處理人</label>
+    <input name="handler" maxlength="30">
+    <label>備註 <span class="hint">（會顯示給回報人）</span></label>
+    <textarea name="note" maxlength="1000"></textarea>
+    <label style="font-weight:400"><input type="checkbox" name="notify" style="width:auto"> 用 LINE 通知回報人（計入推播則數）</label>
+    <div class="row" style="margin-top:16px">
+      <button type="button" class="ghost" value="cancel" onclick="this.closest('dialog').close()">取消</button>
+      <button type="submit" value="save">儲存</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 成員編輯 -->
+<dialog id="dlg-member">
+  <form method="dialog" id="form-member">
+    <h2>編輯成員</h2>
+    <label>姓名</label><input name="name" maxlength="30" required>
+    <label>手機</label><input name="phone" maxlength="20">
+    <label>職務 <span class="hint">（「里長」「管理員」會收到新回報與新預約通知）</span></label>
+    <input name="role" maxlength="30" list="role-options">
+    <datalist id="role-options"><option>里長</option><option>管理員</option><option>幹事</option><option>鄰長</option><option>志工</option><option>成員</option></datalist>
+    <label>組別 <span class="hint">（推播時可只發給某一組）</span></label>
+    <input name="group" maxlength="30" placeholder="例：第 3 鄰、環保志工隊">
+    <label>狀態</label>
+    <select name="status"><option value="active">啟用</option><option value="disabled">停用</option></select>
+    <div class="row" style="margin-top:16px">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">取消</button>
+      <button type="submit">儲存</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+let adminToken = '';
+try { adminToken = sessionStorage.getItem('adminToken') || ''; } catch (_) {}
+
+const admin = (action, data) => api('admin.' + action, Object.assign({ adminToken }, data));
+const state = { options: null, reports: [], members: [] };
+
+function options(list, selected) {
+  return list.map(v => `<option${v === selected ? ' selected' : ''}>${esc(v)}</option>`).join('');
+}
+
+async function start() {
+  if (!adminToken) return showLogin();
+  try {
+    state.options = await admin('options');
+  } catch (err) {
+    toast(err.message, true);
+    return showLogin();
+  }
+  $('#login').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+  $('#report-status').innerHTML += options(state.options.reportStatuses);
+  $('#report-category').innerHTML += options(state.options.reportCategories);
+  showTab('summary');
+}
+
+function showLogin() {
+  $('#app').classList.add('hidden');
+  $('#login').classList.remove('hidden');
+}
+
+$('#login').addEventListener('submit', e => {
+  e.preventDefault();
+  adminToken = e.target.token.value.trim();
+  try { sessionStorage.setItem('adminToken', adminToken); } catch (_) {}
+  start();
+});
+
+$('#toggle-token').addEventListener('click', e => {
+  const input = $('#token-input');
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  e.target.textContent = show ? '隱藏' : '顯示';
+});
+
+$('#logout').addEventListener('click', () => {
+  adminToken = '';
+  try { sessionStorage.removeItem('adminToken'); } catch (_) {}
+  location.reload();
+});
+
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+
+function showTab(tab) {
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('section[id^=tab-]').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-' + tab));
+  ({ summary: loadSummary, reports: loadReports, broadcast: loadBroadcast, lawyer: loadLawyer, members: loadMembers })[tab]()
+    .catch(err => toast(err.message, true));
+}
+
+// 總覽
+async function loadSummary() {
+  const s = await admin('summary');
+  const quota = s.quota
+    ? (s.quota.type === 'limited' ? `${s.quota.used} / ${s.quota.limit}` : `${s.quota.used}（無上限）`)
+    : '無法取得';
+  $('#stats').innerHTML = [
+    ['待處理回報', s.pendingReports],
+    ['處理中回報', s.inProgressReports],
+    ['已預約諮詢', s.upcomingBookings],
+    ['可預約時段', s.openSlots],
+    ['工作人員', s.members],
+    ['本月推播則數', quota],
+  ].map(([k, v]) => `<div class="stat"><span class="muted">${esc(k)}</span><b>${esc(v)}</b></div>`).join('');
+  $('#setup-info').innerHTML = `
+    <h2>工作人員加入方式</h2>
+    <p>請工作人員加入官方帳號好友後，在聊天室輸入：</p>
+    <p><code>綁定 ${esc(s.inviteCode)} 自己的姓名</code></p>
+    <p>或開啟 <a href="${esc(s.liffUrl)}?page=register" target="_blank" rel="noopener">${esc(s.liffUrl)}?page=register</a> 填寫。</p>
+    <p class="muted">邀請碼可在 Apps Script 指令碼屬性 INVITE_CODE 修改。</p>`;
+  renderBackup(s.backup);
+}
+
+function renderBackup(b) {
+  const box = $('#backup-info');
+  if (!b || !b.configured) {
+    box.innerHTML = `<h2>雲端硬碟備份</h2>
+      <p class="muted">尚未設定備份資料夾。請在試算表選單「LINE 系統 → 一鍵設定」的「備份資料夾網址」貼上資料夾網址。</p>`;
+    return;
+  }
+  const link = /^https:\/\/drive\.google\.com\//.test(b.folderUrl || '')
+    ? `<a href="${esc(b.folderUrl)}" target="_blank" rel="noopener">${esc(b.folderName)}</a>` : '無法開啟';
+  box.innerHTML = `
+    <h2>雲端硬碟備份</h2>
+    ${b.warning ? `<p class="alert">⚠️ ${esc(b.warning)}</p>` : ''}
+    <p>資料夾：${link}</p>
+    <p>上次備份：${esc(b.lastAt || '尚未備份')}</p>
+    ${b.lastError ? `<p class="alert">上次失敗：${esc(b.lastError)}</p>` : ''}
+    <p class="muted">每天凌晨 2 點自動備份：整份資料的 Excel 檔依年月存放，另依類別整理成工作人員、回報、推播公告、律師諮詢的 CSV。</p>
+    <button id="btn-backup">立即備份</button>`;
+  $('#btn-backup').addEventListener('click', e => withBusy(e.target, async () => {
+    const r = await admin('backup');
+    toast(`備份完成：${r.snapshot}`);
+    loadSummary();
+  }));
+}
+
+// 回報
+async function loadReports() {
+  state.reports = await admin('reports');
+  renderReports();
+}
+
+['#report-status', '#report-category', '#report-search'].forEach(sel => $(sel).addEventListener('input', renderReports));
+
+function renderReports() {
+  const status = $('#report-status').value;
+  const category = $('#report-category').value;
+  const q = $('#report-search').value.trim();
+  const rows = state.reports.filter(r =>
+    (!status || r.status === status) && (!category || r.category === category) &&
+    (!q || (r.content + r.name + r.location + r.id).indexOf(q) >= 0));
+  $('#report-rows').innerHTML = rows.length ? rows.map(r => `
+    <tr>
+      <td>${esc(r.createdAt)}<div class="muted">${esc(r.id)}</div></td>
+      <td>${esc(r.name)}</td>
+      <td>${esc(r.category)}</td>
+      <td class="pre">${esc(r.content)}${r.location ? `<div class="muted">📍 ${linkify(r.location)}</div>` : ''}</td>
+      <td>${r.photoUrl ? `<a href="${esc(r.photoUrl)}" target="_blank" rel="noopener">查看</a>` : ''}</td>
+      <td><span class="badge ${esc(r.status)}">${esc(r.status)}</span></td>
+      <td>${esc(r.handler)}<div class="muted">${esc(r.note)}</div></td>
+      <td><button class="small" data-report="${esc(r.id)}">處理</button></td>
+    </tr>`).join('') : '<tr><td colspan="8" class="muted">沒有資料</td></tr>';
+  document.querySelectorAll('[data-report]').forEach(b => b.addEventListener('click', () => openReport(b.dataset.report)));
+}
+
+function linkify(text) {
+  return esc(text).replace(/https:\/\/maps\.google\.com\/\?q=[\d.,-]+/g, u => `<a href="${u}" target="_blank" rel="noopener">地圖</a>`);
+}
+
+function openReport(id) {
+  const r = state.reports.find(x => x.id === id);
+  const f = $('#form-report');
+  f.dataset.id = id;
+  $('#dlg-report-title').textContent = `${r.category}｜${r.name}`;
+  $('#dlg-report-content').textContent = r.content;
+  $('#dlg-report-status').innerHTML = options(state.options.reportStatuses, r.status);
+  f.handler.value = r.handler || '';
+  f.note.value = r.note || '';
+  f.notify.checked = false;
+  $('#dlg-report').showModal();
+}
+
+$('#form-report').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target;
+  withBusy(e.submitter, async () => {
+    await admin('updateReport', {
+      id: f.dataset.id, status: f.status.value, handler: f.handler.value, note: f.note.value, notify: f.notify.checked,
+    });
+    $('#dlg-report').close();
+    toast('已更新');
+    loadReports();
+  });
+});
+
+// 推播宣達
+async function loadBroadcast() {
+  const [members, list, summary] = await Promise.all([admin('members'), admin('announcements'), admin('summary')]);
+  const active = members.filter(m => m.status === 'active');
+  const groups = [...new Set(active.map(m => m.group).filter(Boolean))];
+  $('#broadcast-target').innerHTML = [
+    `<option value="members">全體工作人員（${active.length} 人）</option>`,
+    ...groups.map(g => `<option value="group:${esc(g)}">組別：${esc(g)}（${active.filter(m => m.group === g).length} 人）</option>`),
+    '<option value="all">所有好友（含里民）</option>',
+  ].join('');
+  const q = summary.quota;
+  $('#quota-hint').textContent = q && q.type === 'limited'
+    ? `本月已用 ${q.used} / ${q.limit} 則。每位收件人計 1 則；里民用「公告」關鍵字查詢不計費。`
+    : '每位收件人計 1 則推播；里民用「公告」關鍵字查詢不計費。';
+  $('#announcements').innerHTML = list.length ? list.map(a => `
+    <li>
+      <b>${esc(a.title)}</b> <span class="badge">${esc(targetLabel(a.target))}｜${esc(a.recipients)}${/^\d+$/.test(a.recipients) ? ' 人' : ''}</span>
+      <div style="white-space:pre-wrap">${esc(a.content)}</div>
+      <div class="muted">${esc(a.createdAt)}</div>
+    </li>`).join('') : '<li class="muted">尚無紀錄</li>';
+}
+
+function targetLabel(t) {
+  if (t === 'all') return '所有好友';
+  if (t === 'members') return '全體工作人員';
+  return '組別 ' + String(t).replace(/^group:/, '');
+}
+
+$('#form-broadcast').addEventListener('submit', e => {
+  e.preventDefault();
+  const data = formData(e.target);
+  const label = $('#broadcast-target').selectedOptions[0].textContent;
+  if (!confirm(`確定要發送給「${label}」嗎？送出後無法收回。`)) return;
+  withBusy(e.submitter, async () => {
+    const r = await admin('broadcast', data);
+    e.target.reset();
+    toast(`已發送（${r.recipients}${typeof r.recipients === 'number' ? ' 人' : ''}）`);
+    loadBroadcast();
+  });
+});
+
+// 律師諮詢
+async function loadLawyer() {
+  const [slots, bookings] = await Promise.all([admin('slots'), admin('bookings')]);
+  $('#slot-rows').innerHTML = slots.length ? slots.map(s => `
+    <tr>
+      <td>${esc(s.date)}</td><td>${esc(s.start)}–${esc(s.end)}</td><td>${esc(s.lawyer)}</td>
+      <td>${esc(s.booked)} / ${esc(s.capacity)}</td><td>${esc(s.note)}</td>
+      <td><button class="small danger" data-slot="${esc(s.slotId)}">刪除</button></td>
+    </tr>`).join('') : '<tr><td colspan="6" class="muted">尚無時段</td></tr>';
+  document.querySelectorAll('[data-slot]').forEach(b => b.addEventListener('click', () => {
+    if (!confirm('確定刪除此時段？')) return;
+    withBusy(b, async () => {
+      await admin('deleteSlot', { slotId: b.dataset.slot });
+      toast('已刪除');
+      loadLawyer();
+    });
+  }));
+  $('#booking-rows').innerHTML = bookings.length ? bookings.map(b => `
+    <tr>
+      <td>${esc(b.date)} ${esc(b.start)}<div class="muted">${esc(b.lawyer)}</div></td>
+      <td>${esc(b.name)}</td><td>${esc(b.phone)}</td><td>${esc(b.topic)}</td>
+      <td class="pre">${esc(b.detail)}</td>
+      <td><select data-booking="${esc(b.id)}">${options(state.options.bookingStatuses, b.status)}</select></td>
+    </tr>`).join('') : '<tr><td colspan="6" class="muted">尚無預約</td></tr>';
+  document.querySelectorAll('[data-booking]').forEach(sel => sel.addEventListener('change', async () => {
+    try {
+      await admin('updateBooking', { id: sel.dataset.booking, status: sel.value });
+      toast('已更新');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }));
+}
+
+$('#form-slot').addEventListener('submit', e => {
+  e.preventDefault();
+  withBusy(e.submitter, async () => {
+    await admin('addSlot', formData(e.target));
+    toast('已新增時段');
+    loadLawyer();
+  });
+});
+
+// 成員
+async function loadMembers() {
+  state.members = await admin('members');
+  $('#member-hint').textContent = `共 ${state.members.length} 人。職務設為「${state.options.adminRoles.join('」或「')}」的人會收到新回報與新預約通知。`;
+  $('#member-rows').innerHTML = state.members.length ? state.members.map(m => `
+    <tr>
+      <td>${esc(m.name)}</td><td>${esc(m.phone)}</td><td>${esc(m.role)}</td><td>${esc(m.group)}</td>
+      <td><span class="badge ${esc(m.status)}">${m.status === 'active' ? '啟用' : '停用'}</span></td>
+      <td>${esc(m.joinedAt)}</td>
+      <td><button class="small" data-member="${esc(m.userId)}">編輯</button></td>
+    </tr>`).join('') : '<tr><td colspan="7" class="muted">尚無成員</td></tr>';
+  document.querySelectorAll('[data-member]').forEach(b => b.addEventListener('click', () => {
+    const m = state.members.find(x => x.userId === b.dataset.member);
+    const f = $('#form-member');
+    f.dataset.userId = m.userId;
+    ['name', 'phone', 'role', 'group', 'status'].forEach(k => { f.querySelector(`[name=${k}]`).value = m[k] || ''; });
+    $('#dlg-member').showModal();
+  }));
+}
+
+$('#form-member').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target;
+  withBusy(e.submitter, async () => {
+    await admin('updateMember', Object.assign({ userId: f.dataset.userId }, formData(f)));
+    $('#dlg-member').close();
+    toast('已更新');
+    loadMembers();
+  });
+});
+
+start();
+</script>
+</body>
+</html>

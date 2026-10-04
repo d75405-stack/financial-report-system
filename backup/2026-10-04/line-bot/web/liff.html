@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>里辦公處服務</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script src="config.js"></script>
+<script src="common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div id="loading" class="card center muted">載入中…</div>
+
+  <!-- 首頁 -->
+  <section id="view-home" class="hidden">
+    <h1>里辦公處服務</h1>
+    <p class="muted" id="hello"></p>
+    <div class="menu">
+      <a href="#report"><span>📝</span>回報</a>
+      <a href="#booking"><span>⚖️</span>律師諮詢</a>
+      <a href="#news"><span>📢</span>公告</a>
+      <a href="#register" id="menu-register"><span>🪪</span>工作人員綁定</a>
+    </div>
+  </section>
+
+  <!-- 工作人員綁定 -->
+  <section id="view-register" class="hidden">
+    <h1>工作人員綁定</h1>
+    <form id="form-register" class="card">
+      <p class="muted">綁定後即可使用回報功能。邀請碼請向里長索取。</p>
+      <label>邀請碼</label>
+      <input name="inviteCode" required autocomplete="off">
+      <label>姓名</label>
+      <input name="name" required maxlength="30">
+      <label>手機 <span class="hint">（選填）</span></label>
+      <input name="phone" type="tel" maxlength="20">
+      <button class="block" type="submit">綁定</button>
+    </form>
+  </section>
+
+  <!-- 回報 -->
+  <section id="view-report" class="hidden">
+    <h1>回報</h1>
+    <form id="form-report" class="card">
+      <label>類別</label>
+      <select name="category" id="category"></select>
+      <label>內容</label>
+      <textarea name="content" required maxlength="2000" placeholder="例：中正路 12 號前路燈不亮"></textarea>
+      <label>地點 <span class="hint">（選填）</span></label>
+      <div class="row">
+        <input name="location" id="location" maxlength="300" placeholder="地址或地標">
+        <button type="button" class="ghost" id="btn-gps" style="flex:0 0 auto">📍 定位</button>
+      </div>
+      <label>照片 <span class="hint">（選填，一張）</span></label>
+      <input type="file" accept="image/*" id="photo">
+      <img id="photo-preview" class="preview hidden" alt="照片預覽">
+      <button class="block" type="submit">送出回報</button>
+    </form>
+    <div class="card">
+      <h2>我的回報</h2>
+      <ul class="list" id="my-reports"></ul>
+    </div>
+  </section>
+
+  <!-- 律師諮詢 -->
+  <section id="view-booking" class="hidden">
+    <h1>免費律師諮詢</h1>
+    <div class="card">
+      <h2>選擇時段</h2>
+      <div id="slots"></div>
+    </div>
+    <form id="form-booking" class="card hidden">
+      <h2>填寫資料</h2>
+      <p class="muted" id="selected-slot"></p>
+      <label>姓名</label>
+      <input name="name" required maxlength="30">
+      <label>聯絡電話</label>
+      <input name="phone" type="tel" required maxlength="20">
+      <label>諮詢類別</label>
+      <select name="topic" required>
+        <option>民事</option><option>刑事</option><option>家事（婚姻、繼承）</option>
+        <option>勞資</option><option>房屋租賃</option><option>消費糾紛</option><option>其他</option>
+      </select>
+      <label>簡述問題 <span class="hint">（選填，方便律師事先準備）</span></label>
+      <textarea name="detail" maxlength="1000"></textarea>
+      <p class="muted">您的資料僅供本次諮詢聯繫使用，不會提供給第三方。</p>
+      <button class="block" type="submit">確認預約</button>
+    </form>
+    <div class="card">
+      <h2>我的預約</h2>
+      <ul class="list" id="my-bookings"></ul>
+    </div>
+  </section>
+
+  <!-- 公告 -->
+  <section id="view-news" class="hidden">
+    <h1>公告</h1>
+    <div class="card"><ul class="list" id="news"></ul></div>
+  </section>
+
+  <p class="center"><a href="#home" class="muted" id="back-home">回首頁</a></p>
+</div>
+
+<script>
+let me = null;
+let idToken = '';
+let selectedSlot = null;
+
+const call = (action, data) => api(action, Object.assign({ idToken }, data));
+
+async function init() {
+  try {
+    await liff.init({ liffId: APP_CONFIG.LIFF_ID });
+    if (!liff.isLoggedIn()) {
+      liff.login({ redirectUri: location.href });
+      return;
+    }
+    idToken = liff.getIDToken();
+    me = await call('me');
+  } catch (err) {
+    $('#loading').textContent = '無法載入：' + err.message;
+    return;
+  }
+  $('#loading').classList.add('hidden');
+  $('#hello').textContent = me.member ? `${me.member.name} 您好（${me.member.role}）` : `${me.displayName} 您好`;
+  $('#category').innerHTML = me.categories.map(c => `<option>${esc(c)}</option>`).join('');
+
+  const page = new URLSearchParams(location.search).get('page');
+  if (page && !location.hash) location.hash = page;
+  window.addEventListener('hashchange', route);
+  route();
+}
+
+function route() {
+  let view = location.hash.slice(1) || 'home';
+  if (view === 'report' && !me.member) view = 'register';
+  if (view === 'register' && me.member) view = 'report';
+  document.querySelectorAll('section').forEach(s => s.classList.add('hidden'));
+  const section = $('#view-' + view) || $('#view-home');
+  section.classList.remove('hidden');
+  $('#back-home').classList.toggle('hidden', section.id === 'view-home');
+  $('#menu-register').classList.toggle('hidden', !!me.member);
+  if (view === 'report') loadReports();
+  if (view === 'booking') loadBooking();
+  if (view === 'news') loadNews();
+}
+
+// 綁定
+$('#form-register').addEventListener('submit', e => {
+  e.preventDefault();
+  withBusy(e.submitter, async () => {
+    await call('register', formData(e.target));
+    me = await call('me');
+    toast('綁定完成');
+    location.hash = 'report';
+    route();
+  });
+});
+
+// 回報
+let photoData = '';
+$('#photo').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  photoData = '';
+  $('#photo-preview').classList.add('hidden');
+  if (!file) return;
+  try {
+    photoData = await resizeImage(file, 1280);
+    $('#photo-preview').src = photoData;
+    $('#photo-preview').classList.remove('hidden');
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+$('#btn-gps').addEventListener('click', () => {
+  if (!navigator.geolocation) return toast('此裝置不支援定位', true);
+  navigator.geolocation.getCurrentPosition(
+    p => {
+      const ll = p.coords.latitude.toFixed(6) + ',' + p.coords.longitude.toFixed(6);
+      const input = $('#location');
+      input.value = (input.value ? input.value + ' ' : '') + 'https://maps.google.com/?q=' + ll;
+    },
+    () => toast('無法取得位置，請確認已允許定位', true),
+    { enableHighAccuracy: true, timeout: 10000 },
+  );
+});
+
+$('#form-report').addEventListener('submit', e => {
+  e.preventDefault();
+  withBusy(e.submitter, async () => {
+    const r = await call('submitReport', Object.assign(formData(e.target), { photo: photoData }));
+    e.target.reset();
+    photoData = '';
+    $('#photo-preview').classList.add('hidden');
+    toast(r.photoSaved === false ? `已送出（編號 ${r.id}），但照片沒存成功，請改用聊天室傳照片給里辦` : '已送出，編號 ' + r.id, r.photoSaved === false);
+    loadReports();
+  });
+});
+
+async function loadReports() {
+  const ul = $('#my-reports');
+  ul.innerHTML = '<li class="muted">載入中…</li>';
+  try {
+    const list = await call('myReports');
+    ul.innerHTML = list.length ? list.map(r => `
+      <li>
+        <div class="row" style="justify-content:space-between">
+          <b style="flex:0 1 auto">${esc(r.category)}</b>
+          <span class="badge ${esc(r.status)}" style="flex:0 0 auto">${esc(r.status)}</span>
+        </div>
+        <div>${esc(r.content)}</div>
+        ${r.note ? `<div class="muted">里辦回覆：${esc(r.note)}</div>` : ''}
+        <div class="muted">${esc(r.createdAt)}｜${esc(r.id)}</div>
+      </li>`).join('') : '<li class="muted">尚無回報</li>';
+  } catch (err) {
+    ul.innerHTML = `<li class="muted">${esc(err.message)}</li>`;
+  }
+}
+
+// 律師諮詢
+async function loadBooking() {
+  selectedSlot = null;
+  $('#form-booking').classList.add('hidden');
+  $('#slots').innerHTML = '<p class="muted">載入中…</p>';
+  try {
+    const slots = await call('listSlots');
+    $('#slots').innerHTML = slots.length ? slots.map(s => `
+      <div class="slot" data-id="${esc(s.slotId)}">
+        <div>
+          <b>${esc(s.date)}</b> ${esc(s.start)}–${esc(s.end)}
+          <div class="muted">${esc(s.lawyer ? s.lawyer + ' 律師' : '')}${s.note ? '｜' + esc(s.note) : ''}</div>
+        </div>
+        <span class="badge">剩 ${esc(s.remaining)} 位</span>
+      </div>`).join('') : '<p class="muted">目前沒有可預約的時段，請留意公告。</p>';
+    document.querySelectorAll('.slot').forEach(el => el.addEventListener('click', () => {
+      document.querySelectorAll('.slot').forEach(x => x.classList.remove('selected'));
+      el.classList.add('selected');
+      selectedSlot = slots.find(s => s.slotId === el.dataset.id);
+      $('#selected-slot').textContent = `時段：${selectedSlot.date} ${selectedSlot.start}–${selectedSlot.end}`;
+      const form = $('#form-booking');
+      form.classList.remove('hidden');
+      const nameInput = form.querySelector('[name=name]');
+      if (!nameInput.value && me.member) nameInput.value = me.member.name;
+      form.scrollIntoView({ behavior: 'smooth' });
+    }));
+  } catch (err) {
+    $('#slots').innerHTML = `<p class="muted">${esc(err.message)}</p>`;
+  }
+  loadMyBookings();
+}
+
+$('#form-booking').addEventListener('submit', e => {
+  e.preventDefault();
+  if (!selectedSlot) return toast('請先選擇時段', true);
+  withBusy(e.submitter, async () => {
+    await call('book', Object.assign(formData(e.target), { slotId: selectedSlot.slotId }));
+    e.target.reset();
+    toast('預約成功！前一天會提醒您');
+    loadBooking();
+  });
+});
+
+async function loadMyBookings() {
+  const ul = $('#my-bookings');
+  try {
+    const list = await call('myBookings');
+    ul.innerHTML = list.length ? list.map(b => `
+      <li>
+        <div class="row" style="justify-content:space-between">
+          <b style="flex:0 1 auto">${esc(b.date)} ${esc(b.start)}–${esc(b.end)}</b>
+          <span class="badge ${esc(b.status)}" style="flex:0 0 auto">${esc(b.status)}</span>
+        </div>
+        <div class="muted">${esc(b.topic)}${b.lawyer ? '｜' + esc(b.lawyer) + ' 律師' : ''}</div>
+        ${b.status === '已預約' ? `<button class="ghost small" data-cancel="${esc(b.id)}">取消預約</button>` : ''}
+      </li>`).join('') : '<li class="muted">尚無預約</li>';
+    ul.querySelectorAll('[data-cancel]').forEach(btn => btn.addEventListener('click', () => {
+      if (!confirm('確定要取消這個預約嗎？')) return;
+      withBusy(btn, async () => {
+        await call('cancelBooking', { id: btn.dataset.cancel });
+        toast('已取消');
+        loadBooking();
+      });
+    }));
+  } catch (err) {
+    ul.innerHTML = `<li class="muted">${esc(err.message)}</li>`;
+  }
+}
+
+// 公告
+async function loadNews() {
+  const ul = $('#news');
+  ul.innerHTML = '<li class="muted">載入中…</li>';
+  try {
+    const list = await call('announcements');
+    ul.innerHTML = list.length ? list.map(a => `
+      <li>
+        <b>${esc(a.title)}</b>
+        <div style="white-space:pre-wrap">${esc(a.content)}</div>
+        <div class="muted">${esc(a.createdAt)}</div>
+      </li>`).join('') : '<li class="muted">目前沒有公告</li>';
+  } catch (err) {
+    ul.innerHTML = `<li class="muted">${esc(err.message)}</li>`;
+  }
+}
+
+init();
+</script>
+</body>
+</html>
