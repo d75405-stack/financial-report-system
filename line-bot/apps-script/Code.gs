@@ -142,7 +142,14 @@ const HELP_TEXT = [
 
 function handleEvent_(ev) {
   const uid = ev.source && ev.source.userId;
-  if (!uid || ev.source.type !== 'user') return;
+  if (!uid) return;
+  // 群組與多人聊天室：只回應「全全」開頭的訊息，而且只提供不含個資的功能
+  if (ev.source.type !== 'user') {
+    if (ev.type === 'message' && ev.message.type === 'text' && ev.message.text.trim().indexOf(ASSISTANT_NAME) === 0) {
+      handleAssistant_(ev, uid, findMember_(uid), ev.message.text.trim(), true);
+    }
+    return;
+  }
 
   if (ev.type === 'follow') {
     reply_(ev.replyToken, [text_('感謝加入里辦公處官方帳號！\n\n' + HELP_TEXT)]);
@@ -248,16 +255,20 @@ const ASSISTANT_NAME = '全全';
  *   里長／管理員：狀況分析、待處理清單、近期預約、立即備份
  * 回應都用 reply（不計推播則數）；只有備份完成通知會用 1 則 push。
  */
-function handleAssistant_(ev, uid, member, text) {
+function handleAssistant_(ev, uid, member, text, inGroup) {
   const q = text.slice(ASSISTANT_NAME.length).replace(/^[\s,，:：、!！~]+/, '').trim();
-  const isAdmin = isActiveMember_(member) && ADMIN_ROLES.indexOf(member.role) >= 0;
-  const isStaff = isActiveMember_(member);
+  // 群組裡一律當成一般里民，避免把內部資料或個資回覆到群組
+  const isAdmin = !inGroup && isActiveMember_(member) && ADMIN_ROLES.indexOf(member.role) >= 0;
+  const isStaff = !inGroup && isActiveMember_(member);
   const quick = assistantQuickReply_(isAdmin, isStaff);
   const say = body => reply_(ev.replyToken, [Object.assign(text_(body), { quickReply: quick })]);
   const adminOnly = () => say('這個功能只有里長或管理員可以使用。\n\n' + assistantHelp_(isAdmin, isStaff));
   // 短指令（例如「全全 備份」）走固定功能；較長的句子當成一般問題交給 AI。
   const isCommand = q.length <= 6 || !prop_('ANTHROPIC_API_KEY');
   if (!isCommand) return say(aiAnswer_(q, uid, member ? member.name : ''));
+  if (inGroup && /備份|待處理|未處理|處理中|預約|律師|諮詢|狀況|狀態|分析|報告|統計|總覽|我的回報|回報進度/.test(q)) {
+    return say('這個功能有個人或內部資料，請私訊官方帳號，輸入「全全 ' + q + '」使用 🙏');
+  }
 
   if (/備份/.test(q)) {
     if (!isAdmin) return adminOnly();
