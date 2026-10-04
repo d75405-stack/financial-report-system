@@ -552,7 +552,10 @@ function setupAI() {
       headers: { 'x-api-key': v, 'anthropic-version': '2023-06-01' }, muteHttpExceptions: true,
     });
     if (check.getResponseCode() !== 200) {
-      error = '這個金鑰無法使用（HTTP ' + check.getResponseCode() + '），請確認複製完整。';
+      let detail = '';
+      try { detail = JSON.parse(check.getContentText()).error.message; } catch (_) { detail = check.getContentText().slice(0, 200); }
+      error = '這個金鑰無法使用（HTTP ' + check.getResponseCode() + '）：' + detail +
+        (/credit|balance|billing/i.test(detail) ? '\n→ 帳戶餘額不足，請先到 Claude Console 的 Billing 儲值。' : '');
       continue;
     }
     props.setProperty('ANTHROPIC_API_KEY', v);
