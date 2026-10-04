@@ -128,6 +128,8 @@ function doPost(e) {
 // ───────────────────────── LINE webhook ─────────────────────────
 
 const HELP_TEXT = [
+  '有問題隨時叫「全全」，例如輸入：全全 說明',
+  '',
   '可以輸入以下關鍵字：',
   '・回報：開啟回報表單（工作人員）',
   '・回報 內容：直接用文字回報',
@@ -149,6 +151,11 @@ function handleEvent_(ev) {
 
   const t = ev.message.text.trim();
   const member = findMember_(uid);
+
+  if (t.indexOf(ASSISTANT_NAME) === 0) {
+    handleAssistant_(ev, uid, member, t);
+    return;
+  }
 
   let m;
   if ((m = t.match(/^綁定\s+(\S+)\s+(.+)$/))) {
@@ -200,7 +207,7 @@ function handleEvent_(ev) {
     case '說明':
     case '選單':
     case 'help':
-      reply_(ev.replyToken, [text_(HELP_TEXT)]);
+      handleAssistant_(ev, uid, member, ASSISTANT_NAME);
       return;
   }
   // 其他訊息不自動回覆，留給里辦人員在官方帳號後台以聊天回覆。
@@ -227,6 +234,162 @@ function canSee_(target, member) {
   if (!isActiveMember_(member)) return false;
   if (target === 'members') return true;
   return target === 'group:' + member.group;
+}
+
+// ───────────────────────── 小幫手「全全」 ─────────────────────────
+
+const ASSISTANT_NAME = '全全';
+
+/**
+ * 訊息開頭是「全全」時由小幫手回應。
+ *   所有人：使用說明
+ *   工作人員：自己的回報進度
+ *   里長／管理員：狀況分析、待處理清單、近期預約、立即備份
+ * 回應都用 reply（不計推播則數）；只有備份完成通知會用 1 則 push。
+ */
+function handleAssistant_(ev, uid, member, text) {
+  const q = text.slice(ASSISTANT_NAME.length).replace(/^[\s,，:：、!！~]+/, '').trim();
+  const isAdmin = isActiveMember_(member) && ADMIN_ROLES.indexOf(member.role) >= 0;
+  const isStaff = isActiveMember_(member);
+  const quick = assistantQuickReply_(isAdmin, isStaff);
+  const say = body => reply_(ev.replyToken, [Object.assign(text_(body), { quickReply: quick })]);
+  const adminOnly = () => say('這個功能只有里長或管理員可以使用。\n\n' + assistantHelp_(isAdmin, isStaff));
+
+  if (/備份/.test(q)) {
+    if (!isAdmin) return adminOnly();
+    if (!prop_('BACKUP_FOLDER_ID')) return say('還沒設定備份資料夾，請在試算表執行「LINE 系統 → 一鍵設定」。');
+    // 備份要跑數十秒，先回覆（reply token 有時效），完成後再推播結果給這位管理員。
+    if (!say('收到，全全開始備份到雲端硬碟，大約 1 分鐘，完成後通知你。')) return;
+    try {
+      const r = backupToDrive();
+      push_(uid, [text_(`✅ 備份完成\n${r.snapshot}\n另整理 ${r.csvFiles} 個分類檔\n${r.folderUrl}`)]);
+    } catch (err) {
+      push_(uid, [text_('❌ 備份失敗：' + err.message)]);
+    }
+    return;
+  }
+  if (/待處理|未處理|處理中/.test(q)) return isAdmin ? say(pendingReportsText_()) : adminOnly();
+  if (/預約|律師|諮詢/.test(q)) return isAdmin ? say(upcomingBookingsText_()) : say(myBookingsText_(uid));
+  if (/狀況|狀態|分析|報告|統計|總覽/.test(q)) {
+    if (isAdmin) return say(statusReportText_());
+    if (isStaff) return say(myReportsText_(uid));
+    return say(assistantHelp_(false, false));
+  }
+  if (/我的回報|回報進度/.test(q) && isStaff) return say(myReportsText_(uid));
+  return say((q ? '全全還看不懂「' + q.slice(0, 30) + '」，' : '') + assistantHelp_(isAdmin, isStaff));
+}
+
+function assistantHelp_(isAdmin, isStaff) {
+  const lines = ['我是' + ASSISTANT_NAME + '，里辦小幫手 🙋', '', '【所有人】',
+    '・律師諮詢：查看時段並預約', '・我的預約：查詢或取消預約', '・公告：最新宣達事項'];
+  if (isStaff) {
+    lines.push('', '【工作人員】', '・回報：開啟回報表單（可附照片、定位）', '・回報 內容：直接用文字回報', '・全全 我的回報：查看處理進度');
+  } else {
+    lines.push('', '【工作人員】', '・綁定 邀請碼 姓名：綁定身分後即可回報');
+  }
+  if (isAdmin) {
+    lines.push('', '【里長／管理員】', '・全全 狀況：整體分析報告', '・全全 待處理：尚未處理的回報',
+      '・全全 預約：未來 7 天的律師諮詢', '・全全 備份：立即備份到雲端硬碟');
+  }
+  return lines.join('\n');
+}
+
+function assistantQuickReply_(isAdmin, isStaff) {
+  const items = isAdmin ? ['全全 狀況', '全全 待處理', '全全 預約', '全全 備份', '全全 說明']
+    : isStaff ? ['全全 我的回報', '回報', '公告', '全全 說明']
+      : ['律師諮詢', '我的預約', '公告', '全全 說明'];
+  return { items: items.map(t => ({ type: 'action', action: { type: 'message', label: t.slice(0, 20), text: t } })) };
+}
+
+function parseTime_(s) {
+  const d = new Date(String(s).replace(' ', 'T') + ':00+08:00');
+  return isNaN(d) ? null : d;
+}
+
+function daysAgo_(s) {
+  const d = parseTime_(s);
+  return d ? Math.floor((Date.now() - d.getTime()) / 864e5) : null;
+}
+
+function statusReportText_() {
+  const reports = readAll_('回報');
+  const pending = reports.filter(r => r.status === '待處理');
+  const doing = reports.filter(r => r.status === '處理中');
+  const recent = reports.filter(r => { const d = daysAgo_(r.createdAt); return d !== null && d < 30; });
+  const week = reports.filter(r => { const d = daysAgo_(r.createdAt); return d !== null && d < 7; });
+  const doneWeek = reports.filter(r => r.status === '已完成' && (() => { const d = daysAgo_(r.updatedAt); return d !== null && d < 7; })());
+  const byCat = countBy_(recent, 'category');
+  const catText = Object.keys(byCat).sort((a, b) => byCat[b] - byCat[a]).map(c => `${c} ${byCat[c]}`).join('、') || '無';
+  const oldest = pending.concat(doing).filter(r => parseTime_(r.createdAt))
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))[0];
+
+  const today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  const in7 = Utilities.formatDate(new Date(Date.now() + 7 * 864e5), TZ, 'yyyy-MM-dd');
+  const slots = readAll_('律師時段').filter(s => s.date >= today && s.date <= in7);
+  const slotIds = slots.map(s => s.slotId);
+  const booked = readAll_('諮詢預約').filter(b => b.status === '已預約' && slotIds.indexOf(b.slotId) >= 0).length;
+  const capacity = slots.reduce((n, s) => n + Number(s.capacity || 0), 0);
+
+  const members = readAll_('成員').filter(isActiveMember_);
+  const quota = messageQuota_();
+  const backup = backupStatus_();
+
+  const lines = [
+    `📊 ${ASSISTANT_NAME}狀況報告（${now_()}）`, '',
+    '【回報】',
+    `待處理 ${pending.length}｜處理中 ${doing.length}｜累計 ${reports.length}`,
+    `近 7 天新增 ${week.length}，完成 ${doneWeek.length}`,
+    `近 30 天類別：${catText}`,
+  ];
+  if (oldest) lines.push(`⚠️ 最久未完成：${oldest.id} ${oldest.category}（${daysAgo_(oldest.createdAt)} 天前，${oldest.name}）`);
+  lines.push('', '【律師諮詢】', slots.length ? `未來 7 天 ${slots.length} 個時段，已預約 ${booked}／${capacity} 位` : '未來 7 天沒有開放時段');
+  lines.push('', '【工作人員】', `啟用 ${members.length} 人`);
+  if (quota) lines.push('', '【推播則數】', quota.type === 'limited' ? `本月已用 ${quota.used}／${quota.limit}` : `本月已用 ${quota.used}`);
+  lines.push('', '【雲端備份】');
+  if (!backup.configured) lines.push('⚠️ 尚未設定備份資料夾');
+  else lines.push(backup.lastError ? '❌ ' + backup.lastError : '✅ 上次備份 ' + (backup.lastAt || '尚未備份'));
+  if (backup.warning) lines.push('⚠️ ' + backup.warning);
+
+  const advice = [];
+  if (pending.length >= 5) advice.push(`待處理回報有 ${pending.length} 筆，建議分派處理人`);
+  if (oldest && daysAgo_(oldest.createdAt) >= 7) advice.push('有回報超過 7 天未完成，請追蹤');
+  if (quota && quota.type === 'limited' && quota.limit && quota.used / quota.limit >= 0.8) advice.push('推播則數已用超過 8 成，一般公告請改用「公告」查詢');
+  if (slots.length && capacity && booked / capacity >= 0.8) advice.push('律師諮詢快額滿，可考慮加開時段');
+  if (backup.configured && !backup.lastError && backup.lastAt && daysAgo_(backup.lastAt) >= 2) advice.push('超過 2 天沒有成功備份，請檢查');
+  if (advice.length) lines.push('', '💡 建議', ...advice.map(a => '・' + a));
+  return lines.join('\n');
+}
+
+function pendingReportsText_() {
+  const list = readAll_('回報').filter(r => r.status === '待處理' || r.status === '處理中')
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  if (!list.length) return '目前沒有待處理的回報 👍';
+  const shown = list.slice(0, 10).map(r =>
+    `・[${r.status}] ${r.category}｜${String(r.content).slice(0, 40)}\n  ${r.name}，${r.createdAt}${r.handler ? '，處理人 ' + r.handler : ''}`);
+  return `未完成的回報 ${list.length} 筆（由舊到新）：\n` + shown.join('\n') +
+    (list.length > 10 ? `\n…還有 ${list.length - 10} 筆，請到管理後台查看` : '');
+}
+
+function upcomingBookingsText_() {
+  const today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  const in7 = Utilities.formatDate(new Date(Date.now() + 7 * 864e5), TZ, 'yyyy-MM-dd');
+  const slots = indexBy_(readAll_('律師時段'), 'slotId');
+  const list = readAll_('諮詢預約').filter(b => {
+    const s = slots[b.slotId];
+    return b.status === '已預約' && s && s.date >= today && s.date <= in7;
+  }).sort((a, b) => (slots[a.slotId].date + slots[a.slotId].start).localeCompare(slots[b.slotId].date + slots[b.slotId].start));
+  if (!list.length) return '未來 7 天沒有律師諮詢預約。';
+  return '未來 7 天的律師諮詢：\n' + list.map(b => {
+    const s = slots[b.slotId];
+    return `・${s.date} ${s.start}｜${b.name}（${b.topic}）${s.lawyer ? '｜' + s.lawyer + ' 律師' : ''}`;
+  }).join('\n');
+}
+
+function myReportsText_(uid) {
+  const list = readAll_('回報').filter(r => r.userId === uid).slice(-5).reverse();
+  if (!list.length) return '你還沒有回報紀錄。輸入「回報」開啟表單。';
+  return '你最近的回報：\n' + list.map(r =>
+    `・[${r.status}] ${r.category}｜${String(r.content).slice(0, 30)}\n  ${r.createdAt}${r.note ? '\n  里辦回覆：' + r.note : ''}`).join('\n');
 }
 
 // ───────────────────────── API（LIFF 與管理後台） ─────────────────────────
