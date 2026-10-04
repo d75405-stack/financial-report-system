@@ -21,8 +21,9 @@
  *   NOTIFY_ADMINS              'false' 可關閉新回報／新預約時推播給里長
  * 系統自動維護：
  *   PHOTO_FOLDER_ID            未設定 BACKUP_FOLDER_ID 時，回報照片存放的資料夾
- *   LAST_BACKUP_AT／LAST_BACKUP_ERROR  最近一次備份的時間與錯誤
+ *   LAST_BACKUP_AT／LAST_BACKUP_ERROR／BACKUP_RUNNING  備份狀態
  *   RICH_MENU_ID               目前使用中的圖文選單
+ *   SETUP_OWNER                執行設定的帳號，只有這個帳號能重新設定
  */
 
 const TZ = 'Asia/Taipei';
@@ -46,6 +47,7 @@ const SHEETS = {
  * 平常從試算表選單「LINE 系統 → 一鍵設定」執行；可重複執行，不會覆蓋已有的資料。
  */
 function setup() {
+  checkOwner_();
   Object.keys(SHEETS).forEach(sheet_);
   const props = PropertiesService.getScriptProperties();
   if (!props.getProperty('ADMIN_TOKEN')) props.setProperty('ADMIN_TOKEN', randomToken_(24));
@@ -67,16 +69,26 @@ function setup() {
     try {
       lines.push('✅ 第一次備份完成：' + backupToDrive().snapshot);
     } catch (err) {
-      lines.push('❌ 備份失敗：' + err.message);
+      lines.push('❌ 備份沒有執行：' + err.message);
     }
   }
   lines.push('', '── 目前狀態 ──');
   lines.push.apply(lines, statusLines_());
-  if (prop_('WEBAPP_URL') && prop_('LIFF_ID')) {
-    lines.push('', '請把下面兩行複製給 Claude，完成網頁設定：', 'API_URL=' + prop_('WEBAPP_URL'), 'LIFF_ID=' + prop_('LIFF_ID'));
-  }
+  lines.push('', '管理後台密碼與工作人員邀請碼：請點「LINE 系統 → 查看設定狀態」。');
   console.log(lines.join('\n'));
   return lines;
+}
+
+/**
+ * 排程和備份都以執行設定的帳號身分運作，所以只讓第一次設定的帳號重新設定，
+ * 避免其他共用試算表的人多建一組排程、把備份寫到別人的權限下。
+ */
+function checkOwner_() {
+  const email = Session.getEffectiveUser().getEmail();
+  const owner = prop_('SETUP_OWNER');
+  if (!email) return;
+  if (!owner) PropertiesService.getScriptProperties().setProperty('SETUP_OWNER', email);
+  else if (owner !== email) throw new Error('只有第一次設定的帳號（' + owner + '）可以執行設定');
 }
 
 function ensureDailyTrigger_(handler, hour) {
@@ -174,7 +186,10 @@ function handleEvent_(ev) {
       reply_(ev.replyToken, [linkButton_('免費律師諮詢，請選擇時段預約。', '查看時段並預約', liffUrl_('booking'))]);
       return;
     case '我的預約':
-      reply_(ev.replyToken, [text_(myBookingsText_(uid))]);
+      reply_(ev.replyToken, [
+        text_(myBookingsText_(uid)),
+        linkButton_('要預約、取消或改時段，請開啟預約頁面。', '開啟預約頁面', liffUrl_('booking')),
+      ]);
       return;
     case '公告':
     case '最新公告':
@@ -254,9 +269,21 @@ function liffApi_(action, req, user) {
       const category = REPORT_CATEGORIES.indexOf(req.category) >= 0 ? req.category : '其他';
       const content = requireText_(req.content, '回報內容', 2000);
       const id = newId_('R');
-      const photoUrl = req.photo ? savePhoto_(id, category, req.photo) : '';
-      createReport_(member, { id, category, content, location: clean_(req.location, 300), photoUrl });
-      return { id };
+      const photo = req.photo ? decodePhoto_(id, req.photo) : null;
+      let photoUrl = '';
+      let photoError = '';
+      if (photo) {
+        // 雲端硬碟出問題時照片存不了，但文字回報仍要寫入，避免整筆遺失。
+        try {
+          photoUrl = photoFolder_(category).createFile(photo).getUrl();
+        } catch (err) {
+          photoError = String(err.message || err);
+          console.error('照片儲存失敗：' + photoError);
+        }
+      }
+      createReport_(member, { id, category, content, location: clean_(req.location, 300), photoUrl },
+        photoError ? '（照片儲存失敗：' + photoError + '）' : '');
+      return { id, photoSaved: !photo || !!photoUrl };
     }
 
     case 'myReports':
@@ -458,17 +485,18 @@ function upsertMember_(userId, fields) {
   }
 }
 
-function createReport_(member, r) {
+function createReport_(member, r, extraNotice) {
   const row = Object.assign({
     createdAt: now_(), userId: member.userId, name: member.name,
     location: '', photoUrl: '', status: '待處理', handler: '', note: '', updatedAt: '',
   }, r);
   append_('回報', row);
-  notifyAdmins_(`新回報 ${row.id}｜${row.category}\n回報人：${row.name}\n${row.content.slice(0, 200)}${row.location ? '\n地點：' + row.location : ''}`);
+  notifyAdmins_(`新回報 ${row.id}｜${row.category}\n回報人：${row.name}\n${row.content.slice(0, 200)}${row.location ? '\n地點：' + row.location : ''}${extraNotice ? '\n' + extraNotice : ''}`);
 }
 
-function notifyAdmins_(message) {
-  if (prop_('NOTIFY_ADMINS') === 'false') return;
+/** always=true 時不受 NOTIFY_ADMINS 影響（例如備份失敗）。 */
+function notifyAdmins_(message, always) {
+  if (!always && prop_('NOTIFY_ADMINS') === 'false') return;
   const ids = readAll_('成員').filter(m => isActiveMember_(m) && ADMIN_ROLES.indexOf(m.role) >= 0).map(m => m.userId);
   // 通知失敗不影響主流程，否則回報已寫入卻回傳錯誤，使用者會重複送出。
   try {
@@ -491,29 +519,41 @@ function openSlots_() {
     .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
 }
 
-function savePhoto_(id, category, photo) {
+/** 檢查並解碼 LIFF 傳來的照片；格式或大小不對時直接回報錯誤給使用者。 */
+function decodePhoto_(id, photo) {
   const m = String(photo).match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/);
   if (!m) throw new Error('照片格式不支援');
   const bytes = Utilities.base64Decode(m[2]);
   if (bytes.length > 5 * 1024 * 1024) throw new Error('照片太大');
-  const blob = Utilities.newBlob(bytes, m[1], id + '.' + m[1].split('/')[1]);
-  // 照片不另外開放分享，權限跟著所在資料夾。
-  return photoFolder_(category).createFile(blob).getUrl();
+  return Utilities.newBlob(bytes, m[1], id + '.' + m[1].split('/')[1]);
 }
 
-/** 回報照片依「類別／月份」分資料夾。 */
+/**
+ * 回報照片依「類別／月份」分資料夾，存在備份資料夾的「回報照片」底下。
+ * 備份資料夾不能用時（未設定、沒權限、被公開分享），改存到私人資料夾。
+ * 照片不另外開放分享，權限跟著所在資料夾。
+ */
 function photoFolder_(category) {
   const path = [safeName_(category), Utilities.formatDate(new Date(), TZ, 'yyyy-MM')];
-  if (prop_('BACKUP_FOLDER_ID')) return folderPath_(backupRoot_(), ['回報照片'].concat(path));
-  const props = PropertiesService.getScriptProperties();
-  let root;
-  try {
-    root = DriveApp.getFolderById(prop_('PHOTO_FOLDER_ID'));
-  } catch (_) {
-    root = DriveApp.createFolder('LINE 回報照片');
-    props.setProperty('PHOTO_FOLDER_ID', root.getId());
+  if (prop_('BACKUP_FOLDER_ID')) {
+    try {
+      return folderPath_(backupRoot_(), ['回報照片'].concat(path));
+    } catch (err) {
+      console.error('照片改存到私人資料夾：' + err.message);
+    }
   }
-  return folderPath_(root, path);
+  return folderPath_(privatePhotoRoot_(), path);
+}
+
+function privatePhotoRoot_() {
+  const id = prop_('PHOTO_FOLDER_ID');
+  if (id) {
+    const folder = DriveApp.getFolderById(id);
+    if (!folder.isTrashed()) return folder;
+  }
+  const folder = DriveApp.createFolder('LINE 回報照片');
+  PropertiesService.getScriptProperties().setProperty('PHOTO_FOLDER_ID', folder.getId());
+  return folder;
 }
 
 /** 每日由時間觸發器執行：提醒明天的律師諮詢預約。 */
@@ -537,22 +577,21 @@ const BACKUP_LABELS = {
   slotId: '時段編號', date: '日期', start: '開始', end: '結束', lawyer: '律師', capacity: '名額',
   topic: '諮詢類別', detail: '問題簡述', reminded: '提醒時間',
 };
+const BACKUP_STALE_MS = 10 * 60 * 1000;
 
 /**
  * 每天凌晨由觸發器執行，也可從試算表選單或管理後台手動執行。
  * 備份資料夾結構：
- *   每日備份/年/年-月/里辦LINE資料_日期_時間.xlsx   整份試算表的歷史快照
- *   最新資料/工作人員、回報、推播公告、律師諮詢/…csv  依類別整理的最新資料（每次覆蓋）
- *   回報照片/類別/年-月/                              回報時就直接存到這裡
+ *   每日備份/年/年-月/里辦LINE資料_日期_時間.xlsx      整份試算表的歷史快照
+ *   最新資料/工作人員、回報、推播公告、律師諮詢/…csv     依類別整理的最新資料（每次覆蓋）
+ *   回報照片/類別/年-月/                                 回報時就直接存到這裡
  */
 function backupToDrive() {
   if (!prop_('BACKUP_FOLDER_ID')) {
     console.warn('尚未設定 BACKUP_FOLDER_ID，略過備份');
     return null;
   }
-  // 用文件鎖而不是全域鎖：只擋同時兩次備份，不影響回報、預約等操作。
-  const lock = LockService.getDocumentLock() || LockService.getUserLock();
-  if (!lock.tryLock(1000)) throw new Error('備份正在進行中，請稍後再試');
+  if (!startBackup_()) throw new Error('備份正在進行中，請稍後再試');
   const props = PropertiesService.getScriptProperties();
   try {
     const result = runBackup_();
@@ -562,11 +601,27 @@ function backupToDrive() {
   } catch (err) {
     const message = String(err.message || err);
     props.setProperty('LAST_BACKUP_ERROR', now_() + ' ' + message);
-    try { notifyAdmins_('雲端硬碟備份失敗：' + message); } catch (_) {}
+    notifyAdmins_('雲端硬碟備份失敗：' + message, true);
     throw err;
   } finally {
-    lock.releaseLock();
+    props.deleteProperty('BACKUP_RUNNING');
   }
+}
+
+/**
+ * 用指令碼屬性當作「備份中」旗標。網頁、排程、選單三種執行環境拿到的
+ * LockService 鎖不同，只有全域鎖共用，所以只在檢查旗標的瞬間借用全域鎖。
+ * 超過 10 分鐘的旗標視為上次執行被中斷（Apps Script 單次最多 6 分鐘）。
+ */
+function startBackup_() {
+  return withLock_(() => {
+    const props = PropertiesService.getScriptProperties();
+    const running = Number(props.getProperty('BACKUP_RUNNING') || 0);
+    if (running && Date.now() - running < BACKUP_STALE_MS) return false;
+    if (running) props.setProperty('LAST_BACKUP_ERROR', now_() + ' 上次備份沒有完成（可能超過執行時間上限）');
+    props.setProperty('BACKUP_RUNNING', String(Date.now()));
+    return true;
+  });
 }
 
 function runBackup_() {
@@ -591,88 +646,133 @@ function runBackup_() {
     upsertCsv_(folderPath_(latest, path), name, toCsv_(keys, rows));
     count++;
   };
+  // 分組資料夾：每組寫一個檔，並把本次沒有的舊檔移到垃圾桶，避免留下過時資料或已刪除的個資。
+  const writeGroups = (path, keys, groups) => {
+    const folder = folderPath_(latest, path);
+    const names = Object.keys(groups).map(g => {
+      upsertCsv_(folder, g + '.csv', toCsv_(keys, groups[g]));
+      return g + '.csv';
+    });
+    count += names.length;
+    const files = folder.getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      if (!f.isTrashed() && /\.csv$/i.test(f.getName()) && names.indexOf(f.getName()) < 0) f.setTrashed(true);
+    }
+  };
 
   const members = readAll_('成員').map(m => Object.assign({}, m, { status: m.status === 'active' ? '啟用' : '停用' }));
   write(['工作人員'], '工作人員名單.csv', SHEETS.成員, members);
 
   const reports = readAll_('回報').reverse();
   write(['回報'], '全部回報.csv', SHEETS.回報, reports);
-  // 類別、狀態都要寫出空檔，避免「待處理」清空後還留著舊檔。
-  unique_(REPORT_CATEGORIES.concat(reports.map(r => r.category))).forEach(c =>
-    write(['回報', '依類別'], safeName_(c) + '.csv', SHEETS.回報, reports.filter(r => r.category === c)));
-  unique_(REPORT_STATUSES.concat(reports.map(r => r.status))).forEach(s =>
-    write(['回報', '依狀態'], safeName_(s) + '.csv', SHEETS.回報, reports.filter(r => r.status === s)));
+  writeGroups(['回報', '依類別'], SHEETS.回報, groupBy_(reports, r => r.category, REPORT_CATEGORIES));
+  writeGroups(['回報', '依狀態'], SHEETS.回報, groupBy_(reports, r => r.status, REPORT_STATUSES));
 
   write(['推播公告'], '推播公告.csv', SHEETS.公告, readAll_('公告').reverse());
 
   const slots = readAll_('律師時段');
   const slotIndex = indexBy_(slots, 'slotId');
   const bookingKeys = ['id', 'date', 'start', 'end', 'lawyer', 'name', 'phone', 'topic', 'detail', 'status', 'createdAt'];
-  const bookings = readAll_('諮詢預約')
-    .map(b => Object.assign({}, slotIndex[b.slotId] || {}, b))
-    .sort((a, b) => String(b.date + b.start).localeCompare(String(a.date + a.start)));
+  const bookings = readAll_('諮詢預約').map(b => {
+    const s = slotIndex[b.slotId] || {};
+    return Object.assign({}, b, { date: s.date || '', start: s.start || '', end: s.end || '', lawyer: s.lawyer || '' });
+  }).sort((a, b) => String(b.date + b.start).localeCompare(String(a.date + a.start)));
   write(['律師諮詢'], '律師時段.csv', SHEETS.律師時段, slots.slice().sort((a, b) => String(b.date).localeCompare(String(a.date))));
   write(['律師諮詢'], '全部預約.csv', bookingKeys, bookings);
-  unique_(bookings.map(b => String(b.date || '').slice(0, 7)).filter(Boolean)).forEach(month =>
-    write(['律師諮詢', '依月份'], month + '.csv', bookingKeys, bookings.filter(b => String(b.date).slice(0, 7) === month)));
+  writeGroups(['律師諮詢', '依月份'], bookingKeys, groupBy_(bookings, b => String(b.date).slice(0, 7) || '時段已刪除', []));
 
   console.log('備份完成：' + snapshot.getName() + '，CSV ' + count + ' 個');
   return { at: now_(), snapshot: snapshot.getName(), csvFiles: count, folderUrl: root.getUrl() };
 }
 
-function backupRoot_() {
-  const raw = prop_('BACKUP_FOLDER_ID').trim();
-  if (!raw) throw new Error('尚未設定備份資料夾（指令碼屬性 BACKUP_FOLDER_ID）');
-  const m = raw.match(/folders\/([-\w]+)/);
-  try {
-    return DriveApp.getFolderById(m ? m[1] : raw);
-  } catch (_) {
-    throw new Error('無法開啟備份資料夾，請確認資料夾網址正確，且部署 Apps Script 的帳號有「編輯」權限');
-  }
+/** 依檔名分組；base 裡的組別即使沒有資料也會產生空檔。 */
+function groupBy_(rows, keyFn, base) {
+  const groups = {};
+  base.forEach(k => { groups[safeName_(k)] = []; });
+  rows.forEach(r => {
+    const k = safeName_(keyFn(r));
+    (groups[k] = groups[k] || []).push(r);
+  });
+  return groups;
 }
 
-function backupFolderWarning_(folder) {
+/** 取得備份資料夾；資料夾不存在、在垃圾桶或開放公開連結時拒絕寫入。 */
+function backupRoot_() {
+  const id = parseFolderId_(prop_('BACKUP_FOLDER_ID'));
+  if (!id) throw new Error('尚未設定備份資料夾');
+  let folder;
+  try {
+    folder = DriveApp.getFolderById(id);
+  } catch (_) {
+    throw new Error('無法開啟備份資料夾，請確認網址正確，且這個 Google 帳號有「編輯」權限');
+  }
+  if (folder.isTrashed()) throw new Error('備份資料夾在垃圾桶裡，請先還原或換一個資料夾');
+  if (isPublicFolder_(folder)) {
+    throw new Error('備份資料夾開放「知道連結的任何人」存取，為了保護個資已暫停寫入。請到雲端硬碟把這個資料夾的一般存取改成「限制」');
+  }
+  return folder;
+}
+
+function parseFolderId_(raw) {
+  const s = String(raw || '').trim();
+  const m = s.match(/(?:folders\/|[?&]id=)([-\w]{10,})/);
+  if (m) return m[1];
+  return /^[-\w]{10,}$/.test(s) ? s : '';
+}
+
+function isPublicFolder_(folder) {
   try {
     const access = folder.getSharingAccess();
-    if (access === DriveApp.Access.ANYONE || access === DriveApp.Access.ANYONE_WITH_LINK) {
-      return '備份資料夾目前是「知道連結的任何人都能存取」，裡面有電話、諮詢內容等個資，建議到雲端硬碟把一般存取改成「限制」。';
-    }
-    if (access === DriveApp.Access.DOMAIN || access === DriveApp.Access.DOMAIN_WITH_LINK) {
-      return '備份資料夾目前開放給整個網域的人存取，裡面有個資，建議改成「限制」。';
-    }
-  } catch (_) {}
-  return '';
+    return access === DriveApp.Access.ANYONE || access === DriveApp.Access.ANYONE_WITH_LINK;
+  } catch (_) {
+    return false;
+  }
 }
 
 function backupStatus_() {
   const status = { configured: !!prop_('BACKUP_FOLDER_ID'), lastAt: prop_('LAST_BACKUP_AT'), lastError: prop_('LAST_BACKUP_ERROR') };
+  const running = Number(prop_('BACKUP_RUNNING') || 0);
+  if (running && Date.now() - running >= BACKUP_STALE_MS && !status.lastError) {
+    status.lastError = '上次備份沒有完成（可能超過執行時間上限）';
+  }
   if (!status.configured) return status;
   try {
     const folder = backupRoot_();
     status.folderUrl = folder.getUrl();
     status.folderName = folder.getName();
-    status.warning = backupFolderWarning_(folder);
   } catch (err) {
     status.warning = err.message;
   }
   return status;
 }
 
-/** 依名稱逐層取得資料夾，不存在就建立。 */
+/** 依名稱逐層取得資料夾（略過垃圾桶裡的），不存在就建立。同一次執行內會快取。 */
+const folderCache_ = {};
 function folderPath_(root, names) {
   return names.reduce((parent, name) => {
+    const key = parent.getId() + '/' + name;
+    if (folderCache_[key]) return folderCache_[key];
+    let found = null;
     const it = parent.getFoldersByName(name);
-    return it.hasNext() ? it.next() : parent.createFolder(name);
+    while (!found && it.hasNext()) {
+      const f = it.next();
+      if (!f.isTrashed()) found = f;
+    }
+    return (folderCache_[key] = found || parent.createFolder(name));
   }, root);
 }
 
 function upsertCsv_(folder, name, csv) {
   const it = folder.getFilesByName(name);
-  if (it.hasNext()) return it.next().setContent(csv);
+  while (it.hasNext()) {
+    const f = it.next();
+    if (!f.isTrashed()) return f.setContent(csv);
+  }
   return folder.createFile(name, csv, MimeType.CSV);
 }
 
-/** 產生 Excel 可正確顯示中文的 CSV（UTF-8 BOM），並擋掉公式注入。 */
+/** 產生 Excel 可正確顯示中文的 CSV（開頭加 UTF-8 BOM），並擋掉公式注入。 */
 function toCsv_(keys, rows) {
   const cell = (key, v) => {
     let s = String(v === undefined || v === null ? '' : v);
@@ -683,15 +783,11 @@ function toCsv_(keys, rows) {
   };
   const lines = [keys.map(k => cell('', BACKUP_LABELS[k] || k))]
     .concat(rows.map(r => keys.map(k => cell(k, r[k]))));
-  return '﻿' + lines.map(l => l.join(',')).join('\r\n') + '\r\n';
+  return '\uFEFF' + lines.map(l => l.join(',')).join('\r\n') + '\r\n';
 }
 
 function safeName_(s) {
-  return String(s || '未分類').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 50) || '未分類';
-}
-
-function unique_(list) {
-  return list.filter((v, i) => v !== '' && list.indexOf(v) === i);
+  return String(s || '').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 50) || '未分類';
 }
 
 // ───────────────────────── 試算表選單（一鍵設定） ─────────────────────────
@@ -707,28 +803,92 @@ function onOpen() {
     .addToUi();
 }
 
-/** 用對話框依序詢問設定值，填完自動完成其餘設定。 */
+/**
+ * 用對話框依序詢問 4 個設定值，每個都當場檢查；全部填完才儲存並自動完成其餘設定。
+ * 對話框等待的時間也算在 Apps Script 單次 6 分鐘的上限內，所以請先把 4 個值準備好。
+ */
 function setupWizard() {
   const ui = SpreadsheetApp.getUi();
-  const props = PropertiesService.getScriptProperties();
-  const steps = [
-    ['LINE_CHANNEL_ACCESS_TOKEN', '1/4　LINE Channel access token',
-      'LINE Developers → 你的 Messaging API channel → Messaging API 頁籤最下方的「Channel access token」。'],
-    ['WEBAPP_URL', '2/4　網頁應用程式網址',
-      'Apps Script 右上角「部署 → 管理部署作業」裡的網頁應用程式網址，結尾是 /exec。'],
-    ['LIFF_ID', '3/4　LIFF ID',
-      'LINE Developers → LINE Login channel → LIFF 頁籤裡的 LIFF ID，例如 1651234567-AbCdEfGh。'],
-    ['BACKUP_FOLDER_ID', '4/4　備份資料夾',
-      '貼上 Google 雲端硬碟資料夾的網址。資料會每天自動備份並分類到這裡。'],
-  ];
-  for (const [key, title, hint] of steps) {
-    const current = prop_(key);
-    const r = ui.prompt(title, hint + (current ? '\n\n已經設定過；留空按「確定」會保留原本的值。' : '\n\n還沒有的話可以先留空，之後再執行一次「一鍵設定」。'), ui.ButtonSet.OK_CANCEL);
-    if (r.getSelectedButton() !== ui.Button.OK) return ui.alert('已取消，設定沒有變更。');
-    const value = r.getResponseText().trim();
-    if (value) props.setProperty(key, value);
+  // 授權畫面若只勾了部分權限，webhook 與備份會失敗；這裡要求一次給齊。
+  if (typeof ScriptApp.requireAllScopes === 'function') ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);
+  try {
+    checkOwner_();
+  } catch (err) {
+    return ui.alert(err.message);
   }
+
+  const steps = [
+    ['LINE_CHANNEL_ACCESS_TOKEN', '1/4  LINE Channel access token',
+      'LINE Developers → Messaging API channel → Messaging API 頁籤最下方的「Channel access token (long-lived)」。\n若是空的，先按「Issue」產生再複製。',
+      validateToken_],
+    ['WEBAPP_URL', '2/4  網頁應用程式網址',
+      'Apps Script 右上角「部署 → 管理部署作業」裡的網頁應用程式網址，開頭是 https://script.google.com/macros/s/，結尾是 /exec。',
+      validateWebAppUrl_],
+    ['LIFF_ID', '3/4  LIFF ID',
+      'LINE Developers → LINE Login channel → LIFF 頁籤的 LIFF ID，例如 2001234567-AbCdEfGh。',
+      validateLiffId_],
+    ['BACKUP_FOLDER_ID', '4/4  備份資料夾網址',
+      '在雲端硬碟打開備份資料夾，複製網址列的網址貼上。\n資料夾的一般存取請設成「限制」，裡面會有個資。',
+      validateFolder_],
+  ];
+  const values = {};
+  for (const [key, title, hint, validate] of steps) {
+    const current = prop_(key);
+    let error = '';
+    for (;;) {
+      const tail = current ? '\n\n已經設定過；留空按「確定」會保留原本的值。' : '\n\n還沒有的話可以先留空，之後再執行一次「一鍵設定」。';
+      const r = ui.prompt(title, (error ? '❌ ' + error + '\n\n' : '') + hint + tail, ui.ButtonSet.OK_CANCEL);
+      if (r.getSelectedButton() !== ui.Button.OK) return ui.alert('已取消，設定沒有變更。');
+      const input = r.getResponseText().trim();
+      if (!input) break;
+      const checked = validate(input);
+      if (checked.error) {
+        error = checked.error;
+        continue;
+      }
+      values[key] = checked.value;
+      break;
+    }
+  }
+  PropertiesService.getScriptProperties().setProperties(values);
   ui.alert('設定結果', setup().join('\n'), ui.ButtonSet.OK);
+}
+
+function validateToken_(v) {
+  if (/^[0-9a-f]{32}$/.test(v)) return { error: '這是 Channel secret，請改貼 Channel access token（比較長的那一串）。' };
+  const res = UrlFetchApp.fetch('https://api.line.me/v2/bot/info', { headers: { Authorization: 'Bearer ' + v }, muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) return { error: 'LINE 不接受這個 token，請確認複製完整。' };
+  return { value: v };
+}
+
+function validateWebAppUrl_(v) {
+  if (/\/dev$/.test(v)) return { error: '這是測試用網址（/dev），請到「管理部署作業」複製結尾是 /exec 的網址。' };
+  if (!/^https:\/\/script\.google\.com\/(?:a\/macros\/[^/]+|macros)\/s\/[-\w]+\/exec$/.test(v)) {
+    return { error: '網址格式不對，要以 https://script.google.com/macros/s/ 開頭、/exec 結尾。' };
+  }
+  return { value: v };
+}
+
+function validateLiffId_(v) {
+  const id = v.replace(/^https:\/\/liff\.line\.me\//, '').replace(/[/?#].*$/, '');
+  if (!/^\d{6,}-[A-Za-z0-9]{4,}$/.test(id)) return { error: 'LIFF ID 格式不對，應該像 2001234567-AbCdEfGh。' };
+  return { value: id };
+}
+
+function validateFolder_(v) {
+  const id = parseFolderId_(v);
+  if (!id) return { error: '這不是資料夾網址。請在雲端硬碟打開資料夾後，複製網址列（含 /folders/）。' };
+  let folder;
+  try {
+    folder = DriveApp.getFolderById(id);
+  } catch (_) {
+    return { error: '打不開這個資料夾，請確認網址正確，且目前登入的 Google 帳號有「編輯」權限。' };
+  }
+  if (folder.isTrashed()) return { error: '這個資料夾在垃圾桶裡，請先還原或換一個資料夾。' };
+  if (isPublicFolder_(folder)) {
+    return { error: '這個資料夾開放「知道連結的任何人」存取。請先在雲端硬碟按「共用」，把一般存取改成「限制」，再貼一次網址。' };
+  }
+  return { value: id };
 }
 
 function setupRichMenuFromMenu() {
@@ -751,31 +911,29 @@ function backupFromMenu() {
 }
 
 function showStatus() {
-  SpreadsheetApp.getUi().alert('設定狀態', statusLines_().join('\n'), SpreadsheetApp.getUi().ButtonSet.OK);
+  const lines = statusLines_().concat(['', '管理後台密碼：' + prop_('ADMIN_TOKEN'), '工作人員邀請碼：' + prop_('INVITE_CODE'),
+    '', '管理後台密碼可以讀取所有資料、發送推播，請勿外流。']);
+  SpreadsheetApp.getUi().alert('設定狀態', lines.join('\n'), SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
 function statusLines_() {
   const lines = [];
-  const bot = lineApi_('info', null, 'get');
+  const bot = prop_('LINE_CHANNEL_ACCESS_TOKEN') ? lineApi_('info', null, 'get') : { ok: false };
   lines.push(bot.ok ? '✅ LINE 官方帳號：' + JSON.parse(bot.body).displayName : '❌ LINE Channel access token 無效或未設定');
   lines.push(prop_('WEBAPP_URL') ? '✅ 網頁應用程式網址已設定' : '⚠️ 尚未設定網頁應用程式網址');
   lines.push(prop_('LIFF_ID') ? '✅ LIFF ID：' + prop_('LIFF_ID') : '⚠️ 尚未設定 LIFF ID（回報、預約表單無法開啟）');
   const backup = backupStatus_();
   if (!backup.configured) lines.push('⚠️ 尚未設定備份資料夾');
-  else lines.push((backup.folderName ? '✅ 備份資料夾：' + backup.folderName : '❌ 備份資料夾無法開啟') +
-    (backup.lastAt ? '（上次備份 ' + backup.lastAt + '）' : ''));
-  if (backup.warning) lines.push('⚠️ ' + backup.warning);
+  else if (backup.folderName) lines.push('✅ 備份資料夾：' + backup.folderName + (backup.lastAt ? '（上次備份 ' + backup.lastAt + '）' : ''));
+  if (backup.warning) lines.push('❌ ' + backup.warning);
   if (backup.lastError) lines.push('❌ 上次備份失敗：' + backup.lastError);
-  lines.push('', '管理後台密碼：' + prop_('ADMIN_TOKEN'), '工作人員邀請碼：' + prop_('INVITE_CODE'));
   return lines;
 }
 
 /** 把 LINE 的 webhook 網址設成這個 Apps Script。 */
 function setWebhookEndpoint_() {
   const url = prop_('WEBAPP_URL');
-  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) {
-    return '⚠️ 網頁應用程式網址格式不對（要以 /exec 結尾），沒有設定 webhook';
-  }
+  if (validateWebAppUrl_(url).error) return '⚠️ 網頁應用程式網址格式不對（要以 /exec 結尾），沒有設定 webhook';
   const res = lineApi_('channel/webhook/endpoint', { endpoint: url }, 'put');
   return res.ok ? '✅ 已自動把 LINE webhook 網址設成這個程式' : '❌ 設定 webhook 失敗：' + res.body;
 }
@@ -784,7 +942,7 @@ function setWebhookEndpoint_() {
 function setupRichMenu() {
   if (!prop_('LIFF_ID')) throw new Error('請先在「一鍵設定」填入 LIFF ID');
   const image = UrlFetchApp.fetch(RICH_MENU_IMAGE_URL, { muteHttpExceptions: true });
-  if (image.getResponseCode() !== 200) throw new Error('圖文選單圖片還沒上線，等網頁部署完成後再試一次');
+  if (image.getResponseCode() !== 200) throw new Error('圖文選單圖片還沒上線，等網頁部署完成後點「LINE 系統 → 建立圖文選單」');
 
   const W = 2500, H = 1686, w = W / 3, h = H / 2;
   const cell = (col, row, action) => ({ bounds: { x: Math.round(col * w), y: row * h, width: Math.round(w), height: h }, action });

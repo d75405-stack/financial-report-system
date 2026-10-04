@@ -238,7 +238,7 @@ function renderBackup(b) {
   const box = $('#backup-info');
   if (!b || !b.configured) {
     box.innerHTML = `<h2>雲端硬碟備份</h2>
-      <p class="muted">尚未設定備份資料夾。請在試算表選單「LINE 系統 → 一鍵設定」第 4 步貼上資料夾網址。</p>`;
+      <p class="muted">尚未設定備份資料夾。請在試算表選單「LINE 系統 → 一鍵設定」的「備份資料夾網址」貼上資料夾網址。</p>`;
     return;
   }
   const link = /^https:\/\/drive\.google\.com\//.test(b.folderUrl || '')

@@ -196,7 +196,7 @@ $('#form-report').addEventListener('submit', e => {
     e.target.reset();
     photoData = '';
     $('#photo-preview').classList.add('hidden');
-    toast('已送出，編號 ' + r.id);
+    toast(r.photoSaved === false ? `已送出（編號 ${r.id}），但照片沒存成功，請改用聊天室傳照片給里辦` : '已送出，編號 ' + r.id, r.photoSaved === false);
     loadReports();
   });
 });
