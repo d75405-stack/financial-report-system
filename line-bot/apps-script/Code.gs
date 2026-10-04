@@ -431,11 +431,12 @@ function knowledgeSheet_() {
     sh = ss.insertSheet(KNOWLEDGE_SHEET);
     sh.getRange(1, 1, 1, 2).setValues([['主題', '內容（全全只會根據這裡的內容回答，可自行新增修改）']]).setFontWeight('bold');
     sh.setFrozenRows(1);
-    sh.getRange(2, 1, KNOWLEDGE_SEED.length, 2).setValues(KNOWLEDGE_SEED);
     sh.setColumnWidth(1, 160);
     sh.setColumnWidth(2, 720);
     sh.getRange('B:B').setWrap(true);
   }
+  // 只有標題列時補上預設內容（第一次建立，或內容被整個清空）
+  if (sh.getLastRow() <= 1) sh.getRange(2, 1, KNOWLEDGE_SEED.length, 2).setValues(KNOWLEDGE_SEED);
   return sh;
 }
 
