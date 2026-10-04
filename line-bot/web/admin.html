@@ -36,6 +36,7 @@
     <!-- 總覽 -->
     <section id="tab-summary">
       <div class="stats" id="stats"></div>
+      <div class="card" id="backup-info"></div>
       <div class="card" id="setup-info"></div>
     </section>
 
@@ -230,6 +231,31 @@ async function loadSummary() {
     <p><code>綁定 ${esc(s.inviteCode)} 自己的姓名</code></p>
     <p>或開啟 <a href="${esc(s.liffUrl)}?page=register" target="_blank" rel="noopener">${esc(s.liffUrl)}?page=register</a> 填寫。</p>
     <p class="muted">邀請碼可在 Apps Script 指令碼屬性 INVITE_CODE 修改。</p>`;
+  renderBackup(s.backup);
+}
+
+function renderBackup(b) {
+  const box = $('#backup-info');
+  if (!b || !b.configured) {
+    box.innerHTML = `<h2>雲端硬碟備份</h2>
+      <p class="muted">尚未設定備份資料夾。請在試算表選單「LINE 系統 → 一鍵設定」第 4 步貼上資料夾網址。</p>`;
+    return;
+  }
+  const link = /^https:\/\/drive\.google\.com\//.test(b.folderUrl || '')
+    ? `<a href="${esc(b.folderUrl)}" target="_blank" rel="noopener">${esc(b.folderName)}</a>` : '無法開啟';
+  box.innerHTML = `
+    <h2>雲端硬碟備份</h2>
+    ${b.warning ? `<p class="alert">⚠️ ${esc(b.warning)}</p>` : ''}
+    <p>資料夾：${link}</p>
+    <p>上次備份：${esc(b.lastAt || '尚未備份')}</p>
+    ${b.lastError ? `<p class="alert">上次失敗：${esc(b.lastError)}</p>` : ''}
+    <p class="muted">每天凌晨 2 點自動備份：整份資料的 Excel 檔依年月存放，另依類別整理成工作人員、回報、推播公告、律師諮詢的 CSV。</p>
+    <button id="btn-backup">立即備份</button>`;
+  $('#btn-backup').addEventListener('click', e => withBusy(e.target, async () => {
+    const r = await admin('backup');
+    toast(`備份完成：${r.snapshot}`);
+    loadSummary();
+  }));
 }
 
 // 回報
