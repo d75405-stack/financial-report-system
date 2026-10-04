@@ -112,6 +112,7 @@ function doPost(e) {
     return json_({ ok: false, error: '無效的請求' });
   }
   if (Array.isArray(body.events)) {
+    forwardWebhook_(e.postData.contents);
     body.events.forEach(ev => {
       try { handleEvent_(ev); } catch (err) { console.error(err.stack || err); }
     });
@@ -982,7 +983,63 @@ function onOpen() {
     .addItem('立即備份到雲端硬碟', 'backupFromMenu')
     .addItem('查看設定狀態', 'showStatus')
     .addItem('修改密碼與邀請碼', 'changeSecrets')
+    .addItem('設定訊息轉發（aibus）', 'setupForward')
     .addToUi();
+}
+
+/**
+ * 同一個官方帳號只能設一個 webhook。活動報名的關鍵字回覆由 aibus 處理，
+ * 所以把收到的原始事件用 channel secret 重新簽章後轉給 aibus，兩邊都收得到。
+ */
+function forwardWebhook_(body) {
+  const url = prop_('FORWARD_WEBHOOK_URL');
+  const secret = prop_('LINE_CHANNEL_SECRET');
+  if (!url || !secret) return;
+  try {
+    const sig = Utilities.base64Encode(Utilities.computeHmacSha256Signature(
+      Utilities.newBlob(body).getBytes(), Utilities.newBlob(secret).getBytes()));
+    const res = UrlFetchApp.fetch(url, {
+      method: 'post', contentType: 'application/json', payload: body,
+      headers: { 'X-Line-Signature': sig }, muteHttpExceptions: true,
+    });
+    if (res.getResponseCode() >= 300) console.error('轉發失敗 HTTP ' + res.getResponseCode() + '：' + res.getContentText().slice(0, 200));
+  } catch (err) {
+    console.error('轉發失敗：' + err.message);
+  }
+}
+
+function setupForward() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    checkOwner_(false);
+  } catch (err) {
+    return ui.alert(err.message);
+  }
+  const ask = (title, hint, check) => {
+    let error = '';
+    for (;;) {
+      const r = ui.prompt(title, (error ? '❌ ' + error + '\n\n' : '') + hint, ui.ButtonSet.OK_CANCEL);
+      if (r.getSelectedButton() !== ui.Button.OK) return null;
+      const v = r.getResponseText().trim();
+      error = check(v);
+      if (!error) return v;
+    }
+  };
+  const url = ask('1/2  aibus 的 Webhook 網址',
+    '貼上 aibus 提供的 Webhook 網址（https:// 開頭）。\n輸入「關閉」可停止轉發。',
+    v => v === '關閉' || /^https:\/\/\S+$/.test(v) ? '' : '要以 https:// 開頭。');
+  if (url === null) return ui.alert('已取消，沒有變更。');
+  const props = PropertiesService.getScriptProperties();
+  if (url === '關閉') {
+    props.deleteProperty('FORWARD_WEBHOOK_URL');
+    return ui.alert('已停止轉發。');
+  }
+  const secret = ask('2/2  Channel secret',
+    'LINE Developers → Messaging API channel → Basic settings 頁籤的「Channel secret」（32 個英數字）。',
+    v => /^[0-9a-f]{32}$/i.test(v) ? '' : 'Channel secret 是 32 個英數字。');
+  if (secret === null) return ui.alert('已取消，沒有變更。');
+  props.setProperties({ FORWARD_WEBHOOK_URL: url, LINE_CHANNEL_SECRET: secret });
+  ui.alert('✅ 已開啟轉發\n之後官方帳號收到的訊息會同時轉給 aibus。\n請傳一則「🌀 陀螺賽報名確認|測試|測試|01」測試。');
 }
 
 /** 用對話框修改管理後台密碼與工作人員邀請碼，留空表示不改。 */
