@@ -47,7 +47,7 @@ const SHEETS = {
  * 平常從試算表選單「LINE 系統 → 一鍵設定」執行；可重複執行，不會覆蓋已有的資料。
  */
 function setup() {
-  checkOwner_();
+  checkOwner_(true);
   Object.keys(SHEETS).forEach(sheet_);
   const props = PropertiesService.getScriptProperties();
   if (!props.getProperty('ADMIN_TOKEN')) props.setProperty('ADMIN_TOKEN', randomToken_(24));
@@ -83,12 +83,14 @@ function setup() {
  * 排程和備份都以執行設定的帳號身分運作，所以只讓第一次設定的帳號重新設定，
  * 避免其他共用試算表的人多建一組排程、把備份寫到別人的權限下。
  */
-function checkOwner_() {
+function checkOwner_(claim) {
   const email = Session.getEffectiveUser().getEmail();
   const owner = prop_('SETUP_OWNER');
   if (!email) return;
-  if (!owner) PropertiesService.getScriptProperties().setProperty('SETUP_OWNER', email);
-  else if (owner !== email) throw new Error('只有第一次設定的帳號（' + owner + '）可以執行設定');
+  if (owner && owner !== email) {
+    throw new Error('只有第一次設定的帳號（' + owner + '）可以執行這個動作。若要換帳號，請刪除指令碼屬性 SETUP_OWNER');
+  }
+  if (!owner && claim) PropertiesService.getScriptProperties().setProperty('SETUP_OWNER', email);
 }
 
 function ensureDailyTrigger_(handler, hour) {
@@ -275,7 +277,7 @@ function liffApi_(action, req, user) {
       if (photo) {
         // 雲端硬碟出問題時照片存不了，但文字回報仍要寫入，避免整筆遺失。
         try {
-          photoUrl = photoFolder_(category).createFile(photo).getUrl();
+          photoUrl = savePhotoFile_(category, photo);
         } catch (err) {
           photoError = String(err.message || err);
           console.error('照片儲存失敗：' + photoError);
@@ -497,9 +499,9 @@ function createReport_(member, r, extraNotice) {
 /** always=true 時不受 NOTIFY_ADMINS 影響（例如備份失敗）。 */
 function notifyAdmins_(message, always) {
   if (!always && prop_('NOTIFY_ADMINS') === 'false') return;
-  const ids = readAll_('成員').filter(m => isActiveMember_(m) && ADMIN_ROLES.indexOf(m.role) >= 0).map(m => m.userId);
   // 通知失敗不影響主流程，否則回報已寫入卻回傳錯誤，使用者會重複送出。
   try {
+    const ids = readAll_('成員').filter(m => isActiveMember_(m) && ADMIN_ROLES.indexOf(m.role) >= 0).map(m => m.userId);
     if (ids.length) multicast_(ids, [text_(message)]);
   } catch (err) {
     console.error('通知里長失敗：' + err.message);
@@ -530,26 +532,30 @@ function decodePhoto_(id, photo) {
 
 /**
  * 回報照片依「類別／月份」分資料夾，存在備份資料夾的「回報照片」底下。
- * 備份資料夾不能用時（未設定、沒權限、被公開分享），改存到私人資料夾。
- * 照片不另外開放分享，權限跟著所在資料夾。
+ * 備份資料夾不能用時（未設定、沒權限、被公開分享、在垃圾桶），改存到私人資料夾。
+ * 照片不另外開放分享，權限跟著所在資料夾。回傳檔案網址。
  */
-function photoFolder_(category) {
+function savePhotoFile_(category, blob) {
   const path = [safeName_(category), Utilities.formatDate(new Date(), TZ, 'yyyy-MM')];
   if (prop_('BACKUP_FOLDER_ID')) {
     try {
-      return folderPath_(backupRoot_(), ['回報照片'].concat(path));
+      return folderPath_(backupRoot_(), ['回報照片'].concat(path)).createFile(blob).getUrl();
     } catch (err) {
       console.error('照片改存到私人資料夾：' + err.message);
     }
   }
-  return folderPath_(privatePhotoRoot_(), path);
+  return folderPath_(privatePhotoRoot_(), path).createFile(blob).getUrl();
 }
 
 function privatePhotoRoot_() {
   const id = prop_('PHOTO_FOLDER_ID');
   if (id) {
-    const folder = DriveApp.getFolderById(id);
-    if (!folder.isTrashed()) return folder;
+    try {
+      const folder = DriveApp.getFolderById(id);
+      if (!folder.isTrashed()) return folder;
+    } catch (err) {
+      console.warn('原本的照片資料夾打不開，重新建立：' + err.message);
+    }
   }
   const folder = DriveApp.createFolder('LINE 回報照片');
   PropertiesService.getScriptProperties().setProperty('PHOTO_FOLDER_ID', folder.getId());
@@ -657,7 +663,13 @@ function runBackup_() {
     const files = folder.getFiles();
     while (files.hasNext()) {
       const f = files.next();
-      if (!f.isTrashed() && /\.csv$/i.test(f.getName()) && names.indexOf(f.getName()) < 0) f.setTrashed(true);
+      if (f.isTrashed() || !/\.csv$/i.test(f.getName()) || names.indexOf(f.getName()) >= 0) continue;
+      // 只有檔案擁有者能移到垃圾桶；不是自己的檔案就清空內容，至少不留舊資料。
+      try {
+        f.setTrashed(true);
+      } catch (_) {
+        f.setContent(toCsv_(keys, []));
+      }
     }
   };
 
@@ -741,6 +753,10 @@ function backupStatus_() {
     const folder = backupRoot_();
     status.folderUrl = folder.getUrl();
     status.folderName = folder.getName();
+    const access = folder.getSharingAccess();
+    if (access === DriveApp.Access.DOMAIN || access === DriveApp.Access.DOMAIN_WITH_LINK) {
+      status.warning = '備份資料夾開放給整個網域的人存取，裡面有個資，建議改成「限制」。';
+    }
   } catch (err) {
     status.warning = err.message;
   }
@@ -812,7 +828,7 @@ function setupWizard() {
   // 授權畫面若只勾了部分權限，webhook 與備份會失敗；這裡要求一次給齊。
   if (typeof ScriptApp.requireAllScopes === 'function') ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);
   try {
-    checkOwner_();
+    checkOwner_(false);
   } catch (err) {
     return ui.alert(err.message);
   }
@@ -903,6 +919,7 @@ function setupRichMenuFromMenu() {
 function backupFromMenu() {
   const ui = SpreadsheetApp.getUi();
   try {
+    checkOwner_(false);
     const r = backupToDrive();
     ui.alert(r ? `備份完成：${r.snapshot}，另整理 ${r.csvFiles} 個分類檔。\n${r.folderUrl}` : '尚未設定備份資料夾，請先執行「一鍵設定」。');
   } catch (err) {
