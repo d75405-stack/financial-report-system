@@ -1,0 +1,33 @@
+name: Deploy Apps Script
+on:
+  push:
+    branches: [master]
+    paths: ['line-bot/apps-script/**']
+  workflow_dispatch:
+concurrency:
+  group: apps-script
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      # 現有網頁應用程式的部署 ID，更新後網址不變
+      DEPLOYMENT_ID: AKfycbyLrB-sGBnyeOktxkbATRpmJEO2NlR2auGaol8nK7gMU1MZSwczN-IbqD3fWq2HmVNjwg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # 固定版本：授權檔 .clasprc.json 的格式在 clasp 3 有變
+      - run: npm install -g @google/clasp@2.4.2
+      - name: Write clasp credentials
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ]; then echo "::error::尚未設定 GitHub secret CLASPRC_JSON"; exit 1; fi
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
+      - name: Push code and update deployment
+        working-directory: line-bot/apps-script
+        run: |
+          clasp push --force
+          clasp deploy --deploymentId "$DEPLOYMENT_ID" --description "GitHub ${GITHUB_SHA::7}"

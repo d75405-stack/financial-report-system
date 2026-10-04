@@ -123,6 +123,19 @@
 
 ## 修改程式
 
+### 自動更新（GitHub Actions）
+
+`line-bot/apps-script/` 有變更並推送到 `master` 時，`.github/workflows/apps-script.yml` 會用 clasp 把程式推送到 Apps Script，並更新現有部署（網址不變）。需要的一次性設定：
+
+1. 到 <https://script.google.com/home/usersettings> 開啟「Google Apps Script API」。
+2. 在自己的電腦執行 `npm install -g @google/clasp@2.4.2` 和 `clasp login`（Windows PowerShell 請用 `npm.cmd`、`clasp.cmd`）。
+3. 把產生的 `~/.clasprc.json` 全部內容存成 GitHub secret `CLASPRC_JSON`。
+
+專案 ID 在 `apps-script/.clasp.json`，部署 ID 在 workflow 的 `DEPLOYMENT_ID`。新版程式需要新權限時，仍要在試算表點一次「一鍵設定」授權。
+
+### 手動更新
+
+
 - 改 `Code.gs` 後，到 Apps Script 貼上新版並儲存，再到 **部署 → 管理部署作業 → ✏️ 編輯 → 版本：新版本 → 部署**，網址會維持不變。接著在試算表點一次 **LINE 系統 → 一鍵設定**（全部留空按確定即可），新版若需要新權限會在這時要求授權。
 - 只有第一次執行設定的帳號能重新設定或從選單備份；要換帳號時，刪除指令碼屬性 `SETUP_OWNER` 再由新帳號執行。
 - 回報類別、狀態、通知對象：`Code.gs` 開頭的 `REPORT_CATEGORIES`、`REPORT_STATUSES`、`ADMIN_ROLES`
