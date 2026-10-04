@@ -818,7 +818,40 @@ function onOpen() {
     .addItem('建立圖文選單', 'setupRichMenuFromMenu')
     .addItem('立即備份到雲端硬碟', 'backupFromMenu')
     .addItem('查看設定狀態', 'showStatus')
+    .addItem('修改密碼與邀請碼', 'changeSecrets')
     .addToUi();
+}
+
+/** 用對話框修改管理後台密碼與工作人員邀請碼，留空表示不改。 */
+function changeSecrets() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    checkOwner_(false);
+  } catch (err) {
+    return ui.alert(err.message);
+  }
+  const ask = (title, hint, min) => {
+    let error = '';
+    for (;;) {
+      const r = ui.prompt(title, (error ? '❌ ' + error + '\n\n' : '') + hint + '\n\n留空按「確定」表示不改。', ui.ButtonSet.OK_CANCEL);
+      if (r.getSelectedButton() !== ui.Button.OK) return null;
+      const v = r.getResponseText().trim();
+      if (!v || (v.length >= min && !/\s/.test(v))) return v;
+      error = '至少 ' + min + ' 個字，而且不能有空格。';
+    }
+  };
+  const token = ask('管理後台密碼', '輸入新的管理後台密碼（建議 12 個字以上，混合英文和數字）。', 8);
+  if (token === null) return ui.alert('已取消，沒有變更。');
+  const invite = ask('工作人員邀請碼', '輸入新的工作人員邀請碼（不要用公開的電話號碼）。', 4);
+  if (invite === null) return ui.alert('已取消，沒有變更。');
+  const changes = {};
+  if (token) changes.ADMIN_TOKEN = token;
+  if (invite) changes.INVITE_CODE = invite;
+  PropertiesService.getScriptProperties().setProperties(changes);
+  ui.alert('已更新',
+    (token ? '✅ 管理後台密碼已更新，請用新密碼重新登入後台。\n' : '') +
+    (invite ? '✅ 邀請碼已更新為：' + invite + '\n' : '') +
+    (token || invite ? '' : '沒有變更。'), ui.ButtonSet.OK);
 }
 
 /**
