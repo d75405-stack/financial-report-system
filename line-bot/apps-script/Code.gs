@@ -608,6 +608,195 @@ function setupAI() {
   }
 }
 
+// ───────────────────────── 北屯鬧起來 每日報名快報 ─────────────────────────
+//
+// 每天中午由觸發器執行：查詢活動網站的報名人數、剩餘名額、未繳費人數，推播到聯辦群組並 @所有人。
+// 指令碼屬性：CCS_EXPORT_KEY（活動網站匯出密碼，用來統計未繳費）、REPORT_GROUP_ID（選用，預設聯辦群）。
+
+const CCS_BASE = 'https://ccs2024taiwan.pages.dev';
+const REPORT_GROUP_DEFAULT = 'C63927ee4d2fd7198f046ede02b23e08f';
+const REPORT_GREETINGS = [
+  '午餐吃飽飽，下午繼續衝！一起把廍子里鬧起來 🎃💪',
+  '南瓜燈已經在發光了，報名的朋友越來越多，謝謝大家幫忙宣傳 🧡',
+  '中午好！多分享一次，就多一位鄰居來同樂 👻✨',
+  '妖怪們已經開始排隊了，大家午安，下午也要元氣滿滿 🦇☀️',
+  '倒數中！每一則轉發都是讓活動更熱鬧的魔法 🪄🎃',
+  '吃飽才有力氣抓妖怪，祝大家午安、下午順利 🍱👹',
+  '感謝每位夥伴的付出，廍子里因為有你們更溫暖 🙏🧡',
+  '陀螺轉起來、南瓜亮起來，大家一起加油 🌀🎃',
+  '午安！有空的話把報名連結丟到社區群組，幫我們找更多鄰居 📣',
+  '活動越來越近了，大家辛苦了，喝杯茶休息一下再出發 🍵👻',
+];
+
+/** 觸發器進入點。 */
+function sendSignupReport() {
+  const groupId = prop_('REPORT_GROUP_ID') || REPORT_GROUP_DEFAULT;
+  const text = buildSignupReport_();
+  const v2 = lineApi_('message/push', { to: groupId, messages: [{
+    type: 'textV2', text: '{everyone} ' + text,
+    substitution: { everyone: { type: 'mention', mentionee: { type: 'all' } } },
+  }] });
+  if (v2.ok) return '已發送（@所有人）';
+  console.warn('textV2 推播失敗，改用一般訊息：' + v2.body);
+  const plain = lineApi_('message/push', { to: groupId, messages: [text_('📢 各位夥伴 ' + text)] });
+  if (!plain.ok) throw new Error('報名快報推播失敗：' + plain.body);
+  return '已發送（一般訊息）';
+}
+
+function ccsJson_(path) {
+  const res = UrlFetchApp.fetch(CCS_BASE + path, { headers: { 'User-Agent': 'Mozilla/5.0' }, muteHttpExceptions: true, followRedirects: true });
+  if (res.getResponseCode() !== 200) throw new Error(path + ' HTTP ' + res.getResponseCode());
+  return JSON.parse(res.getContentText());
+}
+
+/** 讀匯出 CSV，回傳 { 分組值: 未繳數 }；失敗回傳 null。 */
+function ccsUnpaid_(form, groupCol, paidCol, unpaidValue) {
+  const key = prop_('CCS_EXPORT_KEY');
+  if (!key) return null;
+  try {
+    const res = UrlFetchApp.fetch(CCS_BASE + '/api/export?key=' + encodeURIComponent(key) + (form ? '&form=' + form : ''),
+      { headers: { 'User-Agent': 'Mozilla/5.0' }, muteHttpExceptions: true, followRedirects: true });
+    if (res.getResponseCode() !== 200) return null;
+    const rows = Utilities.parseCsv(res.getContentText().replace(/^﻿/, ''));
+    const head = rows.shift() || [];
+    const gi = groupCol ? head.indexOf(groupCol) : -1, pi = head.indexOf(paidCol);
+    if (pi < 0) return null;
+    const out = { _total: 0 };
+    rows.forEach(r => {
+      if (r[pi] !== unpaidValue) return;
+      const g = gi >= 0 ? r[gi] : '_';
+      out[g] = (out[g] || 0) + 1;
+      out._total++;
+    });
+    return out;
+  } catch (err) {
+    console.error('未繳費統計失敗：' + err.message);
+    return null;
+  }
+}
+
+function daysUntil_(isoLike) {
+  const d = new Date(String(isoLike).replace(' ', 'T') + (/[+Z]/.test(isoLike) ? '' : '+08:00'));
+  if (isNaN(d)) return null;
+  return Math.ceil((d.getTime() - Date.now()) / 864e5);
+}
+
+function sessionOrder_(name) {
+  const day = /10\/18|18日|日\)|週日|星期日/.test(name) ? 1 : 0;
+  const pm = /下午|PM/i.test(name) ? 1 : 0;
+  return day * 2 + pm;
+}
+
+function buildSignupReport_() {
+  const today = Utilities.formatDate(new Date(), TZ, 'MM/dd');
+  const lines = [`🎃 北屯鬧起來｜${today} 中午報名快報`, ''];
+  const hot = n => (n <= 10 ? ' 🔥即將額滿' : '');
+  const unpaidText = (map, key) => (map ? String(map[key] || 0) : '查詢失敗');
+  let anyData = false, unpaidTotal = 0;
+
+  try {
+    const b = ccsJson_('/api/beyblade-count');
+    const max = b.max || 64;
+    const unpaid = ccsUnpaid_('', '場次', '繳費狀態', '未繳費');
+    const names = Object.keys(b.counts || {}).sort((x, y) => sessionOrder_(x) - sessionOrder_(y));
+    lines.push(`🌀 戰鬥陀螺64強爭霸賽（每場上限 ${max}）`);
+    let total = 0;
+    names.forEach(n => {
+      const c = b.counts[n];
+      total += c;
+      lines.push(`・${n}：已報 ${c}｜剩 ${max - c}｜未繳費 ${unpaidText(unpaid, n)}${hot(max - c)}`);
+    });
+    if (!names.length) lines.push('・目前尚無報名');
+    lines.push(`陀螺賽合計：已報 ${total}｜未繳費 ${unpaid ? unpaid._total : '查詢失敗'}`, '');
+    if (unpaid) unpaidTotal += unpaid._total;
+    anyData = true;
+  } catch (err) {
+    lines.push('🌀 戰鬥陀螺賽：查詢異常，請稍後手動確認', '');
+  }
+
+  try {
+    const c = ccsJson_('/api/cosplay-count');
+    const max = c.max || 40, left = max - c.count;
+    const unpaid = ccsUnpaid_('cosplay', '', '保證金', '未繳');
+    const d = daysUntil_(c.deadline);
+    lines.push(`🎭 百鬼嘉年華變裝大賽（上限 ${max} 組）`,
+      `已報 ${c.count} 組｜剩 ${left} 組｜未繳保證金 ${unpaid ? unpaid._total : '查詢失敗'} 組${hot(left)}`,
+      d === null ? '' : d < 0 ? '報名已截止' : `報名截止 ${String(c.deadline).replace('T', ' ').slice(5)}（還有 ${d} 天）`, '');
+    if (unpaid) unpaidTotal += unpaid._total;
+    anyData = true;
+  } catch (err) {
+    lines.push('🎭 變裝大賽：查詢異常，請稍後手動確認', '');
+  }
+
+  try {
+    const dy = ccsJson_('/api/diy-count');
+    const max = dy.max || 40;
+    lines.push(`🧼 甜點造型手工皂DIY（每梯上限 ${max}）`);
+    if (/^2099/.test(dy.open || '')) {
+      lines.push('⏸ 暫停報名，開放時間近期公布');
+    } else {
+      const unpaid = ccsUnpaid_('diy', '梯次', '保證金', '未繳');
+      ['第一梯次 14:00-15:00', '第二梯次 15:30-16:30'].forEach(s => {
+        const n = (dy.counts || {})[s] || 0;
+        lines.push(`・${s}：已報 ${n}｜剩 ${max - n}｜未繳 ${unpaidText(unpaid, s)}${hot(max - n)}`);
+      });
+      const d = daysUntil_(dy.deadline);
+      if (d !== null) lines.push(d < 0 ? '報名已截止' : `報名截止 ${String(dy.deadline).replace('T', ' ').slice(5)}（還有 ${d} 天）`);
+      if (unpaid) unpaidTotal += unpaid._total;
+    }
+    lines.push('');
+    anyData = true;
+  } catch (err) {
+    lines.push('🧼 手工皂DIY：查詢異常，請稍後手動確認', '');
+  }
+
+  if (!anyData) lines.splice(2, lines.length, '今日報名統計查詢異常，請稍後手動確認', '');
+  if (unpaidTotal > 0) lines.push(`💰 目前還有 ${unpaidTotal} 筆未繳費，請櫃台與報名者盡快完成繳費。`, '');
+
+  lines.push('📣 請群組每位夥伴幫忙推廣，分享到自己的社群與社區群組！',
+    '活動總覽：' + CCS_BASE,
+    '陀螺賽報名：' + CCS_BASE + '/signup/beyblade/',
+    '變裝報名：' + CCS_BASE + '/signup/cosplay/',
+    'DIY報名：' + CCS_BASE + '/signup/diy/',
+    '集章地圖：' + CCS_BASE + '/map/',
+    '',
+    REPORT_GREETINGS[Math.floor(Date.now() / 864e5) % REPORT_GREETINGS.length],
+    '',
+    '里長參選人莊晴全 敬上');
+  return lines.filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n');
+}
+
+/** 試算表選單：設定匯出密碼、建立每日中午排程，並可立即發送一次。 */
+function setupSignupReport() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    checkOwner_(false);
+  } catch (err) {
+    return ui.alert(err.message);
+  }
+  const r = ui.prompt('每日報名快報：活動網站匯出密碼',
+    '用來統計未繳費人數（交接文件裡的 EXPORT_KEY）。\n已設定過可留空按確定。',
+    ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return ui.alert('已取消，沒有變更。');
+  const key = r.getResponseText().trim();
+  if (key) PropertiesService.getScriptProperties().setProperty('CCS_EXPORT_KEY', key);
+  if (!ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'sendSignupReport')) {
+    ScriptApp.newTrigger('sendSignupReport').timeBased().everyDays(1).atHour(12).nearMinute(0).inTimezone(TZ).create();
+  }
+  const now = ui.alert('✅ 已設定每天中午 12 點左右自動發送', '要現在先發送一次到聯辦群組測試嗎？', ui.ButtonSet.YES_NO);
+  if (now === ui.Button.YES) {
+    try {
+      ui.alert(sendSignupReport());
+    } catch (err) {
+      ui.alert('發送失敗：' + err.message);
+    }
+  }
+}
+
+function previewSignupReport() {
+  SpreadsheetApp.getUi().alert('報名快報預覽（不會發送）', buildSignupReport_(), SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
 // ───────────────────────── API（LIFF 與管理後台） ─────────────────────────
 
 function handleApi_(req) {
@@ -1203,6 +1392,9 @@ function onOpen() {
     .addItem('設定訊息轉發（aibus）', 'setupForward')
     .addItem('設定全全 AI 問答', 'setupAI')
     .addItem('開放／關閉律師諮詢', 'toggleLawyer')
+    .addSeparator()
+    .addItem('設定每日報名快報（聯辦群）', 'setupSignupReport')
+    .addItem('預覽報名快報', 'previewSignupReport')
     .addToUi();
 }
 
@@ -1631,7 +1823,8 @@ function now_() {
 }
 
 function newId_(prefix) {
-  return prefix + Utilities.formatDate(new Date(), TZ, 'yyMMddHHmmss') + Math.floor(Math.random() * 90 + 10);
+  // 同一秒內可能有多筆（例如活動當天同時回報），尾碼用 4 位亂數降低重複機率
+  return prefix + Utilities.formatDate(new Date(), TZ, 'yyMMddHHmmss') + Math.floor(Math.random() * 9000 + 1000);
 }
 
 function randomToken_(len) {
