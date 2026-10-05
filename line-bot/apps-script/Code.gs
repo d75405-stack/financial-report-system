@@ -701,16 +701,23 @@ function ccsJson_(path) {
 
 /** 讀匯出 CSV，回傳 { 分組值: 未繳數 }；失敗回傳 null。 */
 function ccsUnpaid_(form, groupCol, paidCol, unpaidValue) {
-  const key = prop_('CCS_EXPORT_KEY');
+  const key = String(prop_('CCS_EXPORT_KEY')).trim();
   if (!key) return null;
   try {
     const res = UrlFetchApp.fetch(CCS_BASE + '/api/export?key=' + encodeURIComponent(key) + (form ? '&form=' + form : ''),
       { headers: { 'User-Agent': 'Mozilla/5.0' }, muteHttpExceptions: true, followRedirects: true });
-    if (res.getResponseCode() !== 200) return null;
+    if (res.getResponseCode() !== 200) {
+      ccsUnpaidError_ = res.getResponseCode() === 401 ? '活動網站拒絕匯出密碼（HTTP 401），請確認 EXPORT_KEY 是否正確'
+        : '活動網站回應 HTTP ' + res.getResponseCode();
+      return null;
+    }
     const rows = Utilities.parseCsv(res.getContentText().replace(/^﻿/, ''));
     const head = rows.shift() || [];
     const gi = groupCol ? head.indexOf(groupCol) : -1, pi = head.indexOf(paidCol);
-    if (pi < 0) return null;
+    if (pi < 0) {
+      ccsUnpaidError_ = '匯出檔找不到「' + paidCol + '」欄位';
+      return null;
+    }
     const out = { _total: 0 };
     rows.forEach(r => {
       if (r[pi] !== unpaidValue) return;
@@ -720,10 +727,12 @@ function ccsUnpaid_(form, groupCol, paidCol, unpaidValue) {
     });
     return out;
   } catch (err) {
+    ccsUnpaidError_ = err.message;
     console.error('未繳費統計失敗：' + err.message);
     return null;
   }
 }
+let ccsUnpaidError_ = '';
 
 function daysUntil_(isoLike) {
   const d = new Date(String(isoLike).replace(' ', 'T') + (/[+Z]/.test(isoLike) ? '' : '+08:00'));
@@ -846,7 +855,11 @@ function setupSignupReport() {
 }
 
 function previewSignupReport() {
-  SpreadsheetApp.getUi().alert('報名快報預覽（不會發送）', buildSignupReport_(), SpreadsheetApp.getUi().ButtonSet.OK);
+  ccsUnpaidError_ = '';
+  const text = buildSignupReport_();
+  const diag = !prop_('CCS_EXPORT_KEY') ? '\n\n⚠️ 尚未設定匯出密碼，未繳費人數無法統計。'
+    : ccsUnpaidError_ ? '\n\n⚠️ 未繳費查詢失敗原因：' + ccsUnpaidError_ : '';
+  SpreadsheetApp.getUi().alert('報名快報預覽（不會發送）', text + diag, SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
 // ───────────────────────── API（LIFF 與管理後台） ─────────────────────────
