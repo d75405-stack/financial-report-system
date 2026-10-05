@@ -132,8 +132,6 @@ function doPost(e) {
 // ───────────────────────── LINE webhook ─────────────────────────
 
 const HELP_TEXT = [
-  '有問題隨時叫「全全」，例如輸入：全全 說明',
-  '',
   '可以輸入以下關鍵字：',
   '・回報：開啟回報表單（工作人員）',
   '・回報 內容：直接用文字回報',
@@ -163,8 +161,9 @@ function handleEvent_(ev) {
   const t = ev.message.text.trim();
   const member = findMember_(uid);
 
+  // 個人私訊不提供全全功能，只回覆罐頭訊息（全全只在群組服務）
   if (t.indexOf(ASSISTANT_NAME) === 0) {
-    handleAssistant_(ev, uid, member, t);
+    reply_(ev.replyToken, [text_(privateCannedText_())]);
     return;
   }
 
@@ -224,10 +223,37 @@ function handleEvent_(ev) {
     case '說明':
     case '選單':
     case 'help':
-      handleAssistant_(ev, uid, member, ASSISTANT_NAME);
+      reply_(ev.replyToken, [text_(privateCannedText_())]);
       return;
   }
   // 其他訊息不自動回覆，留給里辦人員在官方帳號後台以聊天回覆。
+}
+
+const PRIVATE_CANNED_DEFAULT = [
+  '您好，感謝您的訊息！🙏',
+  '您的留言我們都會看到，將由專人盡快回覆您。',
+  '',
+  '北屯鬧起來活動資訊：https://ccs2024taiwan.pages.dev',
+  '',
+  '里長參選人莊晴全 敬上',
+].join('\n');
+
+/** 私訊時回覆的罐頭訊息，可在試算表選單「修改私訊罐頭訊息」更改。 */
+function privateCannedText_() {
+  return prop_('PRIVATE_CANNED_TEXT') || PRIVATE_CANNED_DEFAULT;
+}
+
+function editCannedText() {
+  const ui = SpreadsheetApp.getUi();
+  const r = ui.prompt('私訊罐頭訊息',
+    '里民私訊輸入「全全…」或「說明」時，會回覆這段文字。\n目前內容：\n\n' + privateCannedText_() +
+    '\n\n輸入新內容（換行請用 \\n），留空按確定恢復預設。', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  const v = r.getResponseText().trim();
+  const props = PropertiesService.getScriptProperties();
+  if (v) props.setProperty('PRIVATE_CANNED_TEXT', v.replace(/\\n/g, '\n'));
+  else props.deleteProperty('PRIVATE_CANNED_TEXT');
+  ui.alert('已更新，新的罐頭訊息：\n\n' + privateCannedText_());
 }
 
 /** 律師諮詢是否開放（指令碼屬性 LAWYER_OPEN = 'true'，由試算表選單切換）。 */
@@ -1395,6 +1421,7 @@ function onOpen() {
     .addItem('設定訊息轉發（aibus）', 'setupForward')
     .addItem('設定全全 AI 問答', 'setupAI')
     .addItem('開放／關閉律師諮詢', 'toggleLawyer')
+    .addItem('修改私訊罐頭訊息', 'editCannedText')
     .addSeparator()
     .addItem('設定每日報名快報（聯辦群）', 'setupSignupReport')
     .addItem('預覽報名快報', 'previewSignupReport')
