@@ -112,10 +112,13 @@ function doPost(e) {
     return json_({ ok: false, error: '無效的請求' });
   }
   if (Array.isArray(body.events)) {
-    forwardWebhook_(e.postData.contents);
+    // 先由里辦系統處理，再轉給 aibus：每則訊息只能回覆一次，
+    // 若先轉發，aibus 的自動回覆可能先用掉 reply token，全全就回不了。
+    // 全全只回應自己的指令，報名確認等訊息仍留給 aibus 回覆。
     body.events.forEach(ev => {
       try { handleEvent_(ev); } catch (err) { console.error(err.stack || err); }
     });
+    forwardWebhook_(e.postData.contents);
     return json_({ ok: true });
   }
   try {
