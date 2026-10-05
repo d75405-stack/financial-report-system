@@ -105,6 +105,7 @@ function doGet() {
 }
 
 function doPost(e) {
+  ensureReportTrigger_();
   let body = {};
   try {
     body = JSON.parse(e.postData.contents);
@@ -657,6 +658,26 @@ const REPORT_GREETINGS = [
   '活動越來越近了，大家辛苦了，喝杯茶休息一下再出發 🍵👻',
 ];
 
+/**
+ * 網頁應用程式以擁有者身分執行，收到任何請求時順便確認「每日中午報名快報」排程存在，
+ * 不需要另外到試算表選單設定。每 6 小時最多檢查一次。
+ */
+function ensureReportTrigger_() {
+  const cache = CacheService.getScriptCache();
+  if (cache.get('report_trigger_ok')) return;
+  try {
+    withLock_(() => {
+      if (!ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'sendSignupReport')) {
+        ScriptApp.newTrigger('sendSignupReport').timeBased().everyDays(1).atHour(12).nearMinute(0).inTimezone(TZ).create();
+        console.log('已自動建立每日中午報名快報排程');
+      }
+    });
+    cache.put('report_trigger_ok', '1', 21600);
+  } catch (err) {
+    console.error('建立報名快報排程失敗：' + err.message);
+  }
+}
+
 /** 觸發器進入點。 */
 function sendSignupReport() {
   const groupId = prop_('REPORT_GROUP_ID') || REPORT_GROUP_DEFAULT;
@@ -720,7 +741,9 @@ function buildSignupReport_() {
   const today = Utilities.formatDate(new Date(), TZ, 'MM/dd');
   const lines = [`🎃 北屯鬧起來｜${today} 中午報名快報`, ''];
   const hot = n => (n <= 10 ? ' 🔥即將額滿' : '');
-  const unpaidText = (map, key) => (map ? String(map[key] || 0) : '查詢失敗');
+  const noKey = !prop_('CCS_EXPORT_KEY');
+  const unknown = noKey ? '（待設定）' : '查詢失敗';
+  const unpaidText = (map, key) => (map ? String(map[key] || 0) : unknown);
   let anyData = false, unpaidTotal = 0;
 
   try {
@@ -736,7 +759,7 @@ function buildSignupReport_() {
       lines.push(`・${n}：已報 ${c}｜剩 ${max - c}｜未繳費 ${unpaidText(unpaid, n)}${hot(max - c)}`);
     });
     if (!names.length) lines.push('・目前尚無報名');
-    lines.push(`陀螺賽合計：已報 ${total}｜未繳費 ${unpaid ? unpaid._total : '查詢失敗'}`, '');
+    lines.push(`陀螺賽合計：已報 ${total}｜未繳費 ${unpaid ? unpaid._total : unknown}`, '');
     if (unpaid) unpaidTotal += unpaid._total;
     anyData = true;
   } catch (err) {
@@ -749,7 +772,7 @@ function buildSignupReport_() {
     const unpaid = ccsUnpaid_('cosplay', '', '保證金', '未繳');
     const d = daysUntil_(c.deadline);
     lines.push(`🎭 百鬼嘉年華變裝大賽（上限 ${max} 組）`,
-      `已報 ${c.count} 組｜剩 ${left} 組｜未繳保證金 ${unpaid ? unpaid._total : '查詢失敗'} 組${hot(left)}`,
+      `已報 ${c.count} 組｜剩 ${left} 組｜未繳保證金 ${unpaid ? unpaid._total : unknown} 組${hot(left)}`,
       d === null ? '' : d < 0 ? '報名已截止' : `報名截止 ${String(c.deadline).replace('T', ' ').slice(5)}（還有 ${d} 天）`, '');
     if (unpaid) unpaidTotal += unpaid._total;
     anyData = true;
