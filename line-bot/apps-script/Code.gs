@@ -286,7 +286,7 @@ const LAWYER_SEED = [
   { lawyerId: 'L3', name: '陳沂裴', title: '律師', firm: '宣品法律事務所',
     specialty: '一般民事、刑事案件、婚姻、親屬、繼承糾紛',
     experience: '法務部矯正署臺中監獄法治教育講師\n法務部矯正署臺中戒治所法治教育講師',
-    bio: '', photo: '', order: 3, status: '上架', version: 2 },
+    bio: '', photo: 'L3.jpg', order: 3, status: '上架', version: 3 },
 ];
 
 function lawyerSeedVersion_() {
