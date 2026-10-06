@@ -279,7 +279,10 @@ const LAWYER_SEED = [
     specialty: '婚姻、親屬、繼承、土地分割、不動產爭議、刑事詐欺、侵占等',
     experience: '法扶家事專科律師\n國語日報法律專欄作家\n台中監獄法治教育講師\n彰化看守所外部審查委員',
     bio: '', photo: 'L1.jpg', order: 1, status: '上架', version: 2 },
-  { lawyerId: 'L2', name: '律師二（資料待提供）', title: '', firm: '', specialty: '', experience: '', bio: '', photo: '', order: 2, status: '準備中', version: 1 },
+  { lawyerId: 'L2', name: '郭乃瑩', title: '律師', firm: '宣品法律事務所',
+    specialty: '婚姻、親屬、繼承、財產糾紛、不動產爭議、工程案件、勞資糾紛案件、校園性別事件',
+    experience: '法扶勞動專科律師\n台中市校園性別事件調查人才庫\n職場霸凌調查人才庫資格\n教保相關人員違法事件調查人才庫資格',
+    bio: '', photo: 'L2.jpg', order: 2, status: '上架', version: 2 },
   { lawyerId: 'L3', name: '律師三（資料待提供）', title: '', firm: '', specialty: '', experience: '', bio: '', photo: '', order: 3, status: '準備中', version: 1 },
 ];
 
