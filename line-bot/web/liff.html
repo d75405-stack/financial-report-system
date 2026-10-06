@@ -68,6 +68,10 @@
   <!-- 律師諮詢 -->
   <section id="view-booking" class="hidden">
     <h1>免費律師諮詢</h1>
+    <div class="card hidden" id="lawyers-card">
+      <h2>諮詢律師</h2>
+      <div id="lawyers"></div>
+    </div>
     <div class="card">
       <h2>選擇時段</h2>
       <div id="slots"></div>
@@ -251,6 +255,27 @@ async function loadBooking() {
     $('#slots').innerHTML = `<p class="muted">${esc(err.message)}</p>`;
   }
   loadMyBookings();
+  loadLawyers();
+}
+
+async function loadLawyers() {
+  try {
+    const list = await call('listLawyers');
+    $('#lawyers').innerHTML = list.map(l => `
+      <div class="lawyer">
+        ${l.photo ? `<img src="${esc(l.photo)}" alt="${esc(l.name)}">` : ''}
+        <div>
+          <b>${esc(l.name)} ${esc(l.title || '律師')}</b>
+          ${l.firm ? `<div class="muted">${esc(l.firm)}</div>` : ''}
+          ${l.specialty ? `<div>專長：${esc(l.specialty)}</div>` : ''}
+          ${l.experience ? `<div class="muted pre">${esc(l.experience)}</div>` : ''}
+          ${l.bio ? `<p class="pre">${esc(l.bio)}</p>` : ''}
+        </div>
+      </div>`).join('');
+    $('#lawyers-card').classList.toggle('hidden', !list.length);
+  } catch (err) {
+    $('#lawyers-card').classList.add('hidden');
+  }
 }
 
 $('#form-booking').addEventListener('submit', e => {

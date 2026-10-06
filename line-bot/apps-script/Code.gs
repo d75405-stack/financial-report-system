@@ -36,6 +36,7 @@ const SHEETS = {
   成員: ['userId', 'name', 'phone', 'role', 'group', 'status', 'joinedAt'],
   回報: ['id', 'createdAt', 'userId', 'name', 'category', 'content', 'location', 'photoUrl', 'status', 'handler', 'note', 'updatedAt'],
   公告: ['id', 'createdAt', 'target', 'title', 'content', 'recipients'],
+  律師資料: ['lawyerId', 'name', 'title', 'firm', 'specialty', 'experience', 'bio', 'photo', 'order', 'status', 'version', 'updatedAt'],
   律師時段: ['slotId', 'date', 'start', 'end', 'lawyer', 'capacity', 'note'],
   諮詢預約: ['id', 'createdAt', 'slotId', 'userId', 'name', 'phone', 'topic', 'detail', 'status', 'reminded'],
 };
@@ -49,6 +50,7 @@ const SHEETS = {
 function setup() {
   checkOwner_(true);
   Object.keys(SHEETS).forEach(sheet_);
+  syncLawyers_();
   const props = PropertiesService.getScriptProperties();
   if (!props.getProperty('ADMIN_TOKEN')) props.setProperty('ADMIN_TOKEN', randomToken_(24));
   if (!props.getProperty('INVITE_CODE')) props.setProperty('INVITE_CODE', randomToken_(6).toUpperCase());
@@ -106,6 +108,7 @@ function doGet() {
 
 function doPost(e) {
   ensureReportTrigger_();
+  ensureLawyers_();
   let body = {};
   try {
     body = JSON.parse(e.postData.contents);
@@ -260,6 +263,62 @@ function editCannedText() {
 /** 律師諮詢是否開放（指令碼屬性 LAWYER_OPEN = 'true'，由試算表選單切換）。 */
 function lawyerOpen_() {
   return prop_('LAWYER_OPEN') === 'true';
+}
+
+// ───────────────────────── 律師資料 ─────────────────────────
+
+/**
+ * 三位律師的介紹資料。由 Claude 依里長提供的資料更新，推送後會自動寫入「律師資料」工作表：
+ * 工作表沒有這位律師就新增；version 比工作表裡的大才覆蓋（直接在工作表改的內容不會被蓋掉）。
+ * status：「準備中」不顯示；「上架」才會出現在預約頁（且律師諮詢要先開放）。
+ * photo：照片放在 line-bot/web/lawyers/，這裡填檔名即可。
+ */
+const LAWYER_PHOTO_BASE = 'https://d75405-stack.github.io/financial-report-system/line-bot/web/lawyers/';
+const LAWYER_SEED = [
+  { lawyerId: 'L1', name: '律師一（資料待提供）', title: '', firm: '', specialty: '', experience: '', bio: '', photo: '', order: 1, status: '準備中', version: 1 },
+  { lawyerId: 'L2', name: '律師二（資料待提供）', title: '', firm: '', specialty: '', experience: '', bio: '', photo: '', order: 2, status: '準備中', version: 1 },
+  { lawyerId: 'L3', name: '律師三（資料待提供）', title: '', firm: '', specialty: '', experience: '', bio: '', photo: '', order: 3, status: '準備中', version: 1 },
+];
+
+function lawyerSeedVersion_() {
+  return LAWYER_SEED.map(l => l.lawyerId + ':' + l.version).join(',');
+}
+
+/** 每次收到請求時檢查一次（有快取），程式更新了律師資料就自動寫進工作表。 */
+function ensureLawyers_() {
+  if (prop_('LAWYER_SEED_VER') === lawyerSeedVersion_()) return;
+  try {
+    withLock_(syncLawyers_);
+  } catch (err) {
+    console.error('同步律師資料失敗：' + err.message);
+  }
+}
+
+function syncLawyers_() {
+  const rows = indexBy_(readAll_('律師資料'), 'lawyerId');
+  LAWYER_SEED.forEach(seed => {
+    const row = rows[seed.lawyerId];
+    const data = Object.assign({}, seed, { updatedAt: now_() });
+    if (!row) append_('律師資料', data);
+    else if (Number(row.version || 0) < seed.version) update_('律師資料', row._row, data);
+  });
+  PropertiesService.getScriptProperties().setProperty('LAWYER_SEED_VER', lawyerSeedVersion_());
+}
+
+function lawyerPhotoUrl_(photo) {
+  if (!photo) return '';
+  return /^https:\/\//.test(photo) ? photo : LAWYER_PHOTO_BASE + encodeURIComponent(photo);
+}
+
+/** 預約頁顯示用：只給「上架」的律師，不含內部欄位。 */
+function publicLawyers_() {
+  return readAll_('律師資料')
+    .filter(l => l.status === '上架')
+    .sort((a, b) => Number(a.order || 99) - Number(b.order || 99))
+    .map(l => ({
+      lawyerId: l.lawyerId, name: l.name, title: l.title, firm: l.firm, specialty: l.specialty,
+      experience: l.experience, bio: l.bio, photo: lawyerPhotoUrl_(l.photo),
+    }));
 }
 
 const LAWYER_CLOSED_TEXT = '⚖️ 免費律師諮詢服務尚未開放，敬請期待！開放時會在官方 LINE 公告通知大家。';
@@ -931,6 +990,10 @@ function liffApi_(action, req, user) {
       if (!lawyerOpen_()) throw new Error(LAWYER_CLOSED_TEXT);
       return openSlots_();
 
+    case 'listLawyers':
+      if (!lawyerOpen_()) throw new Error(LAWYER_CLOSED_TEXT);
+      return publicLawyers_();
+
     case 'book': {
       if (!lawyerOpen_()) throw new Error(LAWYER_CLOSED_TEXT);
       const slot = openSlots_().find(s => s.slotId === req.slotId);
@@ -1056,6 +1119,9 @@ function adminApi_(action, req) {
       append_('公告', { id: newId_('A'), createdAt: now_(), target, title, content, recipients });
       return { recipients };
     }
+
+    case 'lawyers':
+      return readAll_('律師資料').map(stripRow_).sort((a, b) => Number(a.order || 99) - Number(b.order || 99));
 
     case 'slots': {
       const counts = countBy_(readAll_('諮詢預約').filter(b => b.status !== '已取消'), 'slotId');
@@ -1217,6 +1283,8 @@ const BACKUP_LABELS = {
   userId: 'LINE ID', name: '姓名', phone: '電話', role: '職務', group: '組別', status: '狀態', joinedAt: '加入時間',
   id: '編號', createdAt: '建立時間', category: '類別', content: '內容', location: '地點', photoUrl: '照片',
   handler: '處理人', note: '備註', updatedAt: '更新時間', target: '對象', title: '標題', recipients: '收件人數',
+  lawyerId: '律師編號', firm: '事務所', specialty: '專長', experience: '經歷', bio: '簡介', photo: '照片網址',
+  order: '排序', version: '資料版本',
   slotId: '時段編號', date: '日期', start: '開始', end: '結束', lawyer: '律師', capacity: '名額',
   topic: '諮詢類別', detail: '問題簡述', reminded: '提醒時間',
 };
@@ -1327,6 +1395,7 @@ function runBackup_() {
     const s = slotIndex[b.slotId] || {};
     return Object.assign({}, b, { date: s.date || '', start: s.start || '', end: s.end || '', lawyer: s.lawyer || '' });
   }).sort((a, b) => String(b.date + b.start).localeCompare(String(a.date + a.start)));
+  write(['律師諮詢'], '律師資料.csv', SHEETS.律師資料, readAll_('律師資料'));
   write(['律師諮詢'], '律師時段.csv', SHEETS.律師時段, slots.slice().sort((a, b) => String(b.date).localeCompare(String(a.date))));
   write(['律師諮詢'], '全部預約.csv', bookingKeys, bookings);
   writeGroups(['律師諮詢', '依月份'], bookingKeys, groupBy_(bookings, b => String(b.date).slice(0, 7) || '時段已刪除', []));

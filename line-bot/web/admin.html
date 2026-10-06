@@ -80,6 +80,11 @@
 
     <!-- 律師諮詢 -->
     <section id="tab-lawyer" class="hidden">
+      <div class="card">
+        <h2>律師資料</h2>
+        <p class="muted">資料由 Claude 依您提供的內容更新（也可直接在試算表「律師資料」修改）。狀態為「上架」且律師諮詢開放後，里民才看得到。</p>
+        <div id="lawyer-list"></div>
+      </div>
       <form class="card" id="form-slot">
         <h2>新增諮詢時段</h2>
         <div class="row">
@@ -88,7 +93,7 @@
           <div><label>結束</label><input type="time" name="end" required value="16:00"></div>
         </div>
         <div class="row">
-          <div><label>律師</label><input name="lawyer" maxlength="30"></div>
+          <div><label>律師</label><input name="lawyer" maxlength="30" list="lawyer-names"><datalist id="lawyer-names"></datalist></div>
           <div><label>名額</label><input type="number" name="capacity" min="1" max="50" value="4"></div>
           <div><label>備註</label><input name="note" maxlength="200" placeholder="例：里活動中心 2 樓"></div>
         </div>
@@ -371,7 +376,16 @@ $('#form-broadcast').addEventListener('submit', e => {
 
 // 律師諮詢
 async function loadLawyer() {
-  const [slots, bookings] = await Promise.all([admin('slots'), admin('bookings')]);
+  const [slots, bookings, lawyers] = await Promise.all([admin('slots'), admin('bookings'), admin('lawyers')]);
+  $('#lawyer-list').innerHTML = lawyers.length ? lawyers.map(l => `
+    <div class="lawyer">
+      ${l.photo ? `<img src="${esc(/^https:/.test(l.photo) ? l.photo : 'lawyers/' + encodeURIComponent(l.photo))}" alt="">` : '<div class="lawyer-ph">照片</div>'}
+      <div>
+        <b>${esc(l.name)}</b> <span class="badge">${esc(l.status)}</span>
+        <div class="muted">${esc([l.title, l.firm, l.specialty].filter(Boolean).join('｜') || '資料待補')}</div>
+      </div>
+    </div>`).join('') : '<p class="muted">尚無律師資料</p>';
+  $('#lawyer-names').innerHTML = lawyers.filter(l => l.status === '上架').map(l => `<option value="${esc(l.name)}">`).join('');
   $('#slot-rows').innerHTML = slots.length ? slots.map(s => `
     <tr>
       <td>${esc(s.date)}</td><td>${esc(s.start)}–${esc(s.end)}</td><td>${esc(s.lawyer)}</td>
