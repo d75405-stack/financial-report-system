@@ -283,7 +283,10 @@ const LAWYER_SEED = [
     specialty: '婚姻、親屬、繼承、財產糾紛、不動產爭議、工程案件、勞資糾紛案件、校園性別事件',
     experience: '法扶勞動專科律師\n台中市校園性別事件調查人才庫\n職場霸凌調查人才庫資格\n教保相關人員違法事件調查人才庫資格',
     bio: '', photo: 'L2.jpg', order: 2, status: '上架', version: 2 },
-  { lawyerId: 'L3', name: '律師三（資料待提供）', title: '', firm: '', specialty: '', experience: '', bio: '', photo: '', order: 3, status: '準備中', version: 1 },
+  { lawyerId: 'L3', name: '陳沂裴', title: '律師', firm: '宣品法律事務所',
+    specialty: '一般民事、刑事案件、婚姻、親屬、繼承糾紛',
+    experience: '法務部矯正署臺中監獄法治教育講師\n法務部矯正署臺中戒治所法治教育講師',
+    bio: '', photo: '', order: 3, status: '上架', version: 2 },
 ];
 
 function lawyerSeedVersion_() {

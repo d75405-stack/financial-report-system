@@ -263,7 +263,7 @@ async function loadLawyers() {
     const list = await call('listLawyers');
     $('#lawyers').innerHTML = list.map(l => `
       <div class="lawyer">
-        ${l.photo ? `<img src="${esc(l.photo)}" alt="${esc(l.name)}">` : ''}
+        ${l.photo ? `<img src="${esc(l.photo)}" alt="${esc(l.name)}">` : '<div class="lawyer-ph">⚖️</div>'}
         <div>
           <b>${esc(l.name)} ${esc(l.title || '律師')}</b>
           ${l.firm ? `<div class="muted">${esc(l.firm)}</div>` : ''}
