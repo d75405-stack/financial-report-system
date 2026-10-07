@@ -172,6 +172,12 @@ function handleEvent_(ev) {
   const t = ev.message.text.trim();
   const member = findMember_(uid);
 
+  // 活動報名確認（報名成功頁會預填訊息）：其他活動由 aibus 的關鍵字規則回覆
+  if (t.indexOf('彩繪提袋報名確認') >= 0) {
+    reply_(ev.replyToken, [text_(BAG_CONFIRM_TEXT)]);
+    return;
+  }
+
   // 個人私訊不提供全全功能，只回覆罐頭訊息（全全只在群組服務）
   if (t.indexOf(ASSISTANT_NAME) === 0) {
     reply_(ev.replyToken, [text_(privateCannedText_())]);
@@ -342,6 +348,15 @@ function publicLawyers_() {
       experience: l.experience, bio: l.bio, photo: lawyerPhotoUrl_(l.photo), schedule: l.schedule,
     }));
 }
+
+const BAG_CONFIRM_TEXT = [
+  '👜 已收到您的彩繪提袋DIY報名!',
+  '📅 10/17(六) 總太悅來社區・活力廚房(祥順路一段500號)',
+  '⏰ 第一梯次 14:00–15:00/第二梯次 15:30–16:30',
+  '💰 請在 10/13(二) 前到總太悅來櫃檯繳交保證金 100 元,繳完才算報名完成;10/13 前沒繳視同放棄,由候補遞補。',
+  '✅ 當天參加活動,保證金全額退還;沒到場的保證金捐給心路基金會。',
+  '繳費完成後會再用 LINE 通知您!',
+].join('\n');
 
 const LAWYER_PLACE_TEXT = '📍 地點確認中，目前尚未開放預約，敬請期待！';
 
@@ -638,8 +653,15 @@ function knowledgeSheet_() {
 function knowledgeText_() {
   const rows = knowledgeSheet_().getDataRange().getValues().slice(1)
     .filter(r => String(r[0]).trim() && String(r[1]).trim());
+  // 程式內建的補充資料：試算表裡還沒有同名主題時才加進去（試算表裡的內容優先）
+  const topics = rows.map(r => String(r[0]).trim());
+  KNOWLEDGE_EXTRA.forEach(k => { if (topics.indexOf(k[0]) < 0) rows.push(k); });
   return rows.map(r => '## ' + String(r[0]).trim() + '\n' + String(r[1]).trim()).join('\n\n');
 }
+
+const KNOWLEDGE_EXTRA = [
+  ['彩繪提袋DIY', '10/17(六) 於總太悅來社區・活力廚房(祥順路一段500號)，兩梯次 14:00–15:00、15:30–16:30，每梯 30 人，活動免費，需在 10/13(二) 前到總太悅來櫃檯繳保證金 100 元才算報名完成，當天參加全額退還，沒到場的保證金捐給心路基金會。報名：https://ccs2024taiwan.pages.dev/signup/bag/'],
+];
 
 const AI_SYSTEM_PROMPT = [
   '你是「全全」，台中市北屯區廍子里官方 LINE 帳號「里長參選人莊晴全」的小幫手，回答里民的問題。',
@@ -927,27 +949,33 @@ function buildSignupReport_() {
     lines.push('🎭 變裝大賽：查詢異常，請稍後手動確認', '');
   }
 
-  try {
-    const dy = ccsJson_('/api/diy-count');
-    const max = dy.max || 40;
-    lines.push(`🧼 甜點造型手工皂DIY（每梯上限 ${max}）`);
-    if (/^2099/.test(dy.open || '')) {
-      lines.push('⏸ 暫停報名，開放時間近期公布');
-    } else {
-      const unpaid = ccsUnpaid_('diy', '梯次', '保證金', '未繳');
-      ['第一梯次 14:00-15:00', '第二梯次 15:30-16:30'].forEach(s => {
-        const n = (dy.counts || {})[s] || 0;
-        lines.push(`・${s}：已報 ${n}｜剩 ${max - n}｜未繳 ${unpaidText(unpaid, s)}${hot(max - n)}`);
-      });
-      const d = daysUntil_(dy.deadline);
-      if (d !== null) lines.push(d < 0 ? '報名已截止' : `報名截止 ${String(dy.deadline).replace('T', ' ').slice(5)}（還有 ${d} 天）`);
-      if (unpaid) unpaidTotal += unpaid._total;
+  // 手工皂與彩繪提袋都是兩梯次＋保證金，格式相同
+  [
+    { api: '/api/diy-count', form: 'diy', title: '🧼 甜點造型手工皂DIY', short: '🧼 手工皂DIY', max: 40 },
+    { api: '/api/bag-count', form: 'bag', title: '👜 彩繪提袋DIY（10/17）', short: '👜 彩繪提袋DIY', max: 30 },
+  ].forEach(ev => {
+    try {
+      const dy = ccsJson_(ev.api);
+      const max = dy.max || ev.max;
+      lines.push(`${ev.title}（每梯上限 ${max}）`);
+      if (/^2099/.test(dy.open || '')) {
+        lines.push('⏸ 暫停報名，開放時間近期公布');
+      } else {
+        const unpaid = ccsUnpaid_(ev.form, '梯次', '保證金', '未繳');
+        ['第一梯次 14:00-15:00', '第二梯次 15:30-16:30'].forEach(s => {
+          const n = (dy.counts || {})[s] || 0;
+          lines.push(`・${s}：已報 ${n}｜剩 ${max - n}｜未繳 ${unpaidText(unpaid, s)}${hot(max - n)}`);
+        });
+        const d = daysUntil_(dy.deadline);
+        if (d !== null) lines.push(d < 0 ? '報名已截止' : `報名截止 ${String(dy.deadline).replace('T', ' ').slice(5)}（還有 ${d} 天）`);
+        if (unpaid) unpaidTotal += unpaid._total;
+      }
+      lines.push('');
+      anyData = true;
+    } catch (err) {
+      lines.push(ev.short + '：查詢異常，請稍後手動確認', '');
     }
-    lines.push('');
-    anyData = true;
-  } catch (err) {
-    lines.push('🧼 手工皂DIY：查詢異常，請稍後手動確認', '');
-  }
+  });
 
   if (!anyData) lines.splice(2, lines.length, '今日報名統計查詢異常，請稍後手動確認', '');
   if (unpaidTotal > 0) lines.push(`💰 目前還有 ${unpaidTotal} 筆未繳費，請櫃台與報名者盡快完成繳費。`, '');
@@ -957,6 +985,7 @@ function buildSignupReport_() {
     '陀螺賽報名：' + CCS_BASE + '/signup/beyblade/',
     '變裝報名：' + CCS_BASE + '/signup/cosplay/',
     'DIY報名：' + CCS_BASE + '/signup/diy/',
+    '彩繪提袋報名：' + CCS_BASE + '/signup/bag/',
     '集章地圖：' + CCS_BASE + '/map/',
     '',
     REPORT_GREETINGS[Math.floor(Date.now() / 864e5) % REPORT_GREETINGS.length],
