@@ -700,7 +700,9 @@ function aiAnswer_(question, uid, name) {
     if (data.stop_reason === 'refusal') {
       answer = '這個問題全全不方便回答，請直接在聊天室留言，會由真人回覆。';
     } else {
-      answer = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim()
+      // 去掉看不見的零寬字元（曾出現整段回答都是零寬字元、里民看到空白訊息）
+      answer = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
+        .replace(/[\u200B-\u200F\u2060-\u2064\uFEFF]/g, '').trim()
         || '全全暫時無法回答，請直接在聊天室留言，會由真人回覆。';
     }
     logAi_(uid, name, question, answer, data.usage);
