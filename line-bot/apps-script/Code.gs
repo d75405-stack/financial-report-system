@@ -38,6 +38,8 @@ const SHEETS = {
   公告: ['id', 'createdAt', 'target', 'title', 'content', 'recipients'],
   律師資料: ['lawyerId', 'name', 'title', 'firm', 'specialty', 'experience', 'bio', 'photo', 'order', 'status', 'version', 'updatedAt', 'schedule'],
   好友紀錄: ['at', 'userId', 'displayName', 'event'],
+  私訊關注: ['at', 'userId', 'displayName', 'keyword', 'text', 'signups', 'handled'],
+  報名確認紀錄: ['at', 'userId', 'displayName', 'text'],
   律師時段: ['slotId', 'date', 'start', 'end', 'lawyer', 'capacity', 'note'],
   諮詢預約: ['id', 'createdAt', 'slotId', 'userId', 'name', 'phone', 'topic', 'detail', 'status', 'reminded'],
 };
@@ -171,6 +173,9 @@ function handleEvent_(ev) {
 
   const t = ev.message.text.trim();
   const member = findMember_(uid);
+
+  // 只記錄、不回覆（reply token 留給後面的關鍵字回覆與 aibus）
+  watchPrivateMessage_(uid, t);
 
   // 活動報名確認（報名成功頁會預填訊息）：其他活動由 aibus 的關鍵字規則回覆
   if (t.indexOf('彩繪提袋報名確認') >= 0) {
@@ -1394,7 +1399,7 @@ const BACKUP_LABELS = {
   lawyerId: '律師編號', firm: '事務所', specialty: '專長', experience: '經歷', bio: '簡介', photo: '照片網址',
   order: '排序', version: '資料版本',
   slotId: '時段編號', date: '日期', start: '開始', end: '結束', lawyer: '律師', capacity: '名額',
-  at: '時間', displayName: 'LINE 名稱', event: '動作',
+  at: '時間', displayName: 'LINE 名稱', event: '動作', keyword: '關鍵字', text: '訊息', signups: '報名紀錄', handled: '已處理',
   topic: '諮詢類別', detail: '問題簡述', reminded: '提醒時間',
 };
 const BACKUP_STALE_MS = 10 * 60 * 1000;
@@ -1497,6 +1502,8 @@ function runBackup_() {
 
   write(['推播公告'], '推播公告.csv', SHEETS.公告, readAll_('公告').reverse());
   write(['好友'], '好友紀錄.csv', SHEETS.好友紀錄, readAll_('好友紀錄').reverse());
+  write(['私訊'], '私訊關注.csv', SHEETS.私訊關注, readAll_('私訊關注').reverse());
+  write(['私訊'], '報名確認紀錄.csv', SHEETS.報名確認紀錄, readAll_('報名確認紀錄').reverse());
 
   const slots = readAll_('律師時段');
   const slotIndex = indexBy_(slots, 'slotId');
@@ -1928,16 +1935,65 @@ function lineApi_(path, payload, method) {
   return { ok: code < 300, code, body: res.getContentText() };
 }
 
-/** 記錄加入／封鎖官方帳號的人（試算表「好友紀錄」）。 */
-function logFriend_(uid, event) {
-  let displayName = '';
+/**
+ * 私訊關注：里民私訊出現「取消」等字眼時記到「私訊關注」工作表並通知里長，
+ * 報名確認訊息記到「報名確認紀錄」，通知裡會附上這個人報名過的活動，方便到後台處理。
+ * 關鍵字可用指令碼屬性 WATCH_KEYWORDS（逗號分隔）覆蓋。
+ */
+const WATCH_KEYWORDS_DEFAULT = ['取消', '退出', '退費', '退款', '不參加', '不能參加', '無法參加', '沒辦法參加', '不能去', '不去了', '改期', '放棄', '報錯'];
+
+function watchKeywords_() {
+  const custom = String(prop_('WATCH_KEYWORDS') || '').split(/[,，、\s]+/).map(k => k.trim()).filter(Boolean);
+  return custom.length ? custom : WATCH_KEYWORDS_DEFAULT;
+}
+
+function watchPrivateMessage_(uid, text) {
+  try {
+    const confirm = /報名確認/.test(text);
+    const keyword = confirm ? '' : watchKeywords_().find(k => text.indexOf(k) >= 0);
+    if (!confirm && !keyword) return;
+    // Apps Script 讀不到簽章標頭；查得到 LINE 名稱代表真的是官方帳號的好友，擋掉偽造的事件
+    const name = lineDisplayName_(uid);
+    if (!name) return;
+    if (confirm) {
+      append_('報名確認紀錄', { at: now_(), userId: uid, displayName: name, text: text.slice(0, 300) });
+      return;
+    }
+    const signups = readAll_('報名確認紀錄').filter(r => r.userId === uid).map(r => r.text);
+    append_('私訊關注', { at: now_(), userId: uid, displayName: name, keyword, text: text.slice(0, 500),
+      signups: signups.join('\n').slice(0, 1000), handled: '' });
+    notifyOwner_(['🔔 私訊提到「' + keyword + '」', '來自：' + (name || '（未知名稱）'), '內容：' + text.slice(0, 300),
+      signups.length ? '\n他報名過：\n' + signups.slice(-5).map(x => '・' + x).join('\n') : '\n（沒找到他的報名確認訊息，請到 LINE 聊天室確認）',
+      '\n已記在試算表「私訊關注」。如需取消報名，請到活動後台處理並在 LINE 回覆對方。'].join('\n'));
+  } catch (err) {
+    console.error('私訊關注失敗：' + err.message);
+  }
+}
+
+function lineDisplayName_(uid) {
   try {
     const res = lineApi_('profile/' + uid, null, 'get');
-    if (res.ok) displayName = JSON.parse(res.body).displayName || '';
+    return res.ok ? JSON.parse(res.body).displayName || '' : '';
   } catch (err) {
-    console.warn('取得好友名稱失敗：' + err.message);
+    return '';
   }
-  append_('好友紀錄', { at: now_(), userId: uid, displayName, event });
+}
+
+/** 通知里長：職務是里長／管理員的人；還沒設定時通知最早加入的工作人員（目前是里長本人）。 */
+function notifyOwner_(message) {
+  try {
+    const active = readAll_('成員').filter(isActiveMember_);
+    let ids = active.filter(m => ADMIN_ROLES.indexOf(m.role) >= 0).map(m => m.userId);
+    if (!ids.length && active.length) ids = [active.slice().sort((a, b) => String(a.joinedAt).localeCompare(String(b.joinedAt)))[0].userId];
+    if (ids.length) multicast_(ids, [text_(message.slice(0, 4900))]);
+  } catch (err) {
+    console.error('通知里長失敗：' + err.message);
+  }
+}
+
+/** 記錄加入／封鎖官方帳號的人（試算表「好友紀錄」）。 */
+function logFriend_(uid, event) {
+  append_('好友紀錄', { at: now_(), userId: uid, displayName: lineDisplayName_(uid), event });
 }
 
 /** 回傳是否成功；失敗代表 reply token 無效（可能是偽造的 webhook）。 */
