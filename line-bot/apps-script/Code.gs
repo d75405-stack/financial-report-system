@@ -884,8 +884,10 @@ function ccsUnpaid_(form, groupCol, paidCol, unpaidValue) {
       return null;
     }
     const out = { _total: 0 };
+    const si = head.indexOf('報名狀態'); // 活動網站可取消報名：已取消的不算未繳
     rows.forEach(r => {
       if (r[pi] !== unpaidValue) return;
+      if (si >= 0 && /^已取消/.test(r[si] || '')) return;
       const g = gi >= 0 ? r[gi] : '_';
       out[g] = (out[g] || 0) + 1;
       out._total++;
