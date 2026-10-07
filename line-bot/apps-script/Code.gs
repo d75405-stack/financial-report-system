@@ -22,6 +22,7 @@
  * 系統自動維護：
  *   PHOTO_FOLDER_ID            未設定 BACKUP_FOLDER_ID 時，回報照片存放的資料夾
  *   LAST_BACKUP_AT／LAST_BACKUP_ERROR／BACKUP_RUNNING  備份狀態
+ *   WEB_BACKUP_AT／WEB_BACKUP_ERROR／WEB_BACKUP_HASH／WEB_BACKUP_FILE_ID  網頁備份狀態
  *   RICH_MENU_ID               目前使用中的圖文選單
  *   SETUP_OWNER                執行設定的帳號，只有這個帳號能重新設定
  */
@@ -476,7 +477,7 @@ function handleAssistant_(ev, uid, member, text, inGroup) {
     if (!say('收到，全全開始備份到雲端硬碟，大約 1 分鐘，完成後通知你。')) return;
     try {
       const r = backupToDrive();
-      push_(uid, [text_(`✅ 備份完成\n${r.snapshot}\n另整理 ${r.csvFiles} 個分類檔\n${r.folderUrl}`)]);
+      push_(uid, [text_(`✅ 備份完成\n${r.snapshot}\n另整理 ${r.csvFiles} 個分類檔\n網頁：${r.web}\n${r.folderUrl}`)]);
     } catch (err) {
       push_(uid, [text_('❌ 備份失敗：' + err.message)]);
     }
@@ -570,6 +571,7 @@ function statusReportText_() {
   lines.push('', '【雲端備份】');
   if (!backup.configured) lines.push('⚠️ 尚未設定備份資料夾');
   else lines.push(backup.lastError ? '❌ ' + backup.lastError : '✅ 上次備份 ' + (backup.lastAt || '尚未備份'));
+  if (backup.configured) lines.push(backup.webError ? '❌ 網頁備份：' + backup.webError : '✅ 網頁最近存檔 ' + (backup.webAt || '尚未備份'));
   if (backup.warning) lines.push('⚠️ ' + backup.warning);
 
   const advice = [];
@@ -1403,6 +1405,7 @@ const BACKUP_LABELS = {
   topic: '諮詢類別', detail: '問題簡述', reminded: '提醒時間',
 };
 const BACKUP_STALE_MS = 10 * 60 * 1000;
+const WEB_SITE_URL = 'https://d75405-stack.github.io/financial-report-system/';
 
 /**
  * 每天凌晨由觸發器執行，也可從試算表選單或管理後台手動執行。
@@ -1410,6 +1413,7 @@ const BACKUP_STALE_MS = 10 * 60 * 1000;
  *   每日備份/年/年-月/里辦LINE資料_日期_時間.xlsx      整份試算表的歷史快照
  *   最新資料/工作人員、回報、推播公告、律師諮詢/…csv     依類別整理的最新資料（每次覆蓋）
  *   回報照片/類別/年-月/                                 回報時就直接存到這裡
+ *   網頁備份/網頁備份_日期_時間.zip                       網頁有變動時才存一份
  */
 function backupToDrive() {
   if (!prop_('BACKUP_FOLDER_ID')) {
@@ -1517,8 +1521,61 @@ function runBackup_() {
   write(['律師諮詢'], '全部預約.csv', bookingKeys, bookings);
   writeGroups(['律師諮詢', '依月份'], bookingKeys, groupBy_(bookings, b => String(b.date).slice(0, 7) || '時段已刪除', []));
 
-  console.log('備份完成：' + snapshot.getName() + '，CSV ' + count + ' 個');
-  return { at: now_(), snapshot: snapshot.getName(), csvFiles: count, folderUrl: root.getUrl() };
+  // 3. 上線中的網頁，有變動才存；抓不到網頁不影響上面的資料備份。
+  const web = backupWebsite_(root, stamp);
+
+  console.log('備份完成：' + snapshot.getName() + '，CSV ' + count + ' 個，網頁' + web);
+  return { at: now_(), snapshot: snapshot.getName(), csvFiles: count, web: web, folderUrl: root.getUrl() };
+}
+
+/**
+ * 從 GitHub Pages 抓回目前上線的網頁，內容和上次不同才在「網頁備份」存一份 zip。
+ * 檔案清單 site-files.json 是部署網頁時產生的（見 .github/workflows/deploy.yml）。
+ * 失敗只記在 WEB_BACKUP_ERROR，不丟出錯誤。回傳給人看的結果。
+ */
+function backupWebsite_(root, stamp) {
+  const props = PropertiesService.getScriptProperties();
+  try {
+    const list = UrlFetchApp.fetch(WEB_SITE_URL + 'site-files.json', { muteHttpExceptions: true });
+    if (list.getResponseCode() !== 200) throw new Error('讀不到網頁檔案清單（HTTP ' + list.getResponseCode() + '）');
+    const paths = JSON.parse(list.getContentText());
+    if (!Array.isArray(paths) || !paths.length) throw new Error('網頁檔案清單是空的');
+    const blobs = UrlFetchApp.fetchAll(paths.map(p => ({
+      url: WEB_SITE_URL + String(p).split('/').map(encodeURIComponent).join('/'),
+      muteHttpExceptions: true,
+    }))).map((res, i) => {
+      if (res.getResponseCode() !== 200) throw new Error(paths[i] + ' 下載失敗（HTTP ' + res.getResponseCode() + '）');
+      return res.getBlob().setName(String(paths[i]));
+    });
+
+    const digest = v => Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, v));
+    const fingerprint = digest(blobs.map(b => b.getName() + ' ' + digest(b.getBytes())).join('\n'));
+    let result;
+    // 上次的 zip 被刪掉或移到垃圾桶時，即使沒有變動也重新存一份。
+    if (fingerprint === props.getProperty('WEB_BACKUP_HASH') && fileExists_(props.getProperty('WEB_BACKUP_FILE_ID'))) {
+      result = '沒有變動（上次存檔 ' + props.getProperty('WEB_BACKUP_AT') + '）';
+    } else {
+      const file = folderPath_(root, ['網頁備份']).createFile(Utilities.zip(blobs, '網頁備份_' + stamp + '.zip'));
+      props.setProperties({ WEB_BACKUP_HASH: fingerprint, WEB_BACKUP_FILE_ID: file.getId(), WEB_BACKUP_AT: now_() });
+      result = '已存 ' + file.getName() + '（' + blobs.length + ' 個檔案）';
+    }
+    props.deleteProperty('WEB_BACKUP_ERROR');
+    return result;
+  } catch (err) {
+    const message = String(err.message || err);
+    props.setProperty('WEB_BACKUP_ERROR', now_() + ' ' + message);
+    console.warn('網頁備份失敗：' + message);
+    return '備份失敗：' + message;
+  }
+}
+
+function fileExists_(id) {
+  if (!id) return false;
+  try {
+    return !DriveApp.getFileById(id).isTrashed();
+  } catch (_) {
+    return false;
+  }
 }
 
 /** 依檔名分組；base 裡的組別即使沒有資料也會產生空檔。 */
@@ -1566,7 +1623,10 @@ function isPublicFolder_(folder) {
 }
 
 function backupStatus_() {
-  const status = { configured: !!prop_('BACKUP_FOLDER_ID'), lastAt: prop_('LAST_BACKUP_AT'), lastError: prop_('LAST_BACKUP_ERROR') };
+  const status = {
+    configured: !!prop_('BACKUP_FOLDER_ID'), lastAt: prop_('LAST_BACKUP_AT'), lastError: prop_('LAST_BACKUP_ERROR'),
+    webAt: prop_('WEB_BACKUP_AT'), webError: prop_('WEB_BACKUP_ERROR'),
+  };
   const running = Number(prop_('BACKUP_RUNNING') || 0);
   if (running && Date.now() - running >= BACKUP_STALE_MS && !status.lastError) {
     status.lastError = '上次備份沒有完成（可能超過執行時間上限）';
@@ -1631,7 +1691,7 @@ function safeName_(s) {
 
 // ───────────────────────── 試算表選單（一鍵設定） ─────────────────────────
 
-const RICH_MENU_IMAGE_URL = 'https://d75405-stack.github.io/financial-report-system/line-bot/web/richmenu.png';
+const RICH_MENU_IMAGE_URL = WEB_SITE_URL + 'line-bot/web/richmenu.png';
 
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('LINE 系統')
@@ -1839,7 +1899,7 @@ function backupFromMenu() {
   try {
     checkOwner_(false);
     const r = backupToDrive();
-    ui.alert(r ? `備份完成：${r.snapshot}，另整理 ${r.csvFiles} 個分類檔。\n${r.folderUrl}` : '尚未設定備份資料夾，請先執行「一鍵設定」。');
+    ui.alert(r ? `備份完成：${r.snapshot}，另整理 ${r.csvFiles} 個分類檔。\n網頁：${r.web}\n${r.folderUrl}` : '尚未設定備份資料夾，請先執行「一鍵設定」。');
   } catch (err) {
     ui.alert('備份失敗：' + err.message);
   }
@@ -1862,6 +1922,7 @@ function statusLines_() {
   else if (backup.folderName) lines.push('✅ 備份資料夾：' + backup.folderName + (backup.lastAt ? '（上次備份 ' + backup.lastAt + '）' : ''));
   if (backup.warning) lines.push('❌ ' + backup.warning);
   if (backup.lastError) lines.push('❌ 上次備份失敗：' + backup.lastError);
+  if (backup.webError) lines.push('❌ 網頁備份失敗：' + backup.webError);
   return lines;
 }
 

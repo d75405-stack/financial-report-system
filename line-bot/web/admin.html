@@ -265,11 +265,13 @@ function renderBackup(b) {
     <p>資料夾：${link}</p>
     <p>上次備份：${esc(b.lastAt || '尚未備份')}</p>
     ${b.lastError ? `<p class="alert">上次失敗：${esc(b.lastError)}</p>` : ''}
-    <p class="muted">每天凌晨 2 點自動備份：整份資料的 Excel 檔依年月存放，另依類別整理成工作人員、回報、推播公告、律師諮詢的 CSV。</p>
+    <p>網頁最近存檔：${esc(b.webAt || '尚未備份')}</p>
+    ${b.webError ? `<p class="alert">網頁備份失敗：${esc(b.webError)}</p>` : ''}
+    <p class="muted">每天凌晨 2 點自動備份：整份資料的 Excel 檔依年月存放，另依類別整理成工作人員、回報、推播公告、律師諮詢的 CSV；網頁有變動時，另在「網頁備份」存一份 zip。</p>
     <button id="btn-backup">立即備份</button>`;
   $('#btn-backup').addEventListener('click', e => withBusy(e.target, async () => {
     const r = await admin('backup');
-    toast(`備份完成：${r.snapshot}`);
+    toast(`備份完成：${r.snapshot}${r.web ? '；網頁' + r.web : ''}`);
     loadSummary();
   }));
 }

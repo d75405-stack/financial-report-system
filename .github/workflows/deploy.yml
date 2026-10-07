@@ -15,6 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v4
+      # 網頁檔案清單，LINE 系統每天備份網頁時依這份清單下載（略過 . 開頭的檔案與 backup/）
+      - name: List site files
+        run: >-
+          git ls-files -z | python3 -c 'import json, sys;
+          files = [f for f in sys.stdin.read().split("\0") if f and not f.startswith("backup/") and not any(p.startswith(".") for p in f.split("/"))];
+          json.dump(files, open("site-files.json", "w"), ensure_ascii=False)'
       - uses: actions/upload-pages-artifact@v3
         with:
           path: '.'
