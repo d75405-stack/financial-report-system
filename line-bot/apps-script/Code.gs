@@ -37,6 +37,7 @@ const SHEETS = {
   回報: ['id', 'createdAt', 'userId', 'name', 'category', 'content', 'location', 'photoUrl', 'status', 'handler', 'note', 'updatedAt'],
   公告: ['id', 'createdAt', 'target', 'title', 'content', 'recipients'],
   律師資料: ['lawyerId', 'name', 'title', 'firm', 'specialty', 'experience', 'bio', 'photo', 'order', 'status', 'version', 'updatedAt', 'schedule'],
+  好友紀錄: ['at', 'userId', 'displayName', 'event'],
   律師時段: ['slotId', 'date', 'start', 'end', 'lawyer', 'capacity', 'note'],
   諮詢預約: ['id', 'createdAt', 'slotId', 'userId', 'name', 'phone', 'topic', 'detail', 'status', 'reminded'],
 };
@@ -157,7 +158,13 @@ function handleEvent_(ev) {
   }
 
   if (ev.type === 'follow') {
-    reply_(ev.replyToken, [text_('感謝加入里辦公處官方帳號！\n\n' + HELP_TEXT)]);
+    // 回覆成功才記錄（reply token 只有 LINE 平台會發，可擋掉偽造的事件）
+    if (reply_(ev.replyToken, [text_('感謝加入里辦公處官方帳號！\n\n' + HELP_TEXT)])) logFriend_(uid, '加入');
+    return;
+  }
+  if (ev.type === 'unfollow') {
+    // 沒有 reply token 可驗證，只記錄曾經加入過的人
+    if (readAll_('好友紀錄').some(r => r.userId === uid)) logFriend_(uid, '封鎖');
     return;
   }
   if (ev.type !== 'message' || ev.message.type !== 'text') return;
@@ -1356,6 +1363,7 @@ const BACKUP_LABELS = {
   lawyerId: '律師編號', firm: '事務所', specialty: '專長', experience: '經歷', bio: '簡介', photo: '照片網址',
   order: '排序', version: '資料版本',
   slotId: '時段編號', date: '日期', start: '開始', end: '結束', lawyer: '律師', capacity: '名額',
+  at: '時間', displayName: 'LINE 名稱', event: '動作',
   topic: '諮詢類別', detail: '問題簡述', reminded: '提醒時間',
 };
 const BACKUP_STALE_MS = 10 * 60 * 1000;
@@ -1457,6 +1465,7 @@ function runBackup_() {
   writeGroups(['回報', '依狀態'], SHEETS.回報, groupBy_(reports, r => r.status, REPORT_STATUSES));
 
   write(['推播公告'], '推播公告.csv', SHEETS.公告, readAll_('公告').reverse());
+  write(['好友'], '好友紀錄.csv', SHEETS.好友紀錄, readAll_('好友紀錄').reverse());
 
   const slots = readAll_('律師時段');
   const slotIndex = indexBy_(slots, 'slotId');
@@ -1886,6 +1895,18 @@ function lineApi_(path, payload, method) {
   const code = res.getResponseCode();
   if (code >= 300) console.error('LINE API ' + path + ' ' + code + ' ' + res.getContentText());
   return { ok: code < 300, code, body: res.getContentText() };
+}
+
+/** 記錄加入／封鎖官方帳號的人（試算表「好友紀錄」）。 */
+function logFriend_(uid, event) {
+  let displayName = '';
+  try {
+    const res = lineApi_('profile/' + uid, null, 'get');
+    if (res.ok) displayName = JSON.parse(res.body).displayName || '';
+  } catch (err) {
+    console.warn('取得好友名稱失敗：' + err.message);
+  }
+  append_('好友紀錄', { at: now_(), userId: uid, displayName, event });
 }
 
 /** 回傳是否成功；失敗代表 reply token 無效（可能是偽造的 webhook）。 */
