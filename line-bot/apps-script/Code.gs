@@ -265,14 +265,9 @@ function handleEvent_(ev) {
       }
       return;
     case '我的預約':
-      if (!lawyerOpen_()) {
-        reply_(ev.replyToken, [text_(LAWYER_CLOSED_TEXT)]);
-        return;
-      }
-      reply_(ev.replyToken, [
-        text_(myBookingsText_(uid)),
-        linkButton_('要預約、取消或改時段，請開啟預約頁面。', '開啟預約頁面', liffUrl_('booking')),
-      ]);
+    case '預約查詢':
+    case '查詢預約':
+      reply_(ev.replyToken, myReservationsMessages_(uid));
       return;
     case '公告':
     case '最新公告':
@@ -509,12 +504,16 @@ function findMySignups_(uid, query) {
   return { rows: Array.from(found.values()) };
 }
 
-function signupLookupText_(uid, query) {
-  // 名單超過 10 分鐘沒更新就先同步一次，繳費狀態才是最新的
+/** 名單超過 10 分鐘沒更新就先同步一次，繳費狀態才是最新的。 */
+function ensureFreshSignups_() {
   const last = parseTime_(prop_('SIGNUP_SYNC_AT'));
   if (!last || Date.now() - last.getTime() > 10 * 60 * 1000) {
     try { syncSignups(); } catch (err) { console.warn('查詢前同步失敗，使用上次的名單：' + err.message); }
   }
+}
+
+function signupLookupText_(uid, query) {
+  ensureFreshSignups_();
   const r = findMySignups_(uid, query);
   const ask = '請輸入「查詢報名 姓名 電話」（報名時填的姓名與電話），例如：\n查詢報名 王小明 0912345678';
   if (r.needInput) return '格式好像不太對 🙏\n' + ask;
@@ -522,7 +521,11 @@ function signupLookupText_(uid, query) {
     return (query ? '查不到符合的報名資料。請確認姓名與電話是否和報名時填寫的一樣。\n\n' : '目前查不到您的報名資料。\n\n') + ask +
       '\n\n還沒報名的話：https://ccs2024taiwan.pages.dev';
   }
-  const rows = r.rows.slice().sort((a, b) => String(a.活動 + a.場次梯次 + a.編號).localeCompare(String(b.活動 + b.場次梯次 + b.編號)));
+  return signupRowsText_(r.rows);
+}
+
+function signupRowsText_(list) {
+  const rows = list.slice().sort((a, b) => String(a.活動 + a.場次梯次 + a.編號).localeCompare(String(b.活動 + b.場次梯次 + b.編號)));
   const lines = ['📋 您的報名資料'];
   const unpaid = new Set();
   rows.forEach(x => {
@@ -621,6 +624,43 @@ function lawyerInfoText_() {
 }
 
 const LAWYER_CLOSED_TEXT = '⚖️ 免費律師諮詢服務尚未開放，敬請期待！開放時會在官方 LINE 公告通知大家。';
+
+/** 本人還沒到的律師諮詢預約（日期、時段、律師、地點、類別）。 */
+function myLawyerBookingLines_(uid) {
+  const slots = indexBy_(readAll_('律師時段'), 'slotId');
+  const maps = {};
+  readAll_('律師資料').forEach(l => { if (/^https:\/\//.test(l.placeUrl || '')) maps[l.name] = l.placeUrl; });
+  const today = ymdAfter_(0);
+  return readAll_('諮詢預約')
+    .filter(b => b.userId === uid && b.status === '已預約' && slots[b.slotId] && slots[b.slotId].date >= today)
+    .sort((a, b) => (slots[a.slotId].date + slots[a.slotId].start).localeCompare(slots[b.slotId].date + slots[b.slotId].start))
+    .map(b => {
+      const s = slots[b.slotId];
+      return [`🗓 ${s.date.slice(5).replace('-', '/')}（${weekdayOf_(s.date)}）${s.start}–${s.end}`,
+        `　${s.lawyer ? s.lawyer + ' 律師｜' : ''}${b.topic}`]
+        .concat(s.note ? [`　📍 ${s.note}` + (maps[s.lawyer] ? '\n　' + maps[s.lawyer] : '')] : []).join('\n');
+    });
+}
+
+/** 「我的預約」：律師諮詢預約＋活動報名，全部列給本人（只在私訊）。 */
+function myReservationsMessages_(uid) {
+  const open = lawyerOpen_();
+  const legal = myLawyerBookingLines_(uid);
+  ensureFreshSignups_();
+  const signups = findMySignups_(uid).rows || [];
+  const messages = [];
+  if (legal.length) messages.push(text_('⚖️ 您的法律諮詢預約\n\n' + legal.join('\n\n') + '\n\n前一天晚上會提醒您' + (open ? '；要取消或改時段請點下方按鈕。' : '。')));
+  if (signups.length) messages.push(text_(signupRowsText_(signups)));
+  if (!messages.length) {
+    messages.push(text_(['目前查不到您的預約。', '',
+      '⚖️ 法律諮詢：' + (open ? '輸入「律師諮詢」看律師與時段並預約' : '尚未開放，敬請期待！'),
+      '📋 活動報名：輸入「查詢報名 姓名 電話」（報名時填的姓名與電話）查詢'].join('\n')));
+  } else if (!signups.length) {
+    messages[0].text += '\n\n📋 查詢活動報名：輸入「查詢報名」';
+  }
+  if (open) messages.push(linkButton_(legal.length ? '要預約、取消或改時段，請開啟預約頁面。' : '免費法律諮詢，選時段預約 👇', '開啟預約頁面', liffUrl_('booking')));
+  return messages;
+}
 
 function myBookingsText_(uid) {
   const slots = indexBy_(readAll_('律師時段'), 'slotId');
