@@ -325,7 +325,7 @@ const LAWYER_SEED = [
     specialty: '一般民事、刑事案件、婚姻、親屬、繼承糾紛',
     experience: '法務部矯正署臺中監獄法治教育講師\n法務部矯正署臺中戒治所法治教育講師',
     bio: '', photo: 'L3.jpg', order: 1, status: '上架', schedule: '每週二 18:00–20:00',
-    place: '', placeUrl: 'https://maps.app.goo.gl/xTdXo1E4dU4dAhj69', version: 6 },
+    place: "几乎食間 Jeff's kitchen", placeUrl: 'https://maps.app.goo.gl/xTdXo1E4dU4dAhj69', version: 7 },
 ];
 
 function lawyerSeedVersion_() {
