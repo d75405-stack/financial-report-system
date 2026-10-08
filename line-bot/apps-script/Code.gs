@@ -1084,7 +1084,7 @@ const REPORT_GREETINGS = [
  */
 function ensureReportTrigger_() {
   const cache = CacheService.getScriptCache();
-  if (cache.get('triggers_ok_v2')) return;
+  if (cache.get('triggers_ok_v3')) return;
   try {
     withLock_(() => {
       const have = ScriptApp.getProjectTriggers().map(t => t.getHandlerFunction());
@@ -1096,8 +1096,9 @@ function ensureReportTrigger_() {
         ScriptApp.newTrigger('syncSignups').timeBased().everyHours(1).create();
         console.log('已自動建立每小時活動報名名單同步排程');
       }
+      ensureBroadcastTrigger_();
     });
-    cache.put('triggers_ok_v2', '1', 21600);
+    cache.put('triggers_ok_v3', '1', 21600);
   } catch (err) {
     console.error('建立排程失敗：' + err.message);
   }
@@ -1179,6 +1180,7 @@ const SIGNUP_SYNC_FORMS = [
 ];
 
 function syncSignups() {
+  checkBroadcasts_();  // 每小時順便檢查預約推播（一次性排程的備援）
   const props = PropertiesService.getScriptProperties();
   try {
     const at = now_();
@@ -1213,6 +1215,88 @@ function syncSignups() {
     console.error('活動報名名單同步失敗：' + err.message);
     throw err;
   }
+}
+
+// ───────────────────────── 預約推播 ─────────────────────────
+
+/**
+ * 里長指定時間發給所有好友的推播。到時間由一次性排程發送，每小時同步時也會檢查（備援）。
+ * 發過就記在指令碼屬性 BC_<id>，不會重發；超過 3 小時還沒發出就不發，改通知里長。
+ */
+const SCHEDULED_BROADCASTS = [
+  { id: 'lawyer-tue-open', at: '2026-10-09T12:00:00+08:00', title: '免費律師諮詢｜週二開放預約',
+    text: [
+      '里長參選人莊晴全 × 宣品法律事務所，提供里民免費法律諮詢 ⚖️',
+      '',
+      '🧑‍⚖️ 陳沂裴 律師',
+      '專長：一般民事、刑事案件、婚姻、親屬、繼承糾紛',
+      '🗓 每週二 晚上 6:00–8:00（10/20 起）',
+      "📍 几乎食間 Jeff's kitchen",
+      'https://maps.app.goo.gl/xTdXo1E4dU4dAhj69',
+      '',
+      '⏱ 每次 30 分鐘，每晚 4 個名額',
+      '📌 需提前 7 天預約，不開放當天預約（10/20 場次最晚 10/13 預約）',
+      '',
+      '👉 點下方「立即預約」，或在這裡輸入「律師諮詢」',
+      '週三李佩珊律師、週四郭乃瑩律師的地點確認中，敬請期待！',
+    ].join('\n'),
+    button: { text: '免費律師諮詢，選時段預約 👇', label: '立即預約', page: 'booking' } },
+];
+const BROADCAST_WINDOW_MS = 3 * 3600e3;
+
+/** 替最近一則還沒發的推播排一次性排程（已經有就不重排）。 */
+function ensureBroadcastTrigger_() {
+  const now = Date.now();
+  const next = SCHEDULED_BROADCASTS.filter(b => !prop_('BC_' + b.id) && new Date(b.at).getTime() > now)
+    .sort((a, b) => a.at.localeCompare(b.at))[0];
+  const have = ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'runScheduledBroadcasts');
+  if (next && !have) ScriptApp.newTrigger('runScheduledBroadcasts').timeBased().at(new Date(next.at)).create();
+}
+
+function checkBroadcasts_() {
+  try {
+    runScheduledBroadcasts();
+    ensureBroadcastTrigger_();
+  } catch (err) {
+    console.error('預約推播檢查失敗：' + err.message);
+  }
+}
+
+/** 觸發器進入點：發送已到時間的預約推播，並通知里長結果。 */
+function runScheduledBroadcasts() {
+  const now = Date.now();
+  const props = PropertiesService.getScriptProperties();
+  let handled = 0;
+  SCHEDULED_BROADCASTS.forEach(b => {
+    const at = new Date(b.at).getTime();
+    const key = 'BC_' + b.id;
+    if (now < at || prop_(key)) return;
+    // 先佔位再發，避免排程和每小時檢查同時發兩次
+    if (!withLock_(() => { if (prop_(key)) return false; props.setProperty(key, 'sending ' + now_()); return true; })) return;
+    handled++;
+    const when = Utilities.formatDate(new Date(at), TZ, 'M/d HH:mm');
+    if (now > at + BROADCAST_WINDOW_MS) {
+      props.setProperty(key, 'skipped ' + now_());
+      notifyOwner_(`⚠️ 預約推播「${b.title}」原訂 ${when} 發送，但當時系統沒有執行，已超過 3 小時，所以沒有發出。需要的話請 Claude 重新排時間。`);
+      return;
+    }
+    try {
+      const messages = [text_(`【${b.title}】\n${b.text}`)];
+      if (b.button && prop_('LIFF_ID')) messages.push(linkButton_(b.button.text, b.button.label, liffUrl_(b.button.page)));
+      broadcastAll_(messages);
+      props.setProperty(key, 'sent ' + now_());
+      append_('公告', { id: newId_('A'), createdAt: now_(), target: 'all', title: b.title, content: b.text, recipients: '所有好友' });
+      const q = messageQuota_();
+      notifyOwner_(`✅ 已推播「${b.title}」給所有好友（原訂 ${when}）` + (q && q.limit ? `\n本月訊息已用 ${q.used}/${q.limit} 則` : ''));
+    } catch (err) {
+      props.setProperty(key, 'failed ' + now_() + ' ' + String(err.message).slice(0, 200));
+      notifyOwner_(`❌ 預約推播「${b.title}」發送失敗：${err.message}`);
+    }
+  });
+  if (!handled) return;
+  // 一次性排程已經用掉，清掉後替下一則（如果有）重排
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'runScheduledBroadcasts').forEach(t => ScriptApp.deleteTrigger(t));
+  ensureBroadcastTrigger_();
 }
 
 /** 試算表選單：立即同步一次。 */
