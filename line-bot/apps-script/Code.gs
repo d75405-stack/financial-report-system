@@ -40,6 +40,7 @@ const SHEETS = {
   好友紀錄: ['at', 'userId', 'displayName', 'event'],
   私訊關注: ['at', 'userId', 'displayName', 'keyword', 'text', 'signups', 'handled'],
   報名確認紀錄: ['at', 'userId', 'displayName', 'text'],
+  群組紀錄: ['groupId', 'groupName', 'type', 'joinedAt', 'status'],
   活動報名名單: ['活動', '場次梯次', '編號', '姓名', '同行者', '電話', '繳費', '狀態', '報名時間', '同步時間'],
   律師時段: ['slotId', 'date', 'start', 'end', 'lawyer', 'capacity', 'note'],
   諮詢預約: ['id', 'createdAt', 'slotId', 'userId', 'name', 'phone', 'topic', 'detail', 'status', 'reminded'],
@@ -150,10 +151,16 @@ const HELP_TEXT = [
 ].join('\n');
 
 function handleEvent_(ev) {
+  // 官方帳號被拉進／移出群組：記到「群組紀錄」（之後要推播到特定群組才知道群組 ID）
+  if (ev.source && ev.source.type !== 'user' && (ev.type === 'join' || ev.type === 'leave')) {
+    logGroup_(ev.source, ev.type === 'join' ? '在群組中' : '已離開');
+    return;
+  }
   const uid = ev.source && ev.source.userId;
   if (!uid) return;
   // 群組與多人聊天室：只回應「全全」開頭的訊息，而且只提供不含個資的功能
   if (ev.source.type !== 'user') {
+    logGroup_(ev.source, '');
     if (ev.type === 'message' && ev.message.type === 'text' && ev.message.text.trim().indexOf(ASSISTANT_NAME) === 0) {
       handleAssistant_(ev, uid, findMember_(uid), ev.message.text.trim(), true);
     }
@@ -466,7 +473,12 @@ function handleAssistant_(ev, uid, member, text, inGroup) {
   // 短指令（例如「全全 備份」）走固定功能；較長的句子當成一般問題交給 AI。
   const isCommand = q.length <= 6 || !prop_('ANTHROPIC_API_KEY');
   if (!isCommand) return say(aiAnswer_(q, uid, member ? member.name : ''));
-  if (inGroup && /備份|待處理|未處理|處理中|預約|律師|諮詢|狀況|狀態|分析|報告|統計|總覽|我的回報|回報進度/.test(q)) {
+  // 律師介紹與時段是公開資訊，群組裡也可以直接看（例如法律諮詢群組）
+  if (inGroup && /律師|諮詢|法律/.test(q)) {
+    if (!reply_(ev.replyToken, lawyerIntroMessages_())) say(lawyerOpen_() ? '請點官方帳號選單「律師諮詢」預約時段。' : lawyerClosedInfo_());
+    return;
+  }
+  if (inGroup && /備份|待處理|未處理|處理中|預約|狀況|狀態|分析|報告|統計|總覽|我的回報|回報進度/.test(q)) {
     return say('這個功能有個人或內部資料，請私訊官方帳號，輸入「全全 ' + q + '」使用 🙏');
   }
 
@@ -1472,6 +1484,7 @@ const BACKUP_LABELS = {
   lawyerId: '律師編號', firm: '事務所', specialty: '專長', experience: '經歷', bio: '簡介', photo: '照片網址',
   order: '排序', version: '資料版本',
   slotId: '時段編號', date: '日期', start: '開始', end: '結束', lawyer: '律師', capacity: '名額',
+  groupId: '群組 ID', groupName: '群組名稱', type: '類型',
   at: '時間', displayName: 'LINE 名稱', event: '動作', keyword: '關鍵字', text: '訊息', signups: '報名紀錄', handled: '已處理',
   topic: '諮詢類別', detail: '問題簡述', reminded: '提醒時間',
 };
@@ -1575,6 +1588,7 @@ function runBackup_() {
 
   write(['推播公告'], '推播公告.csv', SHEETS.公告, readAll_('公告').reverse());
   write(['好友'], '好友紀錄.csv', SHEETS.好友紀錄, readAll_('好友紀錄').reverse());
+  write(['好友'], '群組紀錄.csv', SHEETS.群組紀錄, readAll_('群組紀錄'));
   write(['私訊'], '私訊關注.csv', SHEETS.私訊關注, readAll_('私訊關注').reverse());
   write(['私訊'], '報名確認紀錄.csv', SHEETS.報名確認紀錄, readAll_('報名確認紀錄').reverse());
 
@@ -2062,6 +2076,32 @@ function notifyOwner_(message) {
     if (ids.length) multicast_(ids, [text_(message.slice(0, 4900))]);
   } catch (err) {
     console.error('通知里長失敗：' + err.message);
+  }
+}
+
+/**
+ * 群組紀錄：官方帳號所在的群組（ID、名稱）。被拉進群組、或群組裡有人傳「全全…」時記錄，
+ * 同一個群組只記一次（有快取，不會每則訊息都讀試算表）。
+ */
+function logGroup_(source, status) {
+  const gid = source.groupId || source.roomId;
+  if (!gid) return;
+  const cache = CacheService.getScriptCache();
+  if (!status && cache.get('group_' + gid)) return;
+  try {
+    const rows = readAll_('群組紀錄');
+    const row = rows.find(r => r.groupId === gid);
+    let name = row ? row.groupName : '';
+    if (source.groupId && (!name || status)) {
+      const res = lineApi_('group/' + gid + '/summary', null, 'get');
+      if (res.ok) name = JSON.parse(res.body).groupName || name;
+    }
+    const data = { groupId: gid, groupName: name, type: source.groupId ? '群組' : '多人聊天', status: status || (row && row.status) || '在群組中' };
+    if (!row) append_('群組紀錄', Object.assign({ joinedAt: now_() }, data));
+    else if (status || name !== row.groupName) update_('群組紀錄', row._row, data);
+    cache.put('group_' + gid, '1', 21600);
+  } catch (err) {
+    console.error('記錄群組失敗：' + err.message);
   }
 }
 
