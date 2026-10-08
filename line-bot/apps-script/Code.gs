@@ -41,6 +41,7 @@ const SHEETS = {
   私訊關注: ['at', 'userId', 'displayName', 'keyword', 'text', 'signups', 'handled'],
   報名確認紀錄: ['at', 'userId', 'displayName', 'text'],
   群組紀錄: ['groupId', 'groupName', 'type', 'joinedAt', 'status'],
+  群組成員: ['groupId', 'groupName', 'userId', 'displayName', 'status', 'firstSeen', 'lastSeen', 'note'],
   活動報名名單: ['活動', '場次梯次', '編號', '姓名', '同行者', '電話', '繳費', '狀態', '報名時間', '同步時間'],
   律師時段: ['slotId', 'date', 'start', 'end', 'lawyer', 'capacity', 'note'],
   諮詢預約: ['id', 'createdAt', 'slotId', 'userId', 'name', 'phone', 'topic', 'detail', 'status', 'reminded'],
@@ -154,6 +155,13 @@ function handleEvent_(ev) {
   // 官方帳號被拉進／移出群組：記到「群組紀錄」（之後要推播到特定群組才知道群組 ID）
   if (ev.source && ev.source.type !== 'user' && (ev.type === 'join' || ev.type === 'leave')) {
     logGroup_(ev.source, ev.type === 'join' ? '在群組中' : '已離開');
+    if (ev.type === 'join') syncGroupMembers_(ev.source.groupId);
+    return;
+  }
+  // 有人被加進／離開群組：記到「群組成員」
+  if (ev.source && ev.source.type !== 'user' && (ev.type === 'memberJoined' || ev.type === 'memberLeft')) {
+    const list = ((ev.type === 'memberJoined' ? ev.joined : ev.left) || {}).members || [];
+    list.forEach(m => m.userId && logGroupMember_(ev.source, m.userId, ev.type === 'memberJoined' ? '在群組中' : '已離開'));
     return;
   }
   const uid = ev.source && ev.source.userId;
@@ -161,6 +169,7 @@ function handleEvent_(ev) {
   // 群組與多人聊天室：只回應「全全」開頭的訊息，而且只提供不含個資的功能
   if (ev.source.type !== 'user') {
     logGroup_(ev.source, '');
+    logGroupMember_(ev.source, uid, '');
     if (ev.type === 'message' && ev.message.type === 'text' && ev.message.text.trim().indexOf(ASSISTANT_NAME) === 0) {
       handleAssistant_(ev, uid, findMember_(uid), ev.message.text.trim(), true);
     }
@@ -990,6 +999,7 @@ function syncSignups() {
     });
     props.setProperty('SIGNUP_SYNC_AT', at);
     props.deleteProperty('SIGNUP_SYNC_ERROR');
+    syncGroupMembers_();
     return out.length;
   } catch (err) {
     props.setProperty('SIGNUP_SYNC_ERROR', now_() + ' ' + err.message);
@@ -1573,7 +1583,7 @@ const BACKUP_LABELS = {
   lawyerId: '律師編號', firm: '事務所', specialty: '專長', experience: '經歷', bio: '簡介', photo: '照片網址',
   order: '排序', version: '資料版本',
   slotId: '時段編號', date: '日期', start: '開始', end: '結束', lawyer: '律師', capacity: '名額',
-  groupId: '群組 ID', groupName: '群組名稱', type: '類型',
+  groupId: '群組 ID', groupName: '群組名稱', type: '類型', firstSeen: '第一次記錄', lastSeen: '最後出現',
   at: '時間', displayName: 'LINE 名稱', event: '動作', keyword: '關鍵字', text: '訊息', signups: '報名紀錄', handled: '已處理',
   topic: '諮詢類別', detail: '問題簡述', reminded: '提醒時間',
 };
@@ -1678,6 +1688,7 @@ function runBackup_() {
   write(['推播公告'], '推播公告.csv', SHEETS.公告, readAll_('公告').reverse());
   write(['好友'], '好友紀錄.csv', SHEETS.好友紀錄, readAll_('好友紀錄').reverse());
   write(['好友'], '群組紀錄.csv', SHEETS.群組紀錄, readAll_('群組紀錄'));
+  write(['好友'], '群組成員.csv', SHEETS.群組成員, readAll_('群組成員'));
   write(['私訊'], '私訊關注.csv', SHEETS.私訊關注, readAll_('私訊關注').reverse());
   write(['私訊'], '報名確認紀錄.csv', SHEETS.報名確認紀錄, readAll_('報名確認紀錄').reverse());
 
@@ -2192,6 +2203,67 @@ function logGroup_(source, status) {
   } catch (err) {
     console.error('記錄群組失敗：' + err.message);
   }
+}
+
+/**
+ * 群組成員：只記 LINE 名稱與 ID，不記訊息內容。
+ * 來源：有人在群組說話、被加進群組，或每小時用 LINE 的成員名單 API 同步（官方帳號需通過認證才能用）。
+ */
+function logGroupMember_(source, uid, status) {
+  const gid = source.groupId || source.roomId;
+  if (!gid || !uid) return;
+  const cache = CacheService.getScriptCache();
+  const key = 'gm_' + gid.slice(-8) + uid.slice(-12);
+  if (!status && cache.get(key)) return;
+  try {
+    const rows = readAll_('群組成員');
+    const row = rows.find(r => r.groupId === gid && r.userId === uid);
+    const group = readAll_('群組紀錄').find(r => r.groupId === gid) || {};
+    let name = row ? row.displayName : '';
+    if (!name || status) {
+      const path = source.groupId ? 'group/' + gid + '/member/' + uid : 'room/' + gid + '/member/' + uid;
+      const res = lineApi_(path, null, 'get');
+      if (res.ok) name = JSON.parse(res.body).displayName || name;
+    }
+    const data = { groupId: gid, groupName: group.groupName || '', userId: uid, displayName: name,
+      status: status || (row && row.status === '已離開' ? '在群組中' : (row && row.status) || '在群組中'), lastSeen: now_() };
+    if (!row) append_('群組成員', Object.assign({ firstSeen: now_(), note: '' }, data));
+    else update_('群組成員', row._row, data);
+    cache.put(key, '1', 21600);
+  } catch (err) {
+    console.error('記錄群組成員失敗：' + err.message);
+  }
+}
+
+/** 用 LINE 成員名單 API 補齊群組成員（未認證的官方帳號會被拒絕，就略過，靠成員發言來記錄）。 */
+function syncGroupMembers_(onlyGroupId) {
+  const cache = CacheService.getScriptCache();
+  if (cache.get('member_ids_forbidden')) return 0;
+  let added = 0;
+  try {
+    const groups = readAll_('群組紀錄').filter(g => g.type === '群組' && g.status !== '已離開' && (!onlyGroupId || g.groupId === onlyGroupId));
+    for (const g of groups) {
+      const known = new Set(readAll_('群組成員').filter(r => r.groupId === g.groupId).map(r => r.userId));
+      let start = '';
+      for (let page = 0; page < 10; page++) {
+        const res = lineApi_('group/' + g.groupId + '/members/ids' + (start ? '?start=' + encodeURIComponent(start) : ''), null, 'get');
+        if (res.code === 403) { cache.put('member_ids_forbidden', '1', 86400); return added; }
+        if (!res.ok) break;
+        const body = JSON.parse(res.body);
+        (body.memberIds || []).forEach(uid => {
+          if (known.has(uid)) return;
+          logGroupMember_({ groupId: g.groupId }, uid, '在群組中');
+          known.add(uid);
+          added++;
+        });
+        if (!body.next) break;
+        start = body.next;
+      }
+    }
+  } catch (err) {
+    console.error('同步群組成員失敗：' + err.message);
+  }
+  return added;
 }
 
 /** 記錄加入／封鎖官方帳號的人（試算表「好友紀錄」）。 */
