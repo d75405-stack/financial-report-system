@@ -31,3 +31,6 @@ jobs:
         run: |
           clasp push --force
           clasp deploy --deploymentId "$DEPLOYMENT_ID" --description "GitHub ${GITHUB_SHA::7}"
+      - name: Send scheduled messages that are due
+        # 打一次網頁應用程式（doGet），讓已到時間的預約推播／個別通知馬上發出；失敗也不影響部署
+        run: curl -sSL --max-time 90 -o /dev/null -w "doGet HTTP %{http_code}\n" "https://script.google.com/macros/s/${DEPLOYMENT_ID}/exec" || true

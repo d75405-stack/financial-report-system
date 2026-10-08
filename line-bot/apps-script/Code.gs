@@ -109,6 +109,8 @@ function ensureDailyTrigger_(handler, hour) {
 // ───────────────────────── 進入點 ─────────────────────────
 
 function doGet() {
+  // 部署完成時 GitHub Actions 會打一次這個網址，讓已到時間的預約推播馬上發出
+  checkBroadcasts_();
   return json_({ ok: true, service: 'line-bot' });
 }
 
@@ -1220,8 +1222,10 @@ function syncSignups() {
 // ───────────────────────── 預約推播 ─────────────────────────
 
 /**
- * 里長指定時間發給所有好友的推播。到時間由一次性排程發送，每小時同步時也會檢查（備援）。
+ * 里長指定時間發的推播。到時間由一次性排程發送，每小時同步時、每次部署完成時也會檢查（備援）。
  * 發過就記在指令碼屬性 BC_<id>，不會重發；超過 3 小時還沒發出就不發，改通知里長。
+ * 一般是發給所有好友；有 to 的是個別通知：用「報名確認紀錄」的時間＋活動找到那位報名者
+ * （程式裡不放姓名或 LINE ID），內容依「活動報名名單」產生，靜音發送、不記到公告。
  */
 const SCHEDULED_BROADCASTS = [
   { id: 'lawyer-tue-open', at: '2026-10-09T12:00:00+08:00', title: '免費律師諮詢｜週二開放預約',
@@ -1242,7 +1246,32 @@ const SCHEDULED_BROADCASTS = [
     ].join('\n'),
     button: { text: '免費律師諮詢，選時段預約 👇', label: '立即預約', page: 'booking' } },
 ];
+SCHEDULED_BROADCASTS.push(
+  { id: 'cosplay-ok-1008-2020', at: '2026-10-09T00:50:00+08:00', title: '變裝大賽報名成功通知', silent: true,
+    to: { confirmAt: '2026-10-08 20:20', activity: '🎭 變裝大賽' } });
 const BROADCAST_WINDOW_MS = 3 * 3600e3;
+
+const SIGNUP_EVENT_INFO = {
+  '🎭 變裝大賽': '「百鬼嘉年華變裝大賽」\n📅 10/18（日）18:00 裕國豐展（太順路60號）\n⏰ 17:30–17:50 報到，完成報到保證金即退還',
+};
+
+/** 用「報名確認紀錄」的時間（到分鐘）＋活動找到報名者的 LINE ID。 */
+function confirmUserId_(confirmAt, activity) {
+  const label = Object.keys(SIGNUP_CONFIRM_LABEL).find(k => SIGNUP_CONFIRM_LABEL[k] === activity) || activity;
+  const hit = readAll_('報名確認紀錄').filter(c => String(c.at).slice(0, 16) === confirmAt && String(c.text).indexOf(label) >= 0);
+  return hit.length === 1 ? hit[0].userId : '';
+}
+
+/** 報名成功通知內容；找不到有效且已繳費的報名就回傳空字串（不發）。 */
+function signupOkText_(uid, activity) {
+  const rows = (findMySignups_(uid).rows || []).filter(r => r.活動 === activity && !/^已取消/.test(r.狀態));
+  if (!rows.length || !rows.every(r => /已繳/.test(r.繳費))) return '';
+  const lines = [`${activity.split(' ')[0]} ${rows[0].姓名} 您好！`, `您報名的${SIGNUP_EVENT_INFO[activity] ? SIGNUP_EVENT_INFO[activity].split('\n')[0] : activity}已報名成功 ✅`, ''];
+  rows.forEach((r, i) => lines.push(`・${rows.length > 1 ? '第 ' + (i + 1) + ' 組' : '報名'}${r.編號 ? '（' + r.編號 + ' 號）' : ''}${r.同行者 ? '：' + String(r.同行者).slice(0, 60) : ''}｜保證金已收到`));
+  lines.push('', ...(SIGNUP_EVENT_INFO[activity] || '活動資訊：https://ccs2024taiwan.pages.dev').split('\n').slice(SIGNUP_EVENT_INFO[activity] ? 1 : 0),
+    '📋 隨時查詢：在這裡輸入「查詢報名」', '', '里長參選人莊晴全 敬上');
+  return lines.join('\n');
+}
 
 /** 替最近一則還沒發的推播排一次性排程（已經有就不重排）。 */
 function ensureBroadcastTrigger_() {
@@ -1281,6 +1310,20 @@ function runScheduledBroadcasts() {
       return;
     }
     try {
+      if (b.to) {
+        const uid = confirmUserId_(b.to.confirmAt, b.to.activity);
+        const body = uid ? signupOkText_(uid, b.to.activity) : '';
+        if (!body) {
+          props.setProperty(key, 'skipped ' + now_() + ' 找不到報名者或尚未繳費');
+          notifyOwner_(`⚠️「${b.title}」沒有發出：找不到這位報名者，或還有報名尚未繳費。`);
+          return;
+        }
+        const res = lineApi_('message/push', { to: uid, messages: [text_(body)], notificationDisabled: !!b.silent });
+        if (!res.ok) throw new Error(res.body);
+        props.setProperty(key, 'sent ' + now_());
+        notifyOwner_(`✅ 已發送「${b.title}」給 ${lineDisplayName_(uid) || '報名者'}：\n\n${body}`);
+        return;
+      }
       const messages = [text_(`【${b.title}】\n${b.text}`)];
       if (b.button && prop_('LIFF_ID')) messages.push(linkButton_(b.button.text, b.button.label, liffUrl_(b.button.page)));
       broadcastAll_(messages);
