@@ -200,6 +200,13 @@ function handleEvent_(ev) {
     return;
   }
 
+  // 報名者查詢自己的報名與繳費狀態（只會看到自己的資料）
+  const lookup = t.match(/^(查詢報名|報名查詢|我的報名|查報名)\s*([\s\S]*)$/);
+  if (lookup) {
+    reply_(ev.replyToken, [text_(signupLookupText_(uid, lookup[2]))]);
+    return;
+  }
+
   // 個人私訊不提供全全功能，只回覆罐頭訊息（全全只在群組服務）
   if (t.indexOf(ASSISTANT_NAME) === 0) {
     reply_(ev.replyToken, [text_(privateCannedText_())]);
@@ -275,6 +282,7 @@ const PRIVATE_CANNED_DEFAULT = [
   '您好，感謝您的訊息！🙏',
   '您的留言我們都會看到，將由專人盡快回覆您。',
   '',
+  '📋 查詢自己的報名與繳費狀態：輸入「查詢報名」',
   '北屯鬧起來活動資訊：https://ccs2024taiwan.pages.dev',
   '',
   '里長參選人莊晴全 敬上',
@@ -381,6 +389,86 @@ const BAG_CONFIRM_TEXT = [
   '✅ 當天參加活動,保證金全額退還;沒到場的保證金捐給心路基金會。',
   '繳費完成後會再用 LINE 通知您!',
 ].join('\n');
+
+// ───────────────────────── 報名查詢（報名者本人） ─────────────────────────
+
+const SIGNUP_PAY_HINT = {
+  '🌀 陀螺賽': '報名費每場 200 元（全數捐心路基金會），請至裕國豐展或惠宇開朗社區櫃台繳交。',
+  '🎭 變裝大賽': '保證金每組 100 元，請於報名後 7 日內至裕國豐展社區櫃台繳交，完成報到即退還。',
+  '🧼 手工皂DIY': '保證金 100 元，請於 10/13 前至總太共好櫃檯繳交，完成報到即退還。',
+  '👜 彩繪提袋DIY': '保證金 100 元，請於 10/13(二) 前至總太悅來櫃檯繳交，當天參加全額退還。',
+};
+const SIGNUP_CONFIRM_LABEL = { '陀螺賽': '🌀 陀螺賽', '變裝大賽': '🎭 變裝大賽', 'DIY手工皂': '🧼 手工皂DIY', '彩繪提袋': '👜 彩繪提袋DIY' };
+
+function normPhone_(p) {
+  const d = String(p || '').replace(/\D/g, '');
+  return d.replace(/^886(?=9)/, '0').replace(/^(?=9\d{8}$)/, '0');
+}
+
+/**
+ * 找出這位 LINE 使用者的報名：
+ * 1. 傳過「報名確認」訊息的，用確認訊息裡的活動＋姓名＋編號比對（再帶出同一支電話的其他報名，例如家人）。
+ * 2. 沒傳過的，請他輸入「查詢報名 姓名 電話」，姓名與電話都對得上才顯示。
+ */
+function findMySignups_(uid, query) {
+  const list = readAll_('活動報名名單');
+  const found = new Map();
+  const add = r => found.set(r._row, r);
+  const q = String(query || '').trim();
+  if (q) {
+    const phone = normPhone_((q.match(/[+\d][\d\s-]{7,}\d/) || [''])[0]);
+    const name = q.replace(/[+\d][\d\s-]{7,}\d/, '').replace(/[|｜,，、\s]+/g, '').trim();
+    if (phone.length < 9 || !name) return { needInput: true };
+    list.filter(r => normPhone_(r.電話) === phone && (r.姓名 === name || String(r.同行者).indexOf(name) >= 0))
+      .forEach(r => list.filter(x => normPhone_(x.電話) === phone).forEach(add));
+    return { rows: Array.from(found.values()), byPhone: true };
+  }
+  readAll_('報名確認紀錄').filter(c => c.userId === uid).forEach(c => {
+    const parts = String(c.text).split('|');
+    const label = Object.keys(SIGNUP_CONFIRM_LABEL).find(k => parts[0].indexOf(k) >= 0);
+    if (!label || !parts[1]) return;
+    const no = ((parts[3] || '').match(/\d+/) || [''])[0];
+    list.filter(r => r.活動 === SIGNUP_CONFIRM_LABEL[label] && r.姓名 === parts[1].trim() &&
+        (!no || +r.編號 === +no) && (!parts[2] || !r.場次梯次 || r.場次梯次 === parts[2].trim()))
+      .forEach(add);
+  });
+  const phones = new Set(Array.from(found.values()).map(r => normPhone_(r.電話)).filter(p => p.length >= 9));
+  list.filter(r => phones.has(normPhone_(r.電話))).forEach(add);
+  return { rows: Array.from(found.values()) };
+}
+
+function signupLookupText_(uid, query) {
+  // 名單超過 10 分鐘沒更新就先同步一次，繳費狀態才是最新的
+  const last = parseTime_(prop_('SIGNUP_SYNC_AT'));
+  if (!last || Date.now() - last.getTime() > 10 * 60 * 1000) {
+    try { syncSignups(); } catch (err) { console.warn('查詢前同步失敗，使用上次的名單：' + err.message); }
+  }
+  const r = findMySignups_(uid, query);
+  const ask = '請輸入「查詢報名 姓名 電話」（報名時填的姓名與電話），例如：\n查詢報名 王小明 0912345678';
+  if (r.needInput) return '格式好像不太對 🙏\n' + ask;
+  if (!r.rows.length) {
+    return (query ? '查不到符合的報名資料。請確認姓名與電話是否和報名時填寫的一樣。\n\n' : '目前查不到您的報名資料。\n\n') + ask +
+      '\n\n還沒報名的話：https://ccs2024taiwan.pages.dev';
+  }
+  const rows = r.rows.slice().sort((a, b) => String(a.活動 + a.場次梯次 + a.編號).localeCompare(String(b.活動 + b.場次梯次 + b.編號)));
+  const lines = ['📋 您的報名資料'];
+  const unpaid = new Set();
+  rows.forEach(x => {
+    const cancelled = /^已取消/.test(x.狀態);
+    const paid = /已繳/.test(x.繳費);
+    if (!cancelled && !paid) unpaid.add(x.活動);
+    lines.push('', `${x.活動}${x.場次梯次 ? '｜' + x.場次梯次 : ''}${x.編號 ? '｜' + x.編號 + ' 號' : ''}`,
+      `　${x.姓名}${x.同行者 && x.活動 !== '🎭 變裝大賽' ? '（' + x.同行者 + '）' : ''}`,
+      `　${cancelled ? '❌ 已取消' : paid ? '✅ 已繳費' : '⚠️ 尚未繳費'}`);
+  });
+  if (unpaid.size) {
+    lines.push('', '💰 繳費方式');
+    unpaid.forEach(a => lines.push(`・${a}：${SIGNUP_PAY_HINT[a] || '請依報名頁說明繳費。'}`));
+  }
+  const at = prop_('SIGNUP_SYNC_AT');
+  lines.push('', `資料時間：${at ? at.slice(5) : '—'}（櫃台登記繳費後，最晚約 1 小時更新）`, '有問題請直接在這裡留言，會由專人回覆 🙏');
+  return lines.join('\n');
+}
 
 const LAWYER_PLACE_TEXT = '📍 地點確認中，目前尚未開放預約，敬請期待！';
 
