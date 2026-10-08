@@ -40,6 +40,7 @@ const SHEETS = {
   好友紀錄: ['at', 'userId', 'displayName', 'event'],
   私訊關注: ['at', 'userId', 'displayName', 'keyword', 'text', 'signups', 'handled'],
   報名確認紀錄: ['at', 'userId', 'displayName', 'text'],
+  活動報名名單: ['活動', '場次梯次', '編號', '姓名', '同行者', '電話', '繳費', '狀態', '報名時間', '同步時間'],
   律師時段: ['slotId', 'date', 'start', 'end', 'lawyer', 'capacity', 'note'],
   諮詢預約: ['id', 'createdAt', 'slotId', 'userId', 'name', 'phone', 'topic', 'detail', 'status', 'reminded'],
 };
@@ -829,17 +830,22 @@ const REPORT_GREETINGS = [
  */
 function ensureReportTrigger_() {
   const cache = CacheService.getScriptCache();
-  if (cache.get('report_trigger_ok')) return;
+  if (cache.get('triggers_ok_v2')) return;
   try {
     withLock_(() => {
-      if (!ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'sendSignupReport')) {
+      const have = ScriptApp.getProjectTriggers().map(t => t.getHandlerFunction());
+      if (have.indexOf('sendSignupReport') < 0) {
         ScriptApp.newTrigger('sendSignupReport').timeBased().everyDays(1).atHour(12).nearMinute(0).inTimezone(TZ).create();
         console.log('已自動建立每日中午報名快報排程');
       }
+      if (have.indexOf('syncSignups') < 0) {
+        ScriptApp.newTrigger('syncSignups').timeBased().everyHours(1).create();
+        console.log('已自動建立每小時活動報名名單同步排程');
+      }
     });
-    cache.put('report_trigger_ok', '1', 21600);
+    cache.put('triggers_ok_v2', '1', 21600);
   } catch (err) {
-    console.error('建立報名快報排程失敗：' + err.message);
+    console.error('建立排程失敗：' + err.message);
   }
 }
 
@@ -865,19 +871,24 @@ function ccsJson_(path) {
 }
 
 /** 讀匯出 CSV，回傳 { 分組值: 未繳數 }；失敗回傳 null。 */
-function ccsUnpaid_(form, groupCol, paidCol, unpaidValue) {
+/** 下載活動網站的報名匯出 CSV，回傳 { head, rows }；失敗時丟出錯誤（訊息給人看的）。 */
+function ccsExport_(form) {
   const key = String(prop_('CCS_EXPORT_KEY')).trim();
-  if (!key) return null;
+  if (!key) throw new Error('尚未設定活動網站匯出密碼');
+  const res = UrlFetchApp.fetch(CCS_BASE + '/api/export?key=' + encodeURIComponent(key) + (form ? '&form=' + form : ''),
+    { headers: { 'User-Agent': 'Mozilla/5.0' }, muteHttpExceptions: true, followRedirects: true });
+  if (res.getResponseCode() !== 200) {
+    throw new Error(res.getResponseCode() === 401 ? '活動網站拒絕匯出密碼（HTTP 401），請確認 EXPORT_KEY 是否正確'
+      : '活動網站回應 HTTP ' + res.getResponseCode());
+  }
+  const rows = Utilities.parseCsv(res.getContentText().replace(/^\uFEFF/, ''));
+  return { head: rows.shift() || [], rows };
+}
+
+function ccsUnpaid_(form, groupCol, paidCol, unpaidValue) {
+  if (!String(prop_('CCS_EXPORT_KEY')).trim()) return null;
   try {
-    const res = UrlFetchApp.fetch(CCS_BASE + '/api/export?key=' + encodeURIComponent(key) + (form ? '&form=' + form : ''),
-      { headers: { 'User-Agent': 'Mozilla/5.0' }, muteHttpExceptions: true, followRedirects: true });
-    if (res.getResponseCode() !== 200) {
-      ccsUnpaidError_ = res.getResponseCode() === 401 ? '活動網站拒絕匯出密碼（HTTP 401），請確認 EXPORT_KEY 是否正確'
-        : '活動網站回應 HTTP ' + res.getResponseCode();
-      return null;
-    }
-    const rows = Utilities.parseCsv(res.getContentText().replace(/^﻿/, ''));
-    const head = rows.shift() || [];
+    const { head, rows } = ccsExport_(form);
     const gi = groupCol ? head.indexOf(groupCol) : -1, pi = head.indexOf(paidCol);
     if (pi < 0) {
       ccsUnpaidError_ = '匯出檔找不到「' + paidCol + '」欄位';
@@ -897,6 +908,66 @@ function ccsUnpaid_(form, groupCol, paidCol, unpaidValue) {
     ccsUnpaidError_ = err.message;
     console.error('未繳費統計失敗：' + err.message);
     return null;
+  }
+}
+
+// ───────────────────────── 活動報名名單同步 ─────────────────────────
+
+/**
+ * 每小時把活動網站四個活動的報名名單複製到「活動報名名單」工作表，方便在試算表查「某人有沒有報名」。
+ * 只複製查詢需要的欄位：不含身分證字號、Email、生日、住址。活動網站上的資料才是正本。
+ */
+const SIGNUP_SYNC_FORMS = [
+  { form: '', label: '🌀 陀螺賽', group: '場次', no: '選手號碼', name: '參賽者姓名', extra: '小朋友姓名', paid: '繳費狀態' },
+  { form: 'cosplay', label: '🎭 變裝大賽', group: '', no: '組別編號', name: '代表人姓名', extra: '組員名單(含寵物)', paid: '保證金' },
+  { form: 'diy', label: '🧼 手工皂DIY', group: '梯次', no: '編號', name: '姓名', extra: '', paid: '保證金' },
+  { form: 'bag', label: '👜 彩繪提袋DIY', group: '梯次', no: '編號', name: '姓名', extra: '', paid: '保證金' },
+];
+
+function syncSignups() {
+  const props = PropertiesService.getScriptProperties();
+  try {
+    const at = now_();
+    const out = [];
+    SIGNUP_SYNC_FORMS.forEach(f => {
+      const { head, rows } = ccsExport_(f.form);
+      const col = name => (name ? head.indexOf(name) : -1);
+      const c = { group: col(f.group), no: col(f.no), name: col(f.name), extra: col(f.extra), phone: col('電話'),
+        paid: col(f.paid), status: col('報名狀態'), time: col('報名時間') };
+      if (c.name < 0) throw new Error(f.label + ' 匯出檔找不到「' + f.name + '」欄位');
+      const v = (r, i) => (i >= 0 ? String(r[i] || '').trim() : '');
+      rows.forEach(r => {
+        if (!v(r, c.name)) return;
+        out.push([f.label, v(r, c.group), v(r, c.no), v(r, c.name), v(r, c.extra).slice(0, 200), v(r, c.phone),
+          v(r, c.paid), v(r, c.status) || '有效', v(r, c.time), at]);
+      });
+    });
+    // 全部抓成功才覆蓋，避免網站暫時連不上時把名單清空
+    withLock_(() => {
+      const sh = sheet_('活動報名名單');
+      const width = SHEETS.活動報名名單.length;
+      const old = sh.getLastRow();
+      if (out.length) sh.getRange(2, 1, out.length, width).setValues(out);
+      if (old > out.length + 1) sh.getRange(out.length + 2, 1, old - out.length - 1, width).clearContent();
+    });
+    props.setProperty('SIGNUP_SYNC_AT', at);
+    props.deleteProperty('SIGNUP_SYNC_ERROR');
+    return out.length;
+  } catch (err) {
+    props.setProperty('SIGNUP_SYNC_ERROR', now_() + ' ' + err.message);
+    console.error('活動報名名單同步失敗：' + err.message);
+    throw err;
+  }
+}
+
+/** 試算表選單：立即同步一次。 */
+function syncSignupsFromMenu() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const n = syncSignups();
+    ui.alert('✅ 已同步 ' + n + ' 筆報名到「活動報名名單」工作表。\n之後每小時會自動更新一次。');
+  } catch (err) {
+    ui.alert('同步失敗：' + err.message);
   }
 }
 let ccsUnpaidError_ = '';
@@ -1649,6 +1720,7 @@ function onOpen() {
     .addSeparator()
     .addItem('設定每日報名快報（聯辦群）', 'setupSignupReport')
     .addItem('預覽報名快報', 'previewSignupReport')
+    .addItem('立即同步活動報名名單', 'syncSignupsFromMenu')
     .addToUi();
 }
 
