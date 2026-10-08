@@ -472,6 +472,17 @@ function handleAssistant_(ev, uid, member, text, inGroup) {
   const adminOnly = () => say('這個功能只有里長或管理員可以使用。\n\n' + assistantHelp_(isAdmin, isStaff));
   // 短指令（例如「全全 備份」）走固定功能；較長的句子當成一般問題交給 AI。
   const isCommand = q.length <= 6 || !prop_('ANTHROPIC_API_KEY');
+  // 里長在群組裡指定「律師群組」：新預約、取消、前一天名單都會發到這個群組
+  if (inGroup && /^(設為|設定)律師群組$/.test(q)) {
+    if (!isOwnerUser_(uid)) return say('只有里長可以設定律師群組。');
+    PropertiesService.getScriptProperties().setProperty('LAWYER_GROUP_ID', ev.source.groupId || ev.source.roomId);
+    return say('✅ 已設為律師群組。之後有人預約或取消律師諮詢，以及每次諮詢前一天晚上 6 點的預約名單，都會發到這個群組。\n要停止請輸入「全全 取消律師群組」。');
+  }
+  if (inGroup && q === '取消律師群組') {
+    if (!isOwnerUser_(uid)) return say('只有里長可以變更律師群組。');
+    PropertiesService.getScriptProperties().deleteProperty('LAWYER_GROUP_ID');
+    return say('已停止發送律師諮詢通知到這個群組。');
+  }
   if (!isCommand) return say(aiAnswer_(q, uid, member ? member.name : ''));
   // 律師介紹與時段是公開資訊，群組裡也可以直接看（例如法律諮詢群組）
   if (inGroup && /律師|諮詢|法律/.test(q)) {
@@ -1214,6 +1225,8 @@ function liffApi_(action, req, user) {
       };
       append_('諮詢預約', b);
       notifyAdmins_(`新律師諮詢預約\n${slot.date} ${slot.start}-${slot.end}\n${b.name}｜${b.topic}`);
+      notifyLawyerGroup_(['📅 新的律師諮詢預約', slotLabel_(slot), bookingDetail_(b),
+        `此時段還剩 ${Math.max(0, slot.remaining - 1)} 位`].join('\n'));
       return { id: b.id, slot };
     }
 
@@ -1229,6 +1242,7 @@ function liffApi_(action, req, user) {
       const b = readAll_('諮詢預約').find(x => x.id === req.id && x.userId === user.userId);
       if (!b || b.status !== '已預約') throw new Error('找不到可取消的預約');
       update_('諮詢預約', b._row, { status: '已取消' });
+      notifyBookingCancelled_(b, '本人取消');
       return { ok: true };
     }
 
@@ -1363,6 +1377,7 @@ function adminApi_(action, req) {
       if (!b) throw new Error('找不到預約');
       if (BOOKING_STATUSES.indexOf(req.status) < 0) throw new Error('狀態不正確');
       update_('諮詢預約', b._row, { status: req.status });
+      if (req.status === '已取消' && b.status === '已預約') notifyBookingCancelled_(b, '工作人員取消');
       return { ok: true };
     }
   }
@@ -1473,6 +1488,65 @@ function sendBookingReminders() {
     push_(b.userId, [text_(`提醒您：明天 ${s.date} ${s.start}-${s.end} 有律師諮詢預約（${b.topic}）。\n如需取消請輸入「律師諮詢」進入頁面取消。`)]);
     update_('諮詢預約', b._row, { reminded: now_() });
   });
+  const digest = lawyerDigest_(tomorrow);
+  if (digest) notifyLawyerGroup_(digest);
+}
+
+// ───────────────────────── 律師群組通知 ─────────────────────────
+
+/** 里長：職務是里長／管理員的人；都沒有設定時是最早加入的工作人員（目前是里長本人）。 */
+function isOwnerUser_(uid) {
+  const active = readAll_('成員').filter(isActiveMember_);
+  const admins = active.filter(m => ADMIN_ROLES.indexOf(m.role) >= 0);
+  if (admins.length) return admins.some(m => m.userId === uid);
+  const first = active.slice().sort((a, b) => String(a.joinedAt).localeCompare(String(b.joinedAt)))[0];
+  return !!first && first.userId === uid;
+}
+
+/** 發到律師群組（里長在群組輸入「全全 設為律師群組」設定）。沒設定就不發。 */
+function notifyLawyerGroup_(message) {
+  const gid = prop_('LAWYER_GROUP_ID');
+  if (!gid) return false;
+  try {
+    return push_(gid, [text_(String(message).slice(0, 4900))]);
+  } catch (err) {
+    console.error('通知律師群組失敗：' + err.message);
+    return false;
+  }
+}
+
+function weekdayOf_(date) {
+  const d = new Date(String(date) + 'T12:00:00+08:00');
+  return isNaN(d) ? '' : '週' + '日一二三四五六'[d.getUTCDay()];
+}
+
+function slotLabel_(s) {
+  return `🗓 ${s.date}（${weekdayOf_(s.date)}）${s.start}–${s.end}${s.lawyer ? '｜' + s.lawyer + ' 律師' : ''}${s.note ? '\n📍 ' + s.note : ''}`;
+}
+
+function bookingDetail_(b) {
+  return [`👤 ${b.name}（${b.phone}）`, `📂 ${b.topic}`].concat(b.detail ? ['📝 ' + String(b.detail).slice(0, 200)] : []).join('\n');
+}
+
+function notifyBookingCancelled_(b, who) {
+  const s = indexBy_(readAll_('律師時段'), 'slotId')[b.slotId] || {};
+  notifyLawyerGroup_(['❌ 律師諮詢預約取消（' + who + '）', slotLabel_(s), `👤 ${b.name}｜${b.topic}`].join('\n'));
+}
+
+/** 前一天的預約名單（隔天有開時段才發）。 */
+function lawyerDigest_(date) {
+  const slots = readAll_('律師時段').filter(s => s.date === date)
+    .sort((a, b) => String(a.start).localeCompare(String(b.start)));
+  if (!slots.length) return '';
+  const bookings = readAll_('諮詢預約').filter(b => b.status === '已預約');
+  const lines = [`⚖️ 明天（${date} ${weekdayOf_(date)}）律師諮詢預約名單`];
+  slots.forEach(s => {
+    const list = bookings.filter(b => b.slotId === s.slotId);
+    lines.push('', slotLabel_(s) + `｜${list.length}/${s.capacity || 1} 位`);
+    if (!list.length) lines.push('（目前沒有預約）');
+    list.forEach((b, i) => lines.push(`${i + 1}. ${b.name}（${b.phone}）｜${b.topic}` + (b.detail ? '\n   ' + String(b.detail).slice(0, 80) : '')));
+  });
+  return lines.join('\n');
 }
 
 // ───────────────────────── 雲端硬碟備份 ─────────────────────────
