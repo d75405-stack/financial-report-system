@@ -74,6 +74,7 @@
     </div>
     <div class="card">
       <h2>選擇時段</h2>
+      <p class="muted">每次 30 分鐘，需提前 7 天預約（不開放當天預約）。</p>
       <div id="slots"></div>
     </div>
     <form id="form-booking" class="card hidden">
@@ -235,8 +236,8 @@ async function loadBooking() {
     $('#slots').innerHTML = slots.length ? slots.map(s => `
       <div class="slot" data-id="${esc(s.slotId)}">
         <div>
-          <b>${esc(s.date)}</b> ${esc(s.start)}–${esc(s.end)}
-          <div class="muted">${esc(s.lawyer ? s.lawyer + ' 律師' : '')}${s.note ? '｜' + esc(s.note) : ''}</div>
+          <b>${esc(s.date)}${s.weekday ? '（' + esc(s.weekday) + '）' : ''}</b> ${esc(s.start)}–${esc(s.end)}
+          <div class="muted">${esc(s.lawyer ? s.lawyer + ' 律師' : '')}${s.note ? '｜📍 ' + esc(s.note) : ''}${s.placeUrl ? ` <a href="${esc(s.placeUrl)}" target="_blank" rel="noopener">地圖</a>` : ''}</div>
         </div>
         <span class="badge">剩 ${esc(s.remaining)} 位</span>
       </div>`).join('') : '<p class="muted">目前沒有可預約的時段，請留意公告。</p>';
@@ -244,7 +245,8 @@ async function loadBooking() {
       document.querySelectorAll('.slot').forEach(x => x.classList.remove('selected'));
       el.classList.add('selected');
       selectedSlot = slots.find(s => s.slotId === el.dataset.id);
-      $('#selected-slot').textContent = `時段：${selectedSlot.date} ${selectedSlot.start}–${selectedSlot.end}`;
+      $('#selected-slot').textContent = `時段：${selectedSlot.date}${selectedSlot.weekday ? '（' + selectedSlot.weekday + '）' : ''} ${selectedSlot.start}–${selectedSlot.end}` +
+        (selectedSlot.lawyer ? `｜${selectedSlot.lawyer} 律師` : '') + (selectedSlot.note ? `｜📍 ${selectedSlot.note}` : '');
       const form = $('#form-booking');
       form.classList.remove('hidden');
       const nameInput = form.querySelector('[name=name]');
@@ -267,6 +269,8 @@ async function loadLawyers() {
         <div>
           <b>${esc(l.name)} ${esc(l.title || '律師')}</b>
           ${l.firm ? `<div class="muted">${esc(l.firm)}</div>` : ''}
+          ${l.schedule ? `<div>🗓 ${esc(l.schedule)}${l.bookable ? '' : '<span class="muted">（尚未開放預約）</span>'}</div>` : ''}
+          ${l.place ? `<div>📍 ${esc(l.place)}${l.placeUrl ? ` <a href="${esc(l.placeUrl)}" target="_blank" rel="noopener">地圖</a>` : ''}</div>` : ''}
           ${l.specialty ? `<div>專長：${esc(l.specialty)}</div>` : ''}
           ${l.experience ? `<div class="muted pre">${esc(l.experience)}</div>` : ''}
           ${l.bio ? `<p class="pre">${esc(l.bio)}</p>` : ''}

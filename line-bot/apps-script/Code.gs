@@ -36,7 +36,7 @@ const SHEETS = {
   成員: ['userId', 'name', 'phone', 'role', 'group', 'status', 'joinedAt'],
   回報: ['id', 'createdAt', 'userId', 'name', 'category', 'content', 'location', 'photoUrl', 'status', 'handler', 'note', 'updatedAt'],
   公告: ['id', 'createdAt', 'target', 'title', 'content', 'recipients'],
-  律師資料: ['lawyerId', 'name', 'title', 'firm', 'specialty', 'experience', 'bio', 'photo', 'order', 'status', 'version', 'updatedAt', 'schedule', 'place', 'placeUrl'],
+  律師資料: ['lawyerId', 'name', 'title', 'firm', 'specialty', 'experience', 'bio', 'photo', 'order', 'status', 'version', 'updatedAt', 'schedule', 'place', 'placeUrl', 'bookFrom'],
   好友紀錄: ['at', 'userId', 'displayName', 'event'],
   私訊關注: ['at', 'userId', 'displayName', 'keyword', 'text', 'signups', 'handled'],
   報名確認紀錄: ['at', 'userId', 'displayName', 'text'],
@@ -252,7 +252,7 @@ function handleEvent_(ev) {
       if (!reply_(ev.replyToken, lawyerIntroMessages_())) {
         reply_(ev.replyToken, [lawyerOpen_()
           ? linkButton_('免費律師諮詢，請選擇時段預約。', '查看時段並預約', liffUrl_('booking'))
-          : text_(lawyerClosedInfo_())]);
+          : text_(lawyerInfoText_())]);
       }
       return;
     case '我的預約':
@@ -267,7 +267,7 @@ function handleEvent_(ev) {
       return;
     case '公告':
     case '最新公告':
-      reply_(ev.replyToken, [text_(latestAnnouncementsText_(member))]);
+      reply_(ev.replyToken, announceMessages_(member));
       return;
     case '說明':
     case '選單':
@@ -318,6 +318,7 @@ function lawyerOpen_() {
  * 工作表沒有這位律師就新增；version 比工作表裡的大才覆蓋（直接在工作表改的內容不會被蓋掉）。
  * status：「準備中」不顯示；「上架」才會出現在預約頁（且律師諮詢要先開放）。
  * photo：照片放在 line-bot/web/lawyers/，這裡填檔名即可。
+ * bookFrom：開放預約的第一天，有填才會自動開時段（見 ensureLawyerSlots_）。
  */
 const LAWYER_PHOTO_BASE = 'https://d75405-stack.github.io/financial-report-system/line-bot/web/lawyers/';
 const LAWYER_SEED = [
@@ -333,7 +334,7 @@ const LAWYER_SEED = [
     specialty: '一般民事、刑事案件、婚姻、親屬、繼承糾紛',
     experience: '法務部矯正署臺中監獄法治教育講師\n法務部矯正署臺中戒治所法治教育講師',
     bio: '', photo: 'L3.jpg', order: 1, status: '上架', schedule: '每週二 18:00–20:00',
-    place: "几乎食間 Jeff's kitchen", placeUrl: 'https://maps.app.goo.gl/xTdXo1E4dU4dAhj69', version: 7 },
+    place: "几乎食間 Jeff's kitchen", placeUrl: 'https://maps.app.goo.gl/xTdXo1E4dU4dAhj69', bookFrom: '2026-10-20', version: 8 },
 ];
 
 function lawyerSeedVersion_() {
@@ -350,6 +351,13 @@ function ensureLawyers_() {
   }
 }
 
+/** 律師諮詢規則（里長指定）：每次 30 分鐘、每格 1 位；需提前 7 天預約，不開放當天預約。 */
+const LAWYER_SLOT_MINUTES = 30;
+const LAWYER_BOOK_LEAD_DAYS = 7;
+const LAWYER_SLOT_WEEKS = 5;           // 可預約的時段往後開幾週
+const LAWYER_BOOK_RULE = '⏱ 每次 30 分鐘，需提前 7 天預約（不開放當天預約）';
+const LAWYER_OPEN_STEP = '2026-10-tue';  // 週二（陳沂裴律師）開放預約
+
 function syncLawyers_() {
   // 新增欄位時補上標題列（新欄位一律加在最後面，舊資料不受影響）
   const sh = sheet_('律師資料');
@@ -361,7 +369,60 @@ function syncLawyers_() {
     if (!row) append_('律師資料', data);
     else if (Number(row.version || 0) < seed.version) update_('律師資料', row._row, data);
   });
-  PropertiesService.getScriptProperties().setProperty('LAWYER_SEED_VER', lawyerSeedVersion_());
+  const props = PropertiesService.getScriptProperties();
+  // 開放預約只切一次，之後里長仍可用試算表選單「開放／關閉律師諮詢」自己切換
+  if (prop_('LAWYER_OPEN_STEP') !== LAWYER_OPEN_STEP) {
+    props.setProperty('LAWYER_OPEN', 'true');
+    if (!prop_('LAWYER_GROUP_ID')) {
+      const g = readAll_('群組紀錄').filter(x => x.type === '群組' && x.status !== '已離開' && /法律/.test(x.groupName));
+      if (g.length === 1) props.setProperty('LAWYER_GROUP_ID', g[0].groupId);
+    }
+    props.setProperty('LAWYER_OPEN_STEP', LAWYER_OPEN_STEP);
+  }
+  ensureLawyerSlots_();
+  props.setProperty('LAWYER_SEED_VER', lawyerSeedVersion_());
+}
+
+function ymdAfter_(days, from) {
+  const base = from ? new Date(from + 'T12:00:00+08:00').getTime() : Date.now();
+  return Utilities.formatDate(new Date(base + days * 864e5), TZ, 'yyyy-MM-dd');
+}
+
+/**
+ * 自動開律師時段：「律師資料」有填 bookFrom 的律師，從那天起每週固定那天，
+ * 把 schedule 的時間（例「每週二 18:00–20:00」）切成每 30 分鐘一格、每格 1 位。
+ * 每天排程補到往後約 5 週；開過的日期不再補，所以在管理後台刪掉的時段（例如放假）不會又出現。
+ */
+function ensureLawyerSlots_() {
+  try {
+    const done = JSON.parse(prop_('LAWYER_SLOTS_UNTIL') || '{}');
+    const until = ymdAfter_(LAWYER_BOOK_LEAD_DAYS + LAWYER_SLOT_WEEKS * 7);
+    const existing = new Set(readAll_('律師時段').map(x => x.slotId));
+    let added = 0;
+    readAll_('律師資料').filter(l => l.status === '上架' && /^\d{4}-\d{2}-\d{2}$/.test(l.bookFrom)).forEach(l => {
+      const m = String(l.schedule).match(/^每週(.)\s*(\d{1,2}):(\d{2})\s*[–~-]\s*(\d{1,2}):(\d{2})/);
+      const wd = m ? '日一二三四五六'.indexOf(m[1]) : -1;
+      if (wd < 0) return;
+      const from = [l.bookFrom, ymdAfter_(0), done[l.lawyerId] ? ymdAfter_(1, done[l.lawyerId]) : ''].sort().pop();
+      for (let d = from; d <= until; d = ymdAfter_(1, d)) {
+        if (new Date(d + 'T12:00:00+08:00').getUTCDay() !== wd) continue;
+        for (let t = +m[2] * 60 + +m[3]; t + LAWYER_SLOT_MINUTES <= +m[4] * 60 + +m[5]; t += LAWYER_SLOT_MINUTES) {
+          const hm = x => ('0' + Math.floor(x / 60)).slice(-2) + ':' + ('0' + x % 60).slice(-2);
+          const slotId = l.lawyerId + '-' + d.replace(/-/g, '') + '-' + hm(t).replace(':', '');
+          if (existing.has(slotId)) continue;
+          append_('律師時段', { slotId, date: d, start: hm(t), end: hm(t + LAWYER_SLOT_MINUTES), lawyer: l.name, capacity: 1, note: l.place || '' });
+          existing.add(slotId);
+          added++;
+        }
+      }
+      done[l.lawyerId] = until;
+    });
+    PropertiesService.getScriptProperties().setProperty('LAWYER_SLOTS_UNTIL', JSON.stringify(done));
+    return added;
+  } catch (err) {
+    console.error('自動開律師時段失敗：' + err.message);
+    return 0;
+  }
 }
 
 function lawyerPhotoUrl_(photo) {
@@ -371,6 +432,7 @@ function lawyerPhotoUrl_(photo) {
 
 /** 預約頁顯示用：只給「上架」的律師，不含內部欄位。 */
 function publicLawyers_() {
+  const withSlots = lawyerOpen_() ? new Set(openSlots_().map(x => x.lawyer)) : new Set();
   return readAll_('律師資料')
     .filter(l => l.status === '上架')
     .sort((a, b) => Number(a.order || 99) - Number(b.order || 99))
@@ -378,6 +440,7 @@ function publicLawyers_() {
       lawyerId: l.lawyerId, name: l.name, title: l.title, firm: l.firm, specialty: l.specialty,
       experience: l.experience, bio: l.bio, photo: lawyerPhotoUrl_(l.photo), schedule: l.schedule,
       place: l.place, placeUrl: /^https:\/\//.test(l.placeUrl || '') ? l.placeUrl : '',
+      bookFrom: l.bookFrom, bookable: withSlots.has(l.name),
     }));
 }
 
@@ -472,13 +535,22 @@ function signupLookupText_(uid, query) {
 
 const LAWYER_PLACE_TEXT = '📍 地點確認中，目前尚未開放預約，敬請期待！';
 
-/** 地點說明：已公布地點的時段列出來，其餘寫確認中。 */
+/** 地點與開放狀況：已公布地點的列出來；有可預約時段的寫開放預約，其餘寫確認中／尚未開放。 */
 function lawyerPlaceText_(list) {
   const day = l => (String(l.schedule || '').match(/^每週(.)/) || [])[1] || l.name;
-  const known = list.filter(l => l.place || l.placeUrl), unknown = list.filter(l => !(l.place || l.placeUrl));
+  const hasPlace = l => !!(l.place || l.placeUrl);
+  const known = list.filter(hasPlace), unknown = list.filter(l => !hasPlace(l));
   if (!known.length) return LAWYER_PLACE_TEXT;
   const lines = known.map(l => `📍 週${day(l)}地點：${l.place || '已公布'}${l.placeUrl ? '\n' + l.placeUrl : ''}`);
-  lines.push((unknown.length ? '週' + unknown.map(day).join('、') + '地點確認中，' : '') + '目前尚未開放預約，敬請期待！');
+  const open = list.filter(l => l.bookable), wait = list.filter(l => !l.bookable);
+  if (!open.length) {
+    lines.push((unknown.length ? '週' + unknown.map(day).join('、') + '地點確認中，' : '') + '目前尚未開放預約，敬請期待！');
+    return lines.join('\n');
+  }
+  const md = d => d.slice(5).replace(/^0/, '').replace('-0', '/').replace('-', '/');
+  lines.push('✅ 開放預約：' + open.map(l => `週${day(l)} ${l.name} 律師` +
+    (l.bookFrom > ymdAfter_(0) ? `（${md(l.bookFrom)} 起）` : '')).join('、'), LAWYER_BOOK_RULE);
+  if (wait.length) lines.push('週' + wait.map(day).join('、') + (wait.every(l => !hasPlace(l)) ? '地點確認中，' : '') + '尚未開放預約，敬請期待！');
   return lines.join('\n');
 }
 
@@ -491,14 +563,14 @@ function lawyerScheduleSummary_(list) {
   return items.join('；');
 }
 
-/** 「律師諮詢」的回覆：律師卡片（照片、專長、經歷、固定時段）。尚未開放時只介紹、不能預約。 */
+/** 「律師諮詢」的回覆：律師卡片（照片、專長、經歷、固定時段）。有可預約時段的律師才有預約按鈕。 */
 function lawyerIntroMessages_() {
   const list = publicLawyers_();
-  const open = lawyerOpen_();
+  const open = list.some(l => l.bookable);
   const summary = lawyerScheduleSummary_(list);
   const head = '⚖️ 免費律師諮詢' + (list.length && list[0].firm ? '（' + list[0].firm + '）' : '') +
-    (summary ? '\n🗓 預計時段：' + summary : '') +
-    '\n' + (open ? '請點下方按鈕選擇時段預約。' : lawyerPlaceText_(list));
+    (summary ? '\n🗓 ' + (open ? '時段' : '預計時段') + '：' + summary : '') +
+    '\n' + lawyerPlaceText_(list) + (open ? '\n請點下方按鈕選擇時段預約。' : '');
   const messages = [text_(head)];
   if (list.length) {
     const t = (text, o) => text ? [Object.assign({ type: 'text', text: String(text).slice(0, 300), wrap: true }, o || {})] : [];
@@ -517,7 +589,7 @@ function lawyerIntroMessages_() {
             t(l.experience, { size: 'xs', color: '#666666' })) },
           footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [].concat(
             l.placeUrl ? [{ type: 'button', style: 'secondary', height: 'sm', action: { type: 'uri', label: '查看諮詢地點', uri: l.placeUrl } }] : [],
-            open
+            l.bookable
               ? [{ type: 'button', style: 'primary', height: 'sm', action: { type: 'uri', label: '預約時段', uri: liffUrl_('booking') } }]
               : [{ type: 'text', text: (l.place || l.placeUrl ? '' : '地點確認中・') + '尚未開放預約', size: 'xs', color: '#DC2626', align: 'center', wrap: true }]) },
         };
@@ -530,12 +602,13 @@ function lawyerIntroMessages_() {
   return messages;
 }
 
-/** 尚未開放時給 AI 與文字回覆用的說明。 */
-function lawyerClosedInfo_() {
+/** 律師、時段、地點與開放狀況的文字說明（給 AI、公告與文字回覆用）。 */
+function lawyerInfoText_() {
   const list = publicLawyers_();
   if (!list.length) return LAWYER_CLOSED_TEXT;
-  return '⚖️ 免費律師諮詢即將開放！\n' + list.map(l => `・${l.name} 律師${l.schedule ? '：' + l.schedule : ''}`).join('\n') +
-    '\n' + lawyerPlaceText_(list);
+  const open = list.some(l => l.bookable);
+  return (open ? '⚖️ 免費律師諮詢' + (list[0].firm ? '（' + list[0].firm + '）' : '') : '⚖️ 免費律師諮詢即將開放！') + '\n' +
+    list.map(l => `・${l.name} 律師${l.schedule ? '：' + l.schedule : ''}`).join('\n') + '\n' + lawyerPlaceText_(list);
 }
 
 const LAWYER_CLOSED_TEXT = '⚖️ 免費律師諮詢服務尚未開放，敬請期待！開放時會在官方 LINE 公告通知大家。';
@@ -546,8 +619,43 @@ function myBookingsText_(uid) {
   if (!list.length) return '目前沒有預約。輸入「律師諮詢」即可預約。';
   return '您的律師諮詢預約：\n' + list.map(b => {
     const s = slots[b.slotId] || {};
-    return `・${s.date} ${s.start}-${s.end}｜${b.topic}`;
+    return `・${s.date}（${weekdayOf_(s.date)}）${s.start}-${s.end}｜${b.topic}${s.lawyer ? '｜' + s.lawyer + ' 律師' : ''}${s.note ? '\n　📍 ' + s.note : ''}`;
   }).join('\n');
+}
+
+/** 「公告」關鍵字：萬聖節活動資訊（活動結束後自動不再顯示）＋律師諮詢＋里辦最新公告。 */
+const HALLOWEEN_INFO_UNTIL = '2026-10-18';
+const HALLOWEEN_INFO = [
+  '🎃 2026「北屯鬧起來」廍子里萬聖節活動',
+  '📅 10/17（六）–10/18（日）',
+  '',
+  '👻 百鬼夜行集章：全里 18 個集章點，10/12–10/16 有前哨戰限定章',
+  '　地圖 https://ccs2024taiwan.pages.dev/map/',
+  '🌀 戰鬥陀螺64強爭霸賽：10/17 惠宇開朗（開放組、廍子陀螺王）、10/18 裕國豐展（親子賽、變裝限定場）',
+  '　https://ccs2024taiwan.pages.dev/signup/beyblade/',
+  '🎭 百鬼嘉年華變裝大賽：10/18 18:00 裕國豐展，報名到 10/14 12:00',
+  '　https://ccs2024taiwan.pages.dev/signup/cosplay/',
+  '🧼 甜點造型手工皂DIY：10/18 總太共好共享食堂',
+  '　https://ccs2024taiwan.pages.dev/signup/diy/',
+  '👜 彩繪提袋DIY：10/17 總太悅來活力廚房',
+  '　https://ccs2024taiwan.pages.dev/signup/bag/',
+  '🛍 萬聖市集與特約商家優惠',
+  '　https://ccs2024taiwan.pages.dev/shops/',
+  '',
+  '活動網站：https://ccs2024taiwan.pages.dev',
+  '📋 查詢自己的報名與繳費：輸入「查詢報名」',
+].join('\n');
+
+function announceMessages_(member) {
+  const messages = [];
+  if (ymdAfter_(0) <= HALLOWEEN_INFO_UNTIL) messages.push(text_(HALLOWEEN_INFO));
+  const lawyers = publicLawyers_();
+  if (lawyers.length) {
+    messages.push(text_(lawyerInfoText_() + '\n👉 輸入「律師諮詢」看律師介紹' + (lawyers.some(l => l.bookable) ? '並預約' : '')));
+  }
+  const latest = latestAnnouncementsText_(member);
+  if (!messages.length || latest !== '目前沒有公告。') messages.push(text_('📢 最新公告\n\n' + latest));
+  return messages;
 }
 
 function latestAnnouncementsText_(member) {
@@ -598,7 +706,7 @@ function handleAssistant_(ev, uid, member, text, inGroup) {
   if (!isCommand) return say(aiAnswer_(q, uid, member ? member.name : ''));
   // 律師介紹與時段是公開資訊，群組裡也可以直接看（例如法律諮詢群組）
   if (inGroup && /律師|諮詢|法律/.test(q)) {
-    if (!reply_(ev.replyToken, lawyerIntroMessages_())) say(lawyerOpen_() ? '請點官方帳號選單「律師諮詢」預約時段。' : lawyerClosedInfo_());
+    if (!reply_(ev.replyToken, lawyerIntroMessages_())) say(lawyerOpen_() ? '請點官方帳號選單「律師諮詢」預約時段。' : lawyerInfoText_());
     return;
   }
   if (inGroup && /備份|待處理|未處理|處理中|預約|狀況|狀態|分析|報告|統計|總覽|我的回報|回報進度/.test(q)) {
@@ -621,7 +729,7 @@ function handleAssistant_(ev, uid, member, text, inGroup) {
   if (/待處理|未處理|處理中/.test(q)) return isAdmin ? say(pendingReportsText_()) : adminOnly();
   if (/預約|律師|諮詢/.test(q)) {
     if (isAdmin) return say(upcomingBookingsText_());
-    return say(lawyerOpen_() ? myBookingsText_(uid) : lawyerClosedInfo_());
+    return say(lawyerOpen_() ? myBookingsText_(uid) : lawyerInfoText_());
   }
   if (/狀況|狀態|分析|報告|統計|總覽/.test(q)) {
     if (isAdmin) return say(statusReportText_());
@@ -844,8 +952,8 @@ function aiAnswer_(question, uid, name) {
       fallbacks: 'default',
       system: [
         { type: 'text', text: AI_SYSTEM_PROMPT + '\n' + (lawyerOpen_()
-          ? '- 法律問題請引導使用官方 LINE 的「律師諮詢」預約。'
-          : '- 免費律師諮詢服務目前尚未開放預約（以此為準，即使知識庫寫可預約）。有人問到律師、法律諮詢或預約時，介紹以下資訊並說明地點確認中、敬請期待，開放時會在官方 LINE 公告；也可以在官方 LINE 輸入「律師諮詢」看律師介紹：\n' + lawyerClosedInfo_()) },
+          ? '- 法律問題請引導使用官方 LINE 的「律師諮詢」預約。目前律師、時段與開放狀況如下（以此為準，即使知識庫寫法不同）：\n' + lawyerInfoText_()
+          : '- 免費律師諮詢服務目前尚未開放預約（以此為準，即使知識庫寫可預約）。有人問到律師、法律諮詢或預約時，介紹以下資訊並說明地點確認中、敬請期待，開放時會在官方 LINE 公告；也可以在官方 LINE 輸入「律師諮詢」看律師介紹：\n' + lawyerInfoText_()) },
         { type: 'text', text: '# 知識庫\n\n' + knowledgeText_(), cache_control: { type: 'ephemeral' } },
       ],
       messages: [{ role: 'user', content: String(question).slice(0, 500) }],
@@ -1319,7 +1427,11 @@ function liffApi_(action, req, user) {
     case 'book': {
       if (!lawyerOpen_()) throw new Error(LAWYER_CLOSED_TEXT);
       const slot = openSlots_().find(s => s.slotId === req.slotId);
-      if (!slot) throw new Error('此時段已額滿或不存在');
+      if (!slot) {
+        const s = readAll_('律師時段').find(x => x.slotId === req.slotId);
+        if (s && s.date < ymdAfter_(LAWYER_BOOK_LEAD_DAYS)) throw new Error('律師諮詢需提前 7 天預約，請選擇其他時段');
+        throw new Error('此時段已額滿或不存在');
+      }
       const bookings = readAll_('諮詢預約');
       if (bookings.some(b => b.slotId === slot.slotId && b.userId === user.userId && b.status === '已預約')) {
         throw new Error('您已預約此時段');
@@ -1537,14 +1649,17 @@ function notifyAdmins_(message, always) {
   }
 }
 
+/** 可預約的時段：至少 7 天後（不開放當天預約）、還有名額。 */
 function openSlots_() {
-  const today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  const earliest = ymdAfter_(LAWYER_BOOK_LEAD_DAYS);
   const counts = countBy_(readAll_('諮詢預約').filter(b => b.status === '已預約' || b.status === '已完成'), 'slotId');
+  const maps = {};
+  readAll_('律師資料').forEach(l => { if (/^https:\/\//.test(l.placeUrl || '')) maps[l.name] = l.placeUrl; });
   return readAll_('律師時段')
-    .filter(s => s.date >= today)
+    .filter(s => s.date >= earliest)
     .map(s => ({
-      slotId: s.slotId, date: s.date, start: s.start, end: s.end, lawyer: s.lawyer, note: s.note,
-      remaining: Number(s.capacity || 1) - (counts[s.slotId] || 0),
+      slotId: s.slotId, date: s.date, weekday: weekdayOf_(s.date), start: s.start, end: s.end, lawyer: s.lawyer, note: s.note,
+      placeUrl: maps[s.lawyer] || '', remaining: Number(s.capacity || 1) - (counts[s.slotId] || 0),
     }))
     .filter(s => s.remaining > 0)
     .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
@@ -1598,11 +1713,14 @@ function sendBookingReminders() {
   readAll_('諮詢預約').forEach(b => {
     const s = slots[b.slotId];
     if (!s || s.date !== tomorrow || b.status !== '已預約' || b.reminded) return;
-    push_(b.userId, [text_(`提醒您：明天 ${s.date} ${s.start}-${s.end} 有律師諮詢預約（${b.topic}）。\n如需取消請輸入「律師諮詢」進入頁面取消。`)]);
+    const map = (readAll_('律師資料').find(l => l.name === s.lawyer) || {}).placeUrl;
+    push_(b.userId, [text_(`提醒您：明天 ${s.date} ${s.start}-${s.end} 有律師諮詢預約（${b.topic}）。` +
+      (s.note ? `\n📍 ${s.note}` + (/^https:\/\//.test(map || '') ? '\n' + map : '') : '') + '\n如需取消請輸入「我的預約」或「律師諮詢」進入頁面取消。')]);
     update_('諮詢預約', b._row, { reminded: now_() });
   });
   const digest = lawyerDigest_(tomorrow);
   if (digest) notifyLawyerGroup_(digest);
+  ensureLawyerSlots_();
 }
 
 // ───────────────────────── 律師群組通知 ─────────────────────────
@@ -2293,6 +2411,26 @@ function logGroup_(source, status) {
   }
 }
 
+/** 群組成員的身分備註（里長告知誰是誰；只寫身分，填進「群組成員」的 note 欄）。 */
+const MEMBER_NOTES = {
+  U3318bebbb480d69030b75fef5a957885: '里長',
+  Udc53584b77672d2aa9f13a76a185bdec: '律師・週二 陳沂裴',
+  U2b1a6c8232fdfc3836079f0850a81e4a: '律師・週三 李佩珊',
+  Ubc531d62fb739301c7ccc50489edac24: '律師・週四 郭乃瑩',
+  Ua1bd9f46da5762f8b11400bfa721b4e2: "几乎食間 Jeff's kitchen 老闆娘（週二諮詢場地）",
+};
+
+/** 把 MEMBER_NOTES 補進「群組成員」還沒有備註的列（不覆蓋手動寫的備註）。 */
+function applyMemberNotes_() {
+  try {
+    readAll_('群組成員').forEach(r => {
+      if (!r.note && MEMBER_NOTES[r.userId]) update_('群組成員', r._row, { note: MEMBER_NOTES[r.userId] });
+    });
+  } catch (err) {
+    console.error('補群組成員備註失敗：' + err.message);
+  }
+}
+
 /**
  * 群組成員：只記 LINE 名稱與 ID，不記訊息內容。
  * 來源：有人在群組說話、被加進群組，或每小時用 LINE 的成員名單 API 同步（官方帳號需通過認證才能用）。
@@ -2315,8 +2453,8 @@ function logGroupMember_(source, uid, status) {
     }
     const data = { groupId: gid, groupName: group.groupName || '', userId: uid, displayName: name,
       status: status || (row && row.status === '已離開' ? '在群組中' : (row && row.status) || '在群組中'), lastSeen: now_() };
-    if (!row) append_('群組成員', Object.assign({ firstSeen: now_(), note: '' }, data));
-    else update_('群組成員', row._row, data);
+    if (!row) append_('群組成員', Object.assign({ firstSeen: now_(), note: MEMBER_NOTES[uid] || '' }, data));
+    else update_('群組成員', row._row, !row.note && MEMBER_NOTES[uid] ? Object.assign({ note: MEMBER_NOTES[uid] }, data) : data);
     cache.put(key, '1', 21600);
   } catch (err) {
     console.error('記錄群組成員失敗：' + err.message);
@@ -2325,6 +2463,7 @@ function logGroupMember_(source, uid, status) {
 
 /** 用 LINE 成員名單 API 補齊群組成員（未認證的官方帳號會被拒絕，就略過，靠成員發言來記錄）。 */
 function syncGroupMembers_(onlyGroupId) {
+  applyMemberNotes_();
   const cache = CacheService.getScriptCache();
   if (cache.get('member_ids_forbidden')) return 0;
   let added = 0;
@@ -2459,7 +2598,7 @@ function readAll_(name) {
 
 function normalize_(key, v) {
   if (v instanceof Date) {
-    if (key === 'date') return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
+    if (key === 'date' || key === 'bookFrom') return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
     if (key === 'start' || key === 'end') return Utilities.formatDate(v, TZ, 'HH:mm');
     return Utilities.formatDate(v, TZ, 'yyyy-MM-dd HH:mm');
   }
