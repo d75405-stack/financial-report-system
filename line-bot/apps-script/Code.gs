@@ -466,7 +466,7 @@ function signupLookupText_(uid, query) {
     unpaid.forEach(a => lines.push(`・${a}：${SIGNUP_PAY_HINT[a] || '請依報名頁說明繳費。'}`));
   }
   const at = prop_('SIGNUP_SYNC_AT');
-  lines.push('', `資料時間：${at ? at.slice(5) : '—'}（櫃台登記繳費後，最晚約 1 小時更新）`, '有問題請直接在這裡留言，會由專人回覆 🙏');
+  lines.push('', `資料時間：${at ? at.slice(5) : '—'}（櫃台登記繳費後約 10 分鐘內會更新）`, '有問題請直接在這裡留言，會由專人回覆 🙏');
   return lines.join('\n');
 }
 
