@@ -170,6 +170,13 @@ function handleEvent_(ev) {
   if (ev.source.type !== 'user') {
     logGroup_(ev.source, '');
     logGroupMember_(ev.source, uid, '');
+    // 律師群組可以直接輸入「預約狀況」查詢（不用加「全全」）
+    const status = ev.type === 'message' && ev.message.type === 'text' && isLawyerGroup_(ev.source) &&
+      ev.message.text.trim().match(LAWYER_STATUS_RE);
+    if (status) {
+      reply_(ev.replyToken, [text_(lawyerBookingStatusText_(status[2]))]);
+      return;
+    }
     if (ev.type === 'message' && ev.message.type === 'text' && ev.message.text.trim().indexOf(ASSISTANT_NAME) === 0) {
       handleAssistant_(ev, uid, findMember_(uid), ev.message.text.trim(), true);
     }
@@ -696,7 +703,11 @@ function handleAssistant_(ev, uid, member, text, inGroup) {
   if (inGroup && /^(設為|設定)律師群組$/.test(q)) {
     if (!isOwnerUser_(uid)) return say('只有里長可以設定律師群組。');
     PropertiesService.getScriptProperties().setProperty('LAWYER_GROUP_ID', ev.source.groupId || ev.source.roomId);
-    return say('✅ 已設為律師群組。之後有人預約或取消律師諮詢，以及每次諮詢前一天晚上 6 點的預約名單，都會發到這個群組。\n要停止請輸入「全全 取消律師群組」。');
+    return say('✅ 已設為律師群組。之後有人預約或取消律師諮詢，以及每次諮詢前一天晚上 6 點的預約名單，都會發到這個群組。\n' +
+      '隨時查詢：在群組輸入「預約狀況」（只看某天：「預約狀況 10/20」）。\n要停止請輸入「全全 取消律師群組」。');
+  }
+  if (inGroup && isLawyerGroup_(ev.source) && /預約|名單/.test(q)) {
+    return say(lawyerBookingStatusText_((q.match(/\d{1,2}\s*[\/／月.-]\s*\d{1,2}/) || [''])[0]));
   }
   if (inGroup && q === '取消律師群組') {
     if (!isOwnerUser_(uid)) return say('只有里長可以變更律師群組。');
@@ -1764,6 +1775,53 @@ function notifyBookingCancelled_(b, who) {
   notifyLawyerGroup_(['❌ 律師諮詢預約取消（' + who + '）', slotLabel_(s), `👤 ${b.name}｜${b.topic}`].join('\n'));
 }
 
+function isLawyerGroup_(source) {
+  const gid = prop_('LAWYER_GROUP_ID');
+  return !!gid && !!source && (source.groupId || source.roomId) === gid;
+}
+
+const LAWYER_STATUS_RE = /^(預約狀況|預約名單|預約查詢|查詢預約|查預約)\s*(.*)$/;
+
+/**
+ * 律師群組查詢用：今天起各場次的預約名單（姓名、電話、類別），空的時段也列出來。
+ * 指定日期（例「10/20」）只看那一天；沒有人預約的日期縮成一行。
+ */
+function lawyerBookingStatusText_(query) {
+  const today = ymdAfter_(0);
+  const m = String(query || '').match(/(\d{1,2})\s*[\/／月.-]\s*(\d{1,2})/);
+  let only = '';
+  if (m) {
+    const y = +today.slice(0, 4), pad = n => ('0' + n).slice(-2);
+    only = y + '-' + pad(m[1]) + '-' + pad(m[2]);
+    if (only < ymdAfter_(-180)) only = (y + 1) + only.slice(4);
+  }
+  const slots = readAll_('律師時段').filter(s => only ? s.date === only : s.date >= today)
+    .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+  if (!slots.length) return only ? `${only.slice(5).replace('-', '/')} 沒有律師諮詢時段。` : '目前沒有律師諮詢時段。';
+  const bookings = readAll_('諮詢預約').filter(b => b.status === '已預約');
+  const lines = ['⚖️ 律師諮詢預約狀況（' + Utilities.formatDate(new Date(), TZ, 'MM/dd HH:mm') + ' 更新）'];
+  const days = [];
+  slots.forEach(s => {
+    const last = days[days.length - 1];
+    if (last && last.date === s.date) last.slots.push(s);
+    else days.push({ date: s.date, slots: [s] });
+  });
+  days.forEach(d => {
+    const s0 = d.slots[0];
+    const cap = d.slots.reduce((n, s) => n + Number(s.capacity || 1), 0);
+    const list = d.slots.map(s => ({ s, bs: bookings.filter(b => b.slotId === s.slotId) }));
+    const booked = list.reduce((n, x) => n + x.bs.length, 0);
+    lines.push('', `🗓 ${d.date.slice(5).replace('-', '/')}（${weekdayOf_(d.date)}）${s0.lawyer ? s0.lawyer + ' 律師' : ''}${s0.note ? '｜📍' + s0.note : ''}｜已約 ${booked}/${cap}`);
+    if (!booked && !only) return lines.push('　還沒有人預約');
+    list.forEach(x => {
+      if (!x.bs.length) return lines.push(`・${x.s.start}　（空）`);
+      x.bs.forEach(b => lines.push(`・${x.s.start}　${b.name}（${b.phone}）｜${b.topic}` + (b.detail ? '\n　　' + String(b.detail).slice(0, 60) : '')));
+    });
+  });
+  if (!only) lines.push('', '只看某天：輸入「預約狀況 10/20」');
+  return lines.join('\n').slice(0, 4900);
+}
+
 /** 前一天的預約名單（隔天有開時段才發）。 */
 function lawyerDigest_(date) {
   const slots = readAll_('律師時段').filter(s => s.date === date)
@@ -1777,6 +1835,7 @@ function lawyerDigest_(date) {
     if (!list.length) lines.push('（目前沒有預約）');
     list.forEach((b, i) => lines.push(`${i + 1}. ${b.name}（${b.phone}）｜${b.topic}` + (b.detail ? '\n   ' + String(b.detail).slice(0, 80) : '')));
   });
+  lines.push('', '隨時查詢：在群組輸入「預約狀況」');
   return lines.join('\n');
 }
 
