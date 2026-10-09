@@ -1350,6 +1350,13 @@ function isUnpaidSignup_(r) {
   return !/^已取消/.test(r.狀態) && !/已繳/.test(r.繳費);
 }
 
+/** 這筆報名的繳費期限（yyyy-MM-dd）；沒有期限回傳空字串。 */
+function unpaidDue_(r) {
+  const info = UNPAID_PAY_INFO[r.活動] || {};
+  const signed = String(r.報名時間 || '').slice(0, 10);
+  return info.due || (info.dueDays && /^\d{4}-\d{2}-\d{2}$/.test(signed) ? ymdAfter_(info.dueDays, signed) : '');
+}
+
 /** 每筆未繳報名的活動、姓名、繳費方式與期限（LINE 與 Email 共用）。 */
 function unpaidBlockLines_(rows) {
   const today = ymdAfter_(0);
@@ -1357,8 +1364,7 @@ function unpaidBlockLines_(rows) {
   const lines = [];
   rows.slice().sort((a, b) => String(a.活動 + a.場次梯次 + a.編號).localeCompare(String(b.活動 + b.場次梯次 + b.編號))).forEach(r => {
     const info = UNPAID_PAY_INFO[r.活動] || {};
-    const signed = String(r.報名時間 || '').slice(0, 10);
-    const due = info.due || (info.dueDays && /^\d{4}-\d{2}-\d{2}$/.test(signed) ? ymdAfter_(info.dueDays, signed) : '');
+    const due = unpaidDue_(r);
     lines.push('', `${r.活動}${r.場次梯次 ? '｜' + r.場次梯次 : ''}${r.編號 ? '｜' + r.編號 + ' 號' : ''}`,
       `　👤 ${r.姓名}${r.同行者 && r.活動 !== '🎭 變裝大賽' ? '（' + String(r.同行者).slice(0, 40) + '）' : ''}`,
       `　💰 ${info.pay || '請依報名頁說明繳費'}`);
@@ -1372,6 +1378,86 @@ function unpaidReminderText_(rows, head) {
     '⚠️ 逾期未繳費將取消名額，由候補遞補。',
     '✅ 已經繳了嗎？櫃台登記後約 10 分鐘會更新，輸入「查詢報名」可以確認。', '有問題請直接在這裡留言 🙏', '', '里長參選人莊晴全 敬上'])
     .join('\n').slice(0, 4900);
+}
+
+// ───────────────────────── 簡訊名單 ─────────────────────────
+// 給沒綁 LINE 的未繳報名者：產生「手機號碼＋個人化簡訊內容」的試算表，
+// 下載成 Excel 後上傳到簡訊平台（三竹、每日簡訊等）的「個人化／大量發送」。
+
+const SMS_ACTIVITY = {
+  '🌀 陀螺賽': { short: '陀螺賽', pay: '報名費200元', place: '裕國豐展或惠宇開朗櫃台' },
+  '🎭 變裝大賽': { short: '變裝大賽', pay: '保證金100元', place: '裕國豐展櫃台' },
+  '🧼 手工皂DIY': { short: '手工皂DIY', pay: '保證金100元', place: '總太共好櫃檯' },
+  '👜 彩繪提袋DIY': { short: '彩繪提袋', pay: '保證金100元', place: '總太悅來櫃檯' },
+};
+
+function smsText_(rows) {
+  const today = ymdAfter_(0);
+  const items = rows.map(r => {
+    const a = SMS_ACTIVITY[r.活動] || { short: r.活動, pay: '費用', place: '櫃台' };
+    const due = unpaidDue_(r);
+    return `${a.short}${r.編號 ? r.編號 + '號' : ''}請${due && due >= today ? '於' + (+due.slice(5, 7)) + '/' + (+due.slice(8, 10)) + '前' : '盡快'}至${a.place}繳${a.pay}`;
+  });
+  return `【北屯鬧起來】${rows[0].姓名}您好，您報名的活動尚未繳費：${items.join('；')}。逾期將取消名額，已繳請忽略。洽詢官方LINE @401mmxpw`;
+}
+
+/** 簡訊則數估算：70 字內 1 則，超過每 67 字 1 則。 */
+function smsSegments_(text) {
+  const n = Array.from(text).length;
+  return n <= 70 ? 1 : Math.ceil(n / 67);
+}
+
+/** 沒連到 LINE 的未繳報名，依手機號碼合併（家人同一支電話只發一則）。 */
+function smsTargets_() {
+  try { syncSignupsNow_(); } catch (err) { console.warn('產生簡訊名單前同步失敗，使用上次的名單：' + err.message); }
+  const covered = new Set();
+  Array.from(new Set(readAll_('報名確認紀錄').map(c => c.userId).filter(Boolean))).forEach(uid =>
+    (findMySignups_(uid).rows || []).forEach(r => covered.add(r._row)));
+  const byPhone = {};
+  let noPhone = 0;
+  readAll_('活動報名名單').filter(r => isUnpaidSignup_(r) && !covered.has(r._row)).forEach(r => {
+    const phone = normPhone_(r.電話);
+    if (!/^09\d{8}$/.test(phone)) return noPhone++;
+    (byPhone[phone] = byPhone[phone] || []).push(r);
+  });
+  return { byPhone, noPhone };
+}
+
+/** 在雲端硬碟產生簡訊名單試算表，回傳網址與筆數。 */
+function makeSmsList_() {
+  const t = smsTargets_();
+  const phones = Object.keys(t.byPhone);
+  const ss = SpreadsheetApp.create('簡訊名單_未繳費_' + Utilities.formatDate(new Date(), TZ, 'yyyyMMdd_HHmm'));
+  const sh = ss.getSheets()[0];
+  const out = phones.map(p => {
+    const rows = t.byPhone[p];
+    const text = smsText_(rows);
+    return [p, text, rows[0].姓名, rows.map(r => r.活動.split(' ').pop() + (r.編號 ? ' ' + r.編號 + '號' : '')).join('、'),
+      Array.from(text).length, smsSegments_(text)];
+  });
+  sh.getRange(1, 1, 1, 6).setValues([['手機號碼', '簡訊內容', '姓名', '報名項目', '字數', '預估則數']]).setFontWeight('bold');
+  if (out.length) {
+    sh.getRange(2, 1, out.length, 1).setNumberFormat('@');  // 電話保留開頭的 0
+    sh.getRange(2, 1, out.length, 6).setValues(out);
+  }
+  sh.setColumnWidth(2, 640);
+  // 放到備份資料夾（跟其他名單放一起；失敗就留在雲端硬碟根目錄）
+  try { if (prop_('BACKUP_FOLDER_ID')) DriveApp.getFileById(ss.getId()).moveTo(backupRoot_()); } catch (err) { console.warn('簡訊名單留在根目錄：' + err.message); }
+  return { url: ss.getUrl(), count: out.length, segments: out.reduce((n, r) => n + r[5], 0), noPhone: t.noPhone };
+}
+
+/** 試算表選單：產生簡訊名單。 */
+function makeSmsListFromMenu() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const r = makeSmsList_();
+    ui.alert('✅ 簡訊名單已產生',
+      `共 ${r.count} 支手機（沒綁 LINE、還沒繳費；同一支電話已合併），預估 ${r.segments} 則簡訊。` +
+      (r.noPhone ? `\n另有 ${r.noPhone} 筆電話格式不對，沒有放進名單。` : '') +
+      `\n\n打開名單 → 檔案 → 下載 → Microsoft Excel，再上傳到簡訊平台的「個人化／大量發送」：\n${r.url}`, ui.ButtonSet.OK);
+  } catch (err) {
+    ui.alert('產生簡訊名單失敗：' + err.message);
+  }
 }
 
 // ───────────────────────── Email 繳費提醒 ─────────────────────────
@@ -2472,6 +2558,7 @@ function onOpen() {
     .addItem('預覽報名快報', 'previewSignupReport')
     .addItem('立即同步活動報名名單', 'syncSignupsFromMenu')
     .addItem('寄 Email 繳費提醒（沒綁 LINE 的人）', 'sendUnpaidEmailsFromMenu')
+    .addItem('產生簡訊名單（沒綁 LINE 的人）', 'makeSmsListFromMenu')
     .addToUi();
 }
 
