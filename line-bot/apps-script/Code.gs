@@ -517,11 +517,34 @@ function signupLookupText_(uid, query) {
   const r = findMySignups_(uid, query);
   const ask = '請輸入「查詢報名 姓名 電話」（報名時填的姓名與電話），例如：\n查詢報名 王小明 0912345678';
   if (r.needInput) return '格式好像不太對 🙏\n' + ask;
+  if (query && r.rows.length) linkSignupsToUser_(uid, r.rows);
   if (!r.rows.length) {
     return (query ? '查不到符合的報名資料。請確認姓名與電話是否和報名時填寫的一樣。\n\n' : '目前查不到您的報名資料。\n\n') + ask +
       '\n\n還沒報名的話：https://ccs2024taiwan.pages.dev';
   }
   return signupRowsText_(r.rows);
+}
+
+/**
+ * 用「查詢報名 姓名 電話」查到的報名，記到「報名確認紀錄」（跟傳報名確認一樣），
+ * 之後的繳費提醒、報名成功通知、我的預約就連得到這位 LINE 使用者。
+ */
+function linkSignupsToUser_(uid, rows) {
+  try {
+    const have = new Set(readAll_('報名確認紀錄').filter(c => c.userId === uid).map(c => c.text));
+    let name = null;
+    rows.forEach(r => {
+      const key = Object.keys(SIGNUP_CONFIRM_LABEL).find(k => SIGNUP_CONFIRM_LABEL[k] === r.活動);
+      if (!key) return;
+      const text = `🔗查詢連結 ${key}報名確認|${r.姓名}|${r.場次梯次 || ''}|${r.編號 ? '編號' + r.編號 : ''}`;
+      if (have.has(text)) return;
+      if (name === null) name = lineDisplayName_(uid);
+      append_('報名確認紀錄', { at: now_(), userId: uid, displayName: name, text });
+      have.add(text);
+    });
+  } catch (err) {
+    console.error('記錄查詢連結失敗：' + err.message);
+  }
 }
 
 function signupRowsText_(list) {
