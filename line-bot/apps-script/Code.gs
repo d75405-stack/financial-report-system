@@ -222,7 +222,8 @@ function handleEvent_(ev) {
   // aibus 從 10/4 起收不到事件（希利克鳥 10/9 交接說明），不再等 aibus 回覆。
   const confirmKey = Object.keys(CONFIRM_REPLY).find(k => t.indexOf(k + '報名確認') >= 0);
   if (confirmKey) {
-    reply_(ev.replyToken, [text_(CONFIRM_REPLY[confirmKey])]);
+    // 繳費說明依「報名時間」選版本（10/12 以前／10/13 起報名），不是看收到訊息的時間，見 confirmReplyText_
+    reply_(ev.replyToken, [text_(confirmReplyText_(confirmKey, t))]);
     return;
   }
 
@@ -479,6 +480,29 @@ function publicLawyers_() {
     }));
 }
 
+// ───────────────────────── 報名截止與繳費規定（主辦 10/9 決定） ─────────────────────────
+// 四個活動的線上報名都到 10/15(四) 中午 12:00；截止後名額沒滿的場次／梯次改現場報名（活動當天到現場報名、現場繳費，額滿為止）。
+// 繳費：10/12(一)（含）以前報名的照原規定 10/12 前到櫃台繳；10/13(二) 起報名的（晚報名）活動當天報到時到現場繳，不算逾期。
+const SIGNUP_DEADLINE = '2026-10-15T12:00';
+const LATE_SIGNUP_FROM = '2026-10-13';
+const ONSITE_SIGNUP_TEXT = '線上報名到 10/15(四) 中午 12:00 截止；截止後名額沒滿的場次改為現場報名：活動當天到活動場地現場報名並繳費，額滿為止。';
+
+/** 線上報名是否已截止（比較方式同活動網站：台灣時間 nowTW > deadline，格式 "2026-10-15T12:00"）。 */
+function signupClosed_(deadline, ms) {
+  return Utilities.formatDate(new Date(ms || Date.now()), TZ, 'yyyy-MM-dd HH:mm').replace(' ', 'T') > String(deadline || SIGNUP_DEADLINE);
+}
+
+/** 晚報名：報名時間（台灣時間「YYYY-MM-DD HH:MM:SS」）在 10/13(二) 00:00 以後。不用事先到櫃台繳，活動當天報到時到現場繳，不算逾期。 */
+function isLateSignup_(r) {
+  const m = String((r && r.報名時間) || '').trim().match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  return !!m && [m[1], ('0' + m[2]).slice(-2), ('0' + m[3]).slice(-2)].join('-') >= LATE_SIGNUP_FROM;
+}
+
+/** 現在（或指定時間 ms）是不是已經到 10/13(二) 00:00（台灣時間）以後：在這之前收到的報名確認一定是 10/12 以前報名的。 */
+function lateSignupPeriod_(ms) {
+  return Utilities.formatDate(new Date(ms || Date.now()), TZ, 'yyyy-MM-dd') >= LATE_SIGNUP_FROM;
+}
+
 const BAG_CONFIRM_TEXT = [
   '👜 已收到您的彩繪提袋DIY報名!',
   '📅 10/17(六) 總太悅來社區・活力廚房(祥順路一段500號)',
@@ -487,8 +511,16 @@ const BAG_CONFIRM_TEXT = [
   '✅ 當天參加活動,保證金全額退還;沒到場的保證金捐給心路基金會。',
   '繳費完成後會再用 LINE 通知您!',
 ].join('\n');
+const BAG_CONFIRM_TEXT_LATE = [
+  '👜 已收到您的彩繪提袋DIY報名！',
+  '📅 10/17(六) 總太悅來社區・活力廚房（祥順路一段500號）',
+  '⏰ 第一梯次 14:00–15:00／第二梯次 15:30–16:30',
+  '💰 保證金 100 元：10/13(二) 起報名的不用事先到櫃檯繳，請在活動當天報到時到現場繳交。',
+  '✅ 當天參加活動，保證金全額退還；沒到場的保證金捐給心路基金會。',
+  '📋 輸入「查詢報名」可以確認報名資料。',
+].join('\n');
 
-/** 各活動「報名確認」訊息的自動回覆（繳費期限 10/12，里長指定）。 */
+/** 各活動「報名確認」訊息的自動回覆：10/12(一)（含）以前報名的要在 10/12 前繳，里長指定；10/13 起報名的見 CONFIRM_REPLY_LATE。 */
 const CONFIRM_REPLY = {
   '彩繪提袋': BAG_CONFIRM_TEXT,
   '陀螺賽': [
@@ -501,7 +533,7 @@ const CONFIRM_REPLY = {
   '變裝大賽': [
     '🎭 已收到您的百鬼嘉年華變裝大賽報名！',
     '📅 10/18(日) 18:00 裕國豐展（太順路60號），17:30–17:50 報到',
-    '💰 保證金每組 100 元，請在 10/12(一) 前到裕國豐展社區櫃台繳交（10/12 之後報名的請於報名後 7 天內），完成報到即退還；逾期視同放棄名額。',
+    '💰 保證金每組 100 元，請在 10/12(一) 前到裕國豐展社區櫃台繳交，完成報到即退還；逾期視同放棄名額。',
     '📋 繳費完成後會用 LINE 通知您，也可以輸入「查詢報名」確認繳費狀態。',
   ].join('\n'),
   'DIY手工皂': [
@@ -511,6 +543,103 @@ const CONFIRM_REPLY = {
     '📋 繳費完成後會用 LINE 通知您，也可以輸入「查詢報名」確認繳費狀態。',
   ].join('\n'),
 };
+// 10/13(二) 起報名的報名確認：不用事先到櫃台繳，活動當天報到時到現場繳交，不適用「逾期視同放棄」
+const CONFIRM_REPLY_LATE = {
+  '彩繪提袋': BAG_CONFIRM_TEXT_LATE,
+  '陀螺賽': [
+    '🌀 已收到您的戰鬥陀螺賽報名！',
+    '💰 報名費每場 200 元（全數捐心路基金會）：10/13(二) 起報名的不用事先到櫃台繳，請在比賽當天報到時到現場繳交。',
+    '🎫 比賽當天憑手環入場，並發放捐款收據。',
+    '📋 輸入「查詢報名」可以確認報名資料。',
+    '對戰表：https://ccs2024taiwan.pages.dev/bracket/',
+  ].join('\n'),
+  '變裝大賽': [
+    '🎭 已收到您的百鬼嘉年華變裝大賽報名！',
+    '📅 10/18(日) 18:00 裕國豐展（太順路60號），17:30–17:50 報到',
+    '💰 保證金每組 100 元：10/13(二) 起報名的不用事先到櫃台繳，請在活動當天報到時到現場繳交，完成報到即退還。',
+    '📋 輸入「查詢報名」可以確認報名資料。',
+  ].join('\n'),
+  'DIY手工皂': [
+    '🧼 已收到您的甜點造型手工皂DIY報名！',
+    '📅 10/18(日) 總太共好共享食堂（祥順路一段480號）',
+    '💰 保證金 100 元：10/13(二) 起報名的不用事先到櫃檯繳，請在活動當天報到時到現場繳交，完成報到即退還。',
+    '📋 輸入「查詢報名」可以確認報名資料。',
+  ].join('\n'),
+};
+
+// 10/13 起收到、但在「活動報名名單」找不到這筆報名（或同名的兩種都有）時：兩種繳費規定都寫，請對方依自己的報名時間
+const CONFIRM_REPLY_EITHER = {
+  '彩繪提袋': [
+    '👜 已收到您的彩繪提袋DIY報名！',
+    '📅 10/17(六) 總太悅來社區・活力廚房（祥順路一段500號）',
+    '⏰ 第一梯次 14:00–15:00／第二梯次 15:30–16:30',
+    '💰 保證金 100 元，繳交方式依報名時間：',
+    '・10/12(一)（含）以前報名的：請在 10/12(一) 前到總太悅來櫃檯繳交，繳完才算報名完成；10/12 前沒繳視同放棄，由候補遞補。',
+    '・10/13(二) 起報名的：不用事先到櫃檯繳，請在活動當天報到時到現場繳交。',
+    '✅ 當天參加活動，保證金全額退還；沒到場的保證金捐給心路基金會。',
+    '📋 輸入「查詢報名」可以確認報名資料與繳費狀態。',
+  ].join('\n'),
+  '陀螺賽': [
+    '🌀 已收到您的戰鬥陀螺賽報名！',
+    '💰 報名費每場 200 元（全數捐心路基金會），繳交方式依報名時間：',
+    '・10/12(一)（含）以前報名的：請在 10/12(一) 前到裕國豐展或惠宇開朗社區櫃台繳交，繳完才算報名完成；逾期視同放棄，由候補遞補。',
+    '・10/13(二) 起報名的：不用事先到櫃台繳，請在比賽當天報到時到現場繳交。',
+    '🎫 比賽當天憑手環入場，並發放捐款收據。',
+    '📋 輸入「查詢報名」可以確認報名資料與繳費狀態。',
+    '對戰表：https://ccs2024taiwan.pages.dev/bracket/',
+  ].join('\n'),
+  '變裝大賽': [
+    '🎭 已收到您的百鬼嘉年華變裝大賽報名！',
+    '📅 10/18(日) 18:00 裕國豐展（太順路60號），17:30–17:50 報到',
+    '💰 保證金每組 100 元，完成報到即退還，繳交方式依報名時間：',
+    '・10/12(一)（含）以前報名的：請在 10/12(一) 前到裕國豐展社區櫃台繳交；逾期視同放棄名額。',
+    '・10/13(二) 起報名的：不用事先到櫃台繳，請在活動當天報到時到現場繳交。',
+    '📋 輸入「查詢報名」可以確認報名資料與繳費狀態。',
+  ].join('\n'),
+  'DIY手工皂': [
+    '🧼 已收到您的甜點造型手工皂DIY報名！',
+    '📅 10/18(日) 總太共好共享食堂（祥順路一段480號）',
+    '💰 保證金 100 元，完成報到即退還，繳交方式依報名時間：',
+    '・10/12(一)（含）以前報名的：請在 10/12(一) 前到總太共好櫃檯繳交，繳完才算報名完成；逾期視同放棄，由候補遞補。',
+    '・10/13(二) 起報名的：不用事先到櫃檯繳，請在活動當天報到時到現場繳交。',
+    '📋 輸入「查詢報名」可以確認報名資料與繳費狀態。',
+  ].join('\n'),
+};
+
+// 報名確認找不到報名時強制同步名單的間隔（剛報名的通常還沒同步進名單；避免連續傳確認訊息一直打網站）
+const CONFIRM_SYNC_COOLDOWN_SEC = 20;
+
+/**
+ * 報名確認的回覆，依「報名時間」選繳費說明（主辦 10/9 決定，以 10/13(二) 00:00 為界）：
+ * 1. 10/13 00:00 以前收到的確認：報名一定在 10/12 以前 → 原本的回覆（10/12 前到櫃台繳，逾期視同放棄），不用查名單。
+ * 2. 之後收到的（晚傳、重傳、後來才綁 LINE、剛報名）：用確認訊息的活動＋姓名＋場次＋編號到「活動報名名單」找這筆報名，
+ *    10/13 起報名的回 CONFIRM_REPLY_LATE，10/12 以前報名的照舊回 CONFIRM_REPLY。
+ * 3. 找不到、或同名的兩種都有：回兩種規定都寫的 CONFIRM_REPLY_EITHER，不猜。
+ */
+function confirmReplyText_(key, t, ms) {
+  if (!lateSignupPeriod_(ms)) return CONFIRM_REPLY[key];
+  let rows = [];
+  try { rows = confirmSignupRows_(t); } catch (err) { console.warn('報名確認查名單失敗：' + err.message); }
+  const live = rows.filter(r => !/^已取消/.test(r.狀態));  // 取消後重新報名的，以還有效的那筆為準
+  const kinds = Array.from(new Set((live.length ? live : rows).map(isLateSignup_)));
+  if (kinds.length === 1) return (kinds[0] ? CONFIRM_REPLY_LATE : CONFIRM_REPLY)[key];
+  return CONFIRM_REPLY_EITHER[key] || CONFIRM_REPLY[key];
+}
+
+/** 報名確認訊息對到的報名（同 findMySignups_ 的比對方式）；名單裡還沒有（剛報名、還沒同步）就同步一次再找。 */
+function confirmSignupRows_(t) {
+  const c = { text: t, at: now_() };
+  const find = () => confirmRows_(readAll_('活動報名名單'), c);
+  const before = prop_('SIGNUP_SYNC_AT');
+  ensureFreshSignups_();
+  let rows = find();
+  if (rows.length || prop_('SIGNUP_SYNC_AT') !== before) return rows;  // 對到了，或剛剛已經同步過
+  const cache = CacheService.getScriptCache();
+  if (cache.get('confirm_sync')) return rows;
+  cache.put('confirm_sync', '1', CONFIRM_SYNC_COOLDOWN_SEC);
+  try { syncSignupsNow_(); rows = find(); } catch (err) { console.warn('報名確認前同步失敗，使用上次的名單：' + err.message); }
+  return rows;
+}
 
 // DIY 每梯次正取額滿後開放 5 位候補（活動網站設定）。候補不用先繳保證金，遞補時由主辦用官方 LINE 通知。
 const WAITLIST_CONFIRM = [
@@ -571,9 +700,16 @@ function signupStatus_(status, wait) {
 
 const SIGNUP_PAY_HINT = {
   '🌀 陀螺賽': '報名費每場 200 元（全數捐心路基金會），請於 10/12(一) 前至裕國豐展或惠宇開朗社區櫃台繳交。',
-  '🎭 變裝大賽': '保證金每組 100 元，請於 10/12(一) 前至裕國豐展社區櫃台繳交（10/12 之後報名的請於報名後 7 日內），完成報到即退還。',
+  '🎭 變裝大賽': '保證金每組 100 元，請於 10/12(一) 前至裕國豐展社區櫃台繳交，完成報到即退還。',
   '🧼 手工皂DIY': '保證金 100 元，請於 10/12(一) 前至總太共好櫃檯繳交，完成報到即退還。',
   '👜 彩繪提袋DIY': '保證金 100 元，請於 10/12(一) 前至總太悅來櫃檯繳交，當天參加全額退還。',
+};
+// 10/13(二) 起報名的（晚報名）：不用事先到櫃台繳，活動當天報到時到現場繳交，沒有逾期取消的問題
+const LATE_PAY_HINT = {
+  '🌀 陀螺賽': '報名費每場 200 元（全數捐心路基金會），不用事先到櫃台繳，請於比賽當天報到時到現場繳交。',
+  '🎭 變裝大賽': '保證金每組 100 元，不用事先到櫃台繳，請於活動當天報到時（17:30–17:50）到現場繳交，完成報到即退還。',
+  '🧼 手工皂DIY': '保證金 100 元，不用事先到櫃檯繳，請於活動當天報到時到現場繳交，完成報到即退還。',
+  '👜 彩繪提袋DIY': '保證金 100 元，不用事先到櫃檯繳，請於活動當天報到時到現場繳交，當天參加全額退還。',
 };
 // 從候補遞補上來的：不套原本的期限（可能截止後才遞補），依主辦通知的時間繳
 const PROMOTED_PAY_HINT = {
@@ -667,7 +803,8 @@ function signupLookupText_(uid, query) {
   if (query && r.rows.length) linkSignupsToUser_(uid, r.rows);
   if (!r.rows.length) {
     return (query ? '查不到符合的報名資料。請確認姓名與電話是否和報名時填寫的一樣。\n\n' : '目前查不到您的報名資料。\n\n') + ask +
-      '\n\n還沒報名的話：https://ccs2024taiwan.pages.dev';
+      '\n\n還沒報名的話：' + (signupClosed_() ? '線上報名已在 10/15(四) 中午 12:00 截止，名額沒滿的場次可以在活動當天到活動場地現場報名並繳費，額滿為止。'
+        : 'https://ccs2024taiwan.pages.dev\n' + ONSITE_SIGNUP_TEXT);
   }
   return signupRowsText_(r.rows);
 }
@@ -725,14 +862,16 @@ function linkWaitConfirms_(list) {
 function signupRowsText_(list) {
   const rows = list.slice().sort((a, b) => String(a.活動 + a.場次梯次 + a.編號).localeCompare(String(b.活動 + b.場次梯次 + b.編號)));
   const lines = ['📋 您的報名資料'];
-  const unpaid = new Map();  // 繳費方式：一般報名照活動的期限；候補遞補上來的依主辦通知的時間
+  const unpaid = new Map();  // 繳費方式：一般報名照活動的期限；候補遞補上來的依主辦通知的時間；10/13 起報名的活動當天繳
   rows.forEach(x => {
     const cancelled = /^已取消/.test(x.狀態);
     const waiting = !cancelled && isWaitlistSignup_(x);
     const promoted = !cancelled && isPromotedSignup_(x) && PROMOTED_PAY_HINT[x.活動];
+    const late = !cancelled && !waiting && !promoted && isLateSignup_(x) && LATE_PAY_HINT[x.活動];
     const paid = /已繳/.test(x.繳費);
     if (!cancelled && !waiting && !paid) {
-      unpaid.set(x.活動 + (promoted ? '|遞補' : ''), (promoted ? PROMOTED_PAY_HINT : SIGNUP_PAY_HINT)[x.活動] || '請依報名頁說明繳費。');
+      unpaid.set(x.活動 + (promoted ? '|遞補' : late ? '|晚報名' : ''),
+        (promoted ? PROMOTED_PAY_HINT : late ? LATE_PAY_HINT : SIGNUP_PAY_HINT)[x.活動] || '請依報名頁說明繳費。');
     }
     const waitNo = waitNoOf_(x);
     lines.push('', `${x.活動}${x.場次梯次 ? '｜' + x.場次梯次 : ''}${x.編號 ? '｜' + x.編號 + ' 號' : ''}`,
@@ -740,11 +879,12 @@ function signupRowsText_(list) {
       `　${cancelled ? '❌ 已取消'
         : waiting && paid ? `⏳ 候補中（${waitNo ? '候補第' + waitNo + '位' : '候補'}）・✅ 保證金已收到，遞補成功會通知您`
         : waiting ? `⏳ 候補中（${waitNo ? '候補第' + waitNo + '位，' : ''}有名額會依序遞補並通知，候補期間不用先繳保證金）`
-        : paid ? '✅ 已繳費' : promoted ? '⬆️ 已由候補遞補為正取・⚠️ 尚未繳費' : '⚠️ 尚未繳費'}`);
+        : paid ? '✅ 已繳費' : promoted ? '⬆️ 已由候補遞補為正取・⚠️ 尚未繳費'
+        : late ? '🕒 尚未繳費（活動當天報到時到現場繳交）' : '⚠️ 尚未繳費'}`);
   });
   if (unpaid.size) {
     lines.push('', '💰 繳費方式');
-    unpaid.forEach((hint, k) => lines.push(`・${k.split('|')[0]}${/\|遞補$/.test(k) ? '（候補遞補）' : ''}：${hint}`));
+    unpaid.forEach((hint, k) => lines.push(`・${k.split('|')[0]}${/\|遞補$/.test(k) ? '（候補遞補）' : /\|晚報名$/.test(k) ? '（10/13 起報名）' : ''}：${hint}`));
   }
   const at = prop_('SIGNUP_SYNC_AT');
   lines.push('', `資料時間：${at ? at.slice(5) : '—'}（櫃台登記繳費後約 10 分鐘內會更新）`, '有問題請直接在這裡留言，會由專人回覆 🙏');
@@ -888,12 +1028,13 @@ const HALLOWEEN_INFO = [
   '　地圖 https://ccs2024taiwan.pages.dev/map/',
   '🌀 戰鬥陀螺64強爭霸賽：10/17 惠宇開朗（開放組、廍子陀螺王）、10/18 裕國豐展（親子賽、變裝限定場）',
   '　https://ccs2024taiwan.pages.dev/signup/beyblade/',
-  '🎭 百鬼嘉年華變裝大賽：10/18 18:00 裕國豐展，報名到 10/14 12:00',
+  '🎭 百鬼嘉年華變裝大賽：10/18 18:00 裕國豐展',
   '　https://ccs2024taiwan.pages.dev/signup/cosplay/',
   '🧼 甜點造型手工皂DIY：10/18 總太共好共享食堂',
   '　https://ccs2024taiwan.pages.dev/signup/diy/',
   '👜 彩繪提袋DIY：10/17 總太悅來活力廚房',
   '　https://ccs2024taiwan.pages.dev/signup/bag/',
+  '📝 陀螺賽、變裝大賽、手工皂、彩繪提袋：線上報名到 10/15(四) 中午 12:00；截止後名額沒滿的場次改為現場報名（活動當天到現場報名並繳費，額滿為止）',
   '🛍 萬聖市集與特約商家優惠',
   '　https://ccs2024taiwan.pages.dev/shops/',
   '',
@@ -1132,8 +1273,8 @@ const KNOWLEDGE_SEED = [
   ['北屯鬧起來活動總覽', '2026「北屯鬧起來」廍子里萬聖節活動於 2026/10/17（六）至 10/18（日）舉行，內容有百鬼夜行集章、戰鬥陀螺64強爭霸賽、百鬼嘉年華變裝大賽、甜點造型手工皂DIY、萬聖市集與特約商家優惠。活動網站：https://ccs2024taiwan.pages.dev'],
   ['百鬼夜行集章', '全里 18 個集章點（16 個主要關卡＋2 個前哨站），10/12–10/16 另有前哨戰限定章。路線、關卡玩法與導航請看集章地圖：https://ccs2024taiwan.pages.dev/map/ ，Q版街道地圖：https://ccs2024taiwan.pages.dev/gmap/'],
   ['戰鬥陀螺賽', '共 4 場次：10/17 上午「開放組」、10/17 下午「廍子陀螺王」，地點惠宇開朗（太原路三段1299號）；10/18 上午「親子賽」、10/18 下午「變裝限定場」，地點裕國豐展（太順路60號）。每場最多 64 位選手，報名費每場 200 元，全數捐給心路基金會，繳費地點為兩個社區櫃台。報名：https://ccs2024taiwan.pages.dev/signup/beyblade/ ，對戰表：https://ccs2024taiwan.pages.dev/bracket/'],
-  ['百鬼嘉年華變裝大賽', '10/18 18:00 於裕國豐展（太順路60號），17:30–17:50 報到，限 40 組，需繳保證金 100 元，報名截止 10/14 12:00。報名：https://ccs2024taiwan.pages.dev/signup/cosplay/'],
-  ['甜點造型手工皂DIY', '10/18 於總太共好共享食堂（祥順路一段480號），兩梯次 14:00–15:00、15:30–16:30，各 40 人，需於 10/12(一) 前繳保證金 100 元。報名：https://ccs2024taiwan.pages.dev/signup/diy/'],
+  ['百鬼嘉年華變裝大賽', '10/18 18:00 於裕國豐展（太順路60號），17:30–17:50 報到，限 40 組，需繳保證金 100 元，線上報名截止 10/15(四) 中午 12:00（截止後名額沒滿改現場報名）。報名：https://ccs2024taiwan.pages.dev/signup/cosplay/'],
+  ['甜點造型手工皂DIY', '10/18 於總太共好共享食堂（祥順路一段480號），兩梯次 14:00–15:00、15:30–16:30，各 40 人，需繳保證金 100 元（10/12(一) 以前報名的 10/12 前繳，10/13 起報名的活動當天報到時繳）。報名：https://ccs2024taiwan.pages.dev/signup/diy/'],
   ['報名後流程', '報名成功後頁面會自動開啟官方 LINE 並預填「報名確認」訊息，請按傳送，就會收到繳費提醒。完成繳費後會再收到繳費完成通知。'],
   ['特約商家', '廍子里大小事特約商家共 40 家，提供活動期間優惠，名單與社群 QR Code：https://ccs2024taiwan.pages.dev/shops/'],
   ['驅魔小遊戲', '線上小遊戲有「收集闖關版」與「對戰 RPG 版」，從活動網站首頁進入即可遊玩，進度存在手機上。'],
@@ -1158,19 +1299,52 @@ function knowledgeSheet_() {
   return sh;
 }
 
+/**
+ * 試算表「知識庫」是 10/4 AI 問答上線時用當時的 KNOWLEDGE_SEED 建立的；knowledgeSheet_ 只在試算表空白時才寫入預設內容，
+ * 所以之後改 KNOWLEDGE_SEED 不會更新試算表，變裝大賽舊的截止時間（10/14 中午）、手工皂舊的繳費期限還留在裡面。
+ * 這裡列出程式以前寫過、主辦 10/9 決定後已經不對的句子（含 KNOWLEDGE_EXTRA 舊版被複製到試算表的情形），
+ * knowledgeText_ 讀取時換成新的說法並寫回試算表；只換這幾句，同一格裡手動加的其他內容不動。
+ */
+const KNOWLEDGE_STALE_FIXES = [
+  [/(?:線上)?報名截止 10\/14(?:\([一二三四五六日]\))? ?(?:中午 ?)?12:00/g, '線上報名截止 10/15(四) 中午 12:00（截止後名額沒滿改現場報名）'],
+  [/需於 10\/1[23](?:\([一二]\))? ?前繳保證金 100 元/g, '需繳保證金 100 元（10/12(一) 以前報名的 10/12 前繳，10/13 起報名的活動當天報到時繳）'],
+  [/需在 10\/1[23](?:\([一二]\))? ?前到總太悅來櫃檯繳保證金 100 元才算報名完成/g,
+    '需繳保證金 100 元：10/12(一) 以前報名的要在 10/12 前到總太悅來櫃檯繳交才算報名完成，10/13 起報名的活動當天報到時到現場繳交'],
+  [/(?:線上)?報名截止後不再收候補。/g, '線上報名截止（10/15(四) 中午 12:00）後不再收候補，已登記的候補照常依序遞補。'],
+];
+
+/** 把知識庫內容裡已經過時的截止／繳費句子換成新的說法（見 KNOWLEDGE_STALE_FIXES）；沒有就原樣回傳。 */
+function fixStaleKnowledge_(text) {
+  return KNOWLEDGE_STALE_FIXES.reduce((t, f) => t.replace(f[0], f[1]), String(text));
+}
+
 function knowledgeText_() {
-  const rows = knowledgeSheet_().getDataRange().getValues().slice(1)
-    .filter(r => String(r[0]).trim() && String(r[1]).trim());
-  // 程式內建的補充資料：試算表裡還沒有同名主題時才加進去（試算表裡的內容優先）
-  const topics = rows.map(r => String(r[0]).trim());
-  KNOWLEDGE_EXTRA.forEach(k => { if (topics.indexOf(k[0]) < 0) rows.push(k); });
-  return rows.map(r => '## ' + String(r[0]).trim() + '\n' + String(r[1]).trim()).join('\n\n');
+  const sh = knowledgeSheet_();
+  const rows = [];
+  sh.getDataRange().getValues().forEach((r, i) => {
+    const topic = String(r[0]).trim(), body = String(r[1]).trim();
+    if (!i || !topic || !body) return;  // 第一列是標題
+    const fixed = fixStaleKnowledge_(body);
+    if (fixed !== body) {
+      // 寫回試算表，里長打開看到的跟全全用的一樣（寫不進去也照樣用新的說法回答）
+      try { sh.getRange(i + 1, 2).setValue(fixed); } catch (err) { console.warn('知識庫更新舊說法失敗：' + err.message); }
+    }
+    rows.push([topic, fixed]);
+  });
+  // 程式內建的補充資料：試算表裡還沒有同名主題時才加進去（試算表裡的內容優先）；
+  // 但主題標「以此為準」的（報名截止、繳費期限）一律用程式裡的最新版本，試算表裡同名的舊內容不用
+  const latest = new Set(KNOWLEDGE_EXTRA.filter(k => /以此為準/.test(k[0])).map(k => k[0]));
+  const out = rows.filter(r => !latest.has(r[0]));
+  const topics = out.map(r => r[0]);
+  KNOWLEDGE_EXTRA.forEach(k => { if (topics.indexOf(k[0]) < 0) out.push(k); });
+  return out.map(r => '## ' + r[0] + '\n' + r[1]).join('\n\n');
 }
 
 const KNOWLEDGE_EXTRA = [
-  ['繳費期限（最新，以此為準）', '所有活動（陀螺賽報名費、變裝大賽／手工皂DIY／彩繪提袋DIY 保證金）都要在 10/12(一) 前繳完（含 10/12 當天），逾期未繳視同放棄名額，由候補遞補。變裝大賽 10/12 之後才報名的，請在報名後 7 天內繳交。陀螺賽到裕國豐展或惠宇開朗社區櫃台繳，變裝到裕國豐展社區櫃台，手工皂到總太共好櫃檯，彩繪提袋到總太悅來櫃檯。'],
-  ['彩繪提袋DIY', '10/17(六) 於總太悅來社區・活力廚房(祥順路一段500號)，兩梯次 14:00–15:00、15:30–16:30，每梯 30 人，活動免費，需在 10/12(一) 前到總太悅來櫃檯繳保證金 100 元才算報名完成，當天參加全額退還，沒到場的保證金捐給心路基金會。報名：https://ccs2024taiwan.pages.dev/signup/bag/'],
-  ['DIY候補', '手工皂DIY與彩繪提袋DIY每個梯次正取額滿後，各開放 5 位候補，直接在報名頁選梯次登記。候補不用先繳保證金；有人取消或逾期未繳時依候補順序遞補，遞補時會用官方 LINE 通知，接到通知後再繳保證金。報名截止後不再收候補。'],
+  ['報名截止與現場報名（最新，以此為準）', '戰鬥陀螺賽（4 場）、百鬼嘉年華變裝大賽、甜點造型手工皂DIY、彩繪提袋DIY 的線上報名全部到 10/15(四) 中午 12:00 截止。截止後，名額還沒滿的場次／梯次改為現場報名：活動當天到活動場地現場報名、現場繳費，額滿為止；已經額滿的場次就不再收。手工皂DIY 與彩繪提袋DIY 看正取名額，正取滿了就算額滿；截止後有人取消，仍依候補順序遞補。現場報名請直接到活動場地辦理，網站沒有現場報名表單。'],
+  ['繳費期限（最新，以此為準）', '依報名時間分兩種：① 10/12(一)（含）以前報名的：所有活動（陀螺賽報名費、變裝大賽／手工皂DIY／彩繪提袋DIY 保證金）都要在 10/12(一) 前到櫃台繳完（含 10/12 當天），逾期未繳視同放棄名額，由候補遞補。陀螺賽到裕國豐展或惠宇開朗社區櫃台繳，變裝到裕國豐展社區櫃台，手工皂到總太共好櫃檯，彩繪提袋到總太悅來櫃檯。② 10/13(二) 起報名的：不用事先到櫃台繳，活動當天報到時到現場繳交報名費或保證金，不會因為還沒繳而取消名額。候補遞補上來的，依主辦通知的時間繳。'],
+  ['彩繪提袋DIY', '10/17(六) 於總太悅來社區・活力廚房(祥順路一段500號)，兩梯次 14:00–15:00、15:30–16:30，每梯 30 人，活動免費，需繳保證金 100 元：10/12(一) 以前報名的要在 10/12 前到總太悅來櫃檯繳交才算報名完成，10/13 起報名的活動當天報到時到現場繳交；當天參加全額退還，沒到場的保證金捐給心路基金會。線上報名到 10/15(四) 中午 12:00。報名：https://ccs2024taiwan.pages.dev/signup/bag/'],
+  ['DIY候補', '手工皂DIY與彩繪提袋DIY每個梯次正取額滿後，各開放 5 位候補，直接在報名頁選梯次登記。候補不用先繳保證金；有人取消或逾期未繳時依候補順序遞補，遞補時會用官方 LINE 通知，接到通知後再繳保證金。線上報名截止（10/15(四) 中午 12:00）後不再收候補，已登記的候補照常依序遞補。'],
 ];
 
 const AI_SYSTEM_PROMPT = [
@@ -1178,6 +1352,7 @@ const AI_SYSTEM_PROMPT = [
   '',
   '回答規則：',
   '- 只根據下方「知識庫」的內容回答。知識庫沒有的資訊，不要猜，直接說目前沒有這項資訊，並請對方在聊天室留言，會由真人回覆。',
+  '- 報名截止、現場報名與繳費期限，以知識庫中主題標示「以此為準」的內容為準（即使其他主題的寫法不同）。',
   '- 使用台灣繁體中文，語氣親切、簡潔，像鄰里間的熱心幫手。回答控制在 150 字內，必要時附上知識庫中的網址。',
   '- 這是 LINE 純文字訊息，不要用 Markdown（不要用 #、**、表格）。需要列點時用「・」。',
   '- 不提供個別法律、醫療或財務建議。',
@@ -1401,10 +1576,19 @@ function ccsUnpaid_(form, groupCol, paidCol, unpaidValue) {
     }
     const out = { _total: 0 };
     const si = head.indexOf('報名狀態'); // 活動網站可取消報名：已取消的不算未繳；DIY 候補不用先繳，也不算
+    // 10/13 起報名的活動當天繳、不算逾期：另外記在 _late（{ 分組值: 數, _total }），有才會出現；
+    // 候補遞補上來的照舊算未繳（依主辦通知繳，同 payRule_ 與網站後台的「晚報名・當天繳」不標遞補的）
+    const ti = head.indexOf('報名時間'), wi = head.indexOf('正取/候補');
     rows.forEach(r => {
       if (r[pi] !== unpaidValue) return;
       if (si >= 0 && /^(已取消|候補)/.test(r[si] || '')) return;
       const g = gi >= 0 ? r[gi] : '_';
+      if (ti >= 0 && !(wi >= 0 && /候補遞補/.test(r[wi] || '')) && isLateSignup_({ 報名時間: r[ti] })) {
+        const late = out._late = out._late || { _total: 0 };
+        late[g] = (late[g] || 0) + 1;
+        late._total++;
+        return;
+      }
       out[g] = (out[g] || 0) + 1;
       out._total++;
     });
@@ -1603,20 +1787,22 @@ SCHEDULED_BROADCASTS.push({ id: 'unpaid-all-1009', at: '2026-10-09T12:45:00+08:0
     '',
     '里長參選人莊晴全 敬上',
   ].join('\n') });
-// 10/13 早上 9 點：整理還沒繳費的名單（試算表）並用 LINE 傳連結給里長
+// 10/13 早上 9 點：整理還沒繳費的名單（試算表）並用 LINE 傳連結給里長。
+// 10/13 起報名的（晚報名）活動當天繳、不算逾期：名單另列一類，通知裡和逾期未繳分開算（見 makeUnpaidList_）
 SCHEDULED_BROADCASTS.push({ id: 'unpaid-list-1013', at: '2026-10-13T09:00:00+08:00', title: '10/13 未繳費名單', kind: 'unpaidList' });
 const BROADCAST_WINDOW_MS = 3 * 3600e3;
 
 /**
- * 各活動的繳費方式與期限：里長指定所有繳費 10/12(一) 前繳完（含當天）。
- * 變裝大賽還在收報名：10/12 之後報名的，期限是報名後 7 天（lateDays）。
+ * 各活動的繳費方式與期限（主辦 10/9 決定）：
+ * 10/12(一)（含）以前報名的：10/12 前到櫃台繳完（含當天），逾期視同放棄（pay、due）。
+ * 10/13(二) 起報名的（晚報名，isLateSignup_）：不用事先到櫃台繳，活動當天報到時到現場繳（latePay），沒有期限、不算逾期。
  */
 const PAY_DEADLINE = '2026-10-12';
 const UNPAID_PAY_INFO = {
-  '🌀 陀螺賽': { pay: '報名費 200 元｜至裕國豐展或惠宇開朗社區櫃台繳交', due: PAY_DEADLINE },
-  '🎭 變裝大賽': { pay: '保證金 100 元｜至裕國豐展社區櫃台繳交，完成報到即退還', due: PAY_DEADLINE, lateDays: 7 },
-  '🧼 手工皂DIY': { pay: '保證金 100 元｜至總太共好櫃檯繳交，完成報到即退還', due: PAY_DEADLINE },
-  '👜 彩繪提袋DIY': { pay: '保證金 100 元｜至總太悅來櫃檯繳交，當天參加全額退還', due: PAY_DEADLINE },
+  '🌀 陀螺賽': { pay: '報名費 200 元｜至裕國豐展或惠宇開朗社區櫃台繳交', latePay: '報名費 200 元｜比賽當天報到時到現場繳交', due: PAY_DEADLINE },
+  '🎭 變裝大賽': { pay: '保證金 100 元｜至裕國豐展社區櫃台繳交，完成報到即退還', latePay: '保證金 100 元｜活動當天報到時到現場繳交，完成報到即退還', due: PAY_DEADLINE },
+  '🧼 手工皂DIY': { pay: '保證金 100 元｜至總太共好櫃檯繳交，完成報到即退還', latePay: '保證金 100 元｜活動當天報到時到現場繳交，完成報到即退還', due: PAY_DEADLINE },
+  '👜 彩繪提袋DIY': { pay: '保證金 100 元｜至總太悅來櫃檯繳交，當天參加全額退還', latePay: '保證金 100 元｜活動當天報到時到現場繳交，當天參加全額退還', due: PAY_DEADLINE },
 };
 
 function isUnpaidSignup_(r) {
@@ -1624,12 +1810,38 @@ function isUnpaidSignup_(r) {
   return !/^已取消/.test(r.狀態) && !isWaitlistSignup_(r) && !/已繳/.test(r.繳費);
 }
 
-/** 這筆報名的繳費期限（yyyy-MM-dd）；沒有期限回傳空字串。 */
+/**
+ * 未繳報名適用哪一種繳費規定：
+ * promoted＝候補遞補（依主辦通知的時間繳）；late＝10/13 起報名（活動當天繳，不算逾期）；deadline＝10/12 前繳，逾期視同放棄。
+ * 候補遞補的不論哪天登記都照舊依主辦通知（候補行為不變），跟網站後台一致：後台的「晚報名・當天繳」不標遞補上來的（promoted_at 有值）。
+ */
+function payRule_(r) {
+  if (isPromotedSignup_(r) && PROMOTED_PAY_HINT[r.活動]) return 'promoted';
+  return isLateSignup_(r) ? 'late' : 'deadline';
+}
+
+/** 有沒有適用 10/12 期限（逾期取消名額）的報名；只有候補遞補或晚報名的不寫逾期取消。 */
+function anyDeadline_(rows) {
+  return rows.some(r => payRule_(r) === 'deadline');
+}
+
+/** 名單用的繳費類別：10/12 過後還沒繳的一般報名寫「逾期未繳」。 */
+function payRuleLabel_(r) {
+  const rule = payRule_(r);
+  return rule === 'promoted' ? '候補遞補・依主辦通知' : rule === 'late' ? '晚報名・活動當天繳'
+    : ymdAfter_(0) > PAY_DEADLINE ? '逾期未繳' : '10/12 前繳';
+}
+
+/** 繳費提醒的逾期警語：有晚報名一起列時，註明只適用 10/12 以前報名的。 */
+function overdueWarnLines_(rows) {
+  if (!anyDeadline_(rows)) return [];
+  return [rows.some(r => payRule_(r) === 'late') ? '⚠️ 10/12(一) 以前報名的，逾期未繳費將取消名額，由候補遞補。' : '⚠️ 逾期未繳費將取消名額，由候補遞補。'];
+}
+
+/** 這筆報名的繳費期限（yyyy-MM-dd）；沒有期限（10/13 起報名、活動當天繳）回傳空字串。 */
 function unpaidDue_(r) {
-  const info = UNPAID_PAY_INFO[r.活動] || {};
-  const signed = String(r.報名時間 || '').slice(0, 10);
-  if (info.lateDays && /^\d{4}-\d{2}-\d{2}$/.test(signed) && signed > info.due) return ymdAfter_(info.lateDays, signed);
-  return info.due || '';
+  if (isLateSignup_(r)) return '';
+  return (UNPAID_PAY_INFO[r.活動] || {}).due || '';
 }
 
 /** 每筆未繳報名的活動、姓名、繳費方式與期限（LINE 與 Email 共用）。 */
@@ -1640,11 +1852,14 @@ function unpaidBlockLines_(rows) {
   rows.slice().sort((a, b) => String(a.活動 + a.場次梯次 + a.編號).localeCompare(String(b.活動 + b.場次梯次 + b.編號))).forEach(r => {
     const info = UNPAID_PAY_INFO[r.活動] || {};
     const due = unpaidDue_(r);
+    const rule = payRule_(r);
     lines.push('', `${r.活動}${r.場次梯次 ? '｜' + r.場次梯次 : ''}${r.編號 ? '｜' + r.編號 + ' 號' : ''}`,
       `　👤 ${r.姓名}${r.同行者 && r.活動 !== '🎭 變裝大賽' ? '（' + String(r.同行者).slice(0, 40) + '）' : ''}`,
-      `　💰 ${info.pay || '請依報名頁說明繳費'}`);
+      `　💰 ${(rule === 'late' && info.latePay) || info.pay || '請依報名頁說明繳費'}`);
     // 候補遞補上來的可能已經過了繳費期限，依主辦通知的時間繳，不寫期限也不說逾期
-    if (isPromotedSignup_(r) && PROMOTED_PAY_HINT[r.活動]) lines.push('　⬆️ 候補遞補成功，請依主辦通知的時間繳交保證金');
+    if (rule === 'promoted') lines.push('　⬆️ 候補遞補成功，請依主辦通知的時間繳交保證金');
+    // 10/13 起報名的：活動當天報到時繳，不寫期限也不說逾期
+    else if (rule === 'late') lines.push('　⏰ 10/13 起報名：不用事先到櫃台繳，報到時繳就可以');
     else if (due) lines.push(due >= today ? `　⏰ 請於 ${md(due)}前繳費` : '　⏰ 已超過繳費期限，請盡快繳費');
   });
   return lines;
@@ -1657,7 +1872,7 @@ function allPromoted_(rows) {
 
 function unpaidReminderText_(rows, head) {
   return [head || '📢 繳費提醒｜北屯鬧起來', '您好！您報名的活動還沒有完成繳費：'].concat(unpaidBlockLines_(rows), [''],
-    allPromoted_(rows) ? [] : ['⚠️ 逾期未繳費將取消名額，由候補遞補。'],
+    overdueWarnLines_(rows),
     ['✅ 已經繳了嗎？櫃台登記後約 10 分鐘會更新，輸入「查詢報名」可以確認。', '有問題請直接在這裡留言 🙏', '', '里長參選人莊晴全 敬上'])
     .join('\n').slice(0, 4900);
 }
@@ -1678,10 +1893,12 @@ function smsText_(rows) {
   const items = rows.map(r => {
     const a = SMS_ACTIVITY[r.活動] || { short: r.活動, pay: '費用', place: '櫃台' };
     const due = unpaidDue_(r);
-    if (isPromotedSignup_(r) && PROMOTED_PAY_HINT[r.活動]) return `${a.short}${r.編號 ? r.編號 + '號' : ''}已候補遞補，請依主辦通知時間至${a.place}繳${a.pay}`;
+    const rule = payRule_(r);
+    if (rule === 'promoted') return `${a.short}${r.編號 ? r.編號 + '號' : ''}已候補遞補，請依主辦通知時間至${a.place}繳${a.pay}`;
+    if (rule === 'late') return `${a.short}${r.編號 ? r.編號 + '號' : ''}請於活動當天報到時現場繳${a.pay}`;
     return `${a.short}${r.編號 ? r.編號 + '號' : ''}請${due && due >= today ? '於' + (+due.slice(5, 7)) + '/' + (+due.slice(8, 10)) + '前' : '盡快'}至${a.place}繳${a.pay}`;
   });
-  return `【北屯鬧起來】${rows[0].姓名}您好，您報名的活動尚未繳費：${items.join('；')}。${allPromoted_(rows) ? '' : '逾期將取消名額，'}已繳請忽略。加LINE查詢：https://line.me/R/ti/p/@401mmxpw`;
+  return `【北屯鬧起來】${rows[0].姓名}您好，您報名的活動尚未繳費：${items.join('；')}。${anyDeadline_(rows) ? '逾期將取消名額，' : ''}已繳請忽略。加LINE查詢：https://line.me/R/ti/p/@401mmxpw`;
 }
 
 /** 簡訊則數估算：70 字內 1 則，超過每 67 字 1 則。 */
@@ -1716,12 +1933,13 @@ function makeSmsList_() {
     const rows = t.byPhone[p];
     const text = smsText_(rows);
     return [p, text, rows[0].姓名, rows.map(r => r.活動.split(' ').pop() + (r.編號 ? ' ' + r.編號 + '號' : '')).join('、'),
-      Array.from(text).length, smsSegments_(text)];
+      Array.from(text).length, smsSegments_(text), Array.from(new Set(rows.map(payRuleLabel_))).join('、')];
   });
-  sh.getRange(1, 1, 1, 6).setValues([['手機號碼', '簡訊內容', '姓名', '報名項目', '字數', '預估則數']]).setFontWeight('bold');
+  // 繳費類別：晚報名（10/13 起報名、活動當天繳）的簡訊不寫逾期取消，要不要發可以用這欄篩選
+  sh.getRange(1, 1, 1, 7).setValues([['手機號碼', '簡訊內容', '姓名', '報名項目', '字數', '預估則數', '繳費類別']]).setFontWeight('bold');
   if (out.length) {
     sh.getRange(2, 1, out.length, 1).setNumberFormat('@');  // 電話保留開頭的 0
-    sh.getRange(2, 1, out.length, 6).setValues(out);
+    sh.getRange(2, 1, out.length, 7).setValues(out);
   }
   sh.setColumnWidth(2, 640);
   // 放到備份資料夾（跟其他名單放一起；失敗就留在雲端硬碟根目錄）
@@ -1729,26 +1947,35 @@ function makeSmsList_() {
   return { url: ss.getUrl(), count: out.length, segments: out.reduce((n, r) => n + r[5], 0), noPhone: t.noPhone };
 }
 
-/** 未繳費名單（全部未繳、含電話與期限）：在雲端硬碟產生試算表。 */
+/**
+ * 未繳費名單（全部未繳、含電話與期限）：在雲端硬碟產生試算表。
+ * 晚報名（10/13 起報名、活動當天繳）不算逾期，但櫃台當天還要收錢，所以留在名單裡、第一欄「類別」另列並排在逾期的後面；
+ * 回傳的 byActivity 只算適用 10/12 期限的，晚報名（late）、候補遞補（promoted）另外算。
+ */
 function makeUnpaidList_(title) {
   try { syncSignupsNow_(); } catch (err) { console.warn('整理名單前同步失敗，使用上次的名單：' + err.message); }
   const linked = new Set();
   Array.from(new Set(readAll_('報名確認紀錄').map(c => c.userId).filter(Boolean))).forEach(uid =>
     (findMySignups_(uid).rows || []).forEach(r => linked.add(r._row)));
+  const order = { deadline: 0, late: 1, promoted: 2 };
   const rows = readAll_('活動報名名單').filter(isUnpaidSignup_)
-    .sort((a, b) => String(a.活動 + a.場次梯次).localeCompare(String(b.活動 + b.場次梯次)) || (+a.編號 || 0) - (+b.編號 || 0));
-  const out = rows.map(r => [r.活動, r.場次梯次, r.編號, r.姓名, r.同行者, normPhone_(r.電話) || r.電話, unpaidDue_(r),
+    .sort((a, b) => order[payRule_(a)] - order[payRule_(b)] ||
+      String(a.活動 + a.場次梯次).localeCompare(String(b.活動 + b.場次梯次)) || (+a.編號 || 0) - (+b.編號 || 0));
+  const dueText = r => ({ promoted: '依主辦通知', late: '活動當天報到時現場繳' })[payRule_(r)] || unpaidDue_(r);
+  const out = rows.map(r => [payRuleLabel_(r), r.活動, r.場次梯次, r.編號, r.姓名, r.同行者, normPhone_(r.電話) || r.電話, dueText(r),
     linked.has(r._row) ? '有' : '', r.報名時間]);
   const ss = SpreadsheetApp.create((title || '未繳費名單') + '_' + Utilities.formatDate(new Date(), TZ, 'yyyyMMdd_HHmm'));
   const sh = ss.getSheets()[0];
-  sh.getRange(1, 1, 1, 9).setValues([['活動', '場次／梯次', '編號', '姓名', '同行者', '電話', '繳費期限', '已綁 LINE', '報名時間']]).setFontWeight('bold');
+  sh.getRange(1, 1, 1, 10).setValues([['類別', '活動', '場次／梯次', '編號', '姓名', '同行者', '電話', '繳費期限', '已綁 LINE', '報名時間']]).setFontWeight('bold');
   if (out.length) {
-    sh.getRange(2, 6, out.length, 1).setNumberFormat('@');
-    sh.getRange(2, 1, out.length, 9).setValues(out);
+    sh.getRange(2, 7, out.length, 1).setNumberFormat('@');
+    sh.getRange(2, 1, out.length, 10).setValues(out);
   }
   sh.setFrozenRows(1);
   try { if (prop_('BACKUP_FOLDER_ID')) DriveApp.getFileById(ss.getId()).moveTo(backupRoot_()); } catch (err) { console.warn('未繳費名單留在根目錄：' + err.message); }
-  return { url: ss.getUrl(), total: out.length, byActivity: countBy_(rows, '活動') };
+  const of = rule => rows.filter(r => payRule_(r) === rule);
+  return { url: ss.getUrl(), total: out.length, byActivity: countBy_(of('deadline'), '活動'), overdue: of('deadline').length,
+    late: countBy_(of('late'), '活動'), lateTotal: of('late').length, promoted: of('promoted').length };
 }
 
 /** 試算表選單：產生簡訊名單。 */
@@ -1771,6 +1998,7 @@ function makeSmsListFromMenu() {
 
 const UNPAID_EMAIL_SUBJECT = '【北屯鬧起來】繳費提醒：請於期限內完成繳費，逾期將取消名額';
 const UNPAID_EMAIL_SUBJECT_PROMOTED = '【北屯鬧起來】候補遞補成功：請依主辦通知的時間繳交保證金';
+const UNPAID_EMAIL_SUBJECT_LATE = '【北屯鬧起來】繳費提醒：請於活動當天報到時到現場繳交';
 
 function signupKey_(label, no, name) {
   return label + '|' + String(no || '').trim().replace(/^0+(?=\d)/, '') + '|' + String(name || '').trim();
@@ -1808,7 +2036,7 @@ function unpaidEmailTargets_() {
 
 function unpaidEmailBody_(rows) {
   return ['您好，', '', '感謝您報名 2026「北屯鬧起來」廍子里萬聖節活動！', '您報名的活動還沒有完成繳費：']
-    .concat(unpaidBlockLines_(rows), [''], allPromoted_(rows) ? [] : ['⚠️ 逾期未繳費將取消名額，由候補遞補。'], ['已經繳費的朋友請忽略這封信，謝謝！', '',
+    .concat(unpaidBlockLines_(rows), [''], overdueWarnLines_(rows), ['已經繳費的朋友請忽略這封信，謝謝！', '',
       '📱 歡迎加入官方 LINE「里長參選人莊晴全」，繳費與賽程通知都會從 LINE 發送：', 'https://line.me/R/ti/p/@401mmxpw',
       '加入後輸入「查詢報名 姓名 電話」就能隨時查詢繳費狀態。', '', '活動網站：https://ccs2024taiwan.pages.dev', '',
       '里長參選人莊晴全 敬上', '（有問題可以直接回信，或在官方 LINE 留言）']).join('\n');
@@ -1823,7 +2051,8 @@ function sendUnpaidEmails_(targets) {
     if (MailApp.getRemainingDailyQuota() < 2) break;
     const list = t.byEmail[email];
     try {
-      MailApp.sendEmail({ to: email, subject: allPromoted_(list) ? UNPAID_EMAIL_SUBJECT_PROMOTED : UNPAID_EMAIL_SUBJECT,
+      MailApp.sendEmail({ to: email, subject: anyDeadline_(list) ? UNPAID_EMAIL_SUBJECT
+        : allPromoted_(list) ? UNPAID_EMAIL_SUBJECT_PROMOTED : UNPAID_EMAIL_SUBJECT_LATE,
         body: unpaidEmailBody_(list), name: '里長參選人莊晴全｜北屯鬧起來' });
       list.forEach(r => sent.add(r._key));
       n++;
@@ -1854,8 +2083,10 @@ function sendUnpaidEmailsFromMenu() {
       return;
     }
     const quota = MailApp.getRemainingDailyQuota();
+    const lateOnly = Object.keys(t.byEmail).filter(e => !anyDeadline_(t.byEmail[e]) && t.byEmail[e].some(isLateSignup_)).length;
     const ok = ui.alert('寄 Email 繳費提醒',
       `要寄給 ${count} 個 Email（沒綁 LINE、還沒繳費的報名者，同一個 Email 的報名合併成一封）。\n` +
+      (lateOnly ? `其中 ${lateOnly} 個只有 10/13 起的報名（活動當天繳），信裡寫「活動當天報到時到現場繳交」、不寫逾期取消。\n` : '') +
       `今天還能寄 ${quota} 封${count > quota - 1 ? '，寄不完的明天再按一次（寄過的不會重寄）' : ''}。\n\n要寄出嗎？`, ui.ButtonSet.YES_NO);
     if (ok !== ui.Button.YES) return;
     const r = sendUnpaidEmails_(t);
@@ -1881,7 +2112,8 @@ function sendUnpaidReminders_(head) {
     else failed++;
   });
   const unpaid = list.filter(isUnpaidSignup_);
-  return { sent, failed, total: unpaid.length, missed: countBy_(unpaid.filter(r => !covered.has(r._row)), '活動') };
+  return { sent, failed, total: unpaid.length, late: unpaid.filter(r => payRule_(r) === 'late').length,
+    missed: countBy_(unpaid.filter(r => !covered.has(r._row)), '活動') };
 }
 
 const SIGNUP_EVENT_INFO = {
@@ -1946,9 +2178,14 @@ function runScheduledBroadcasts() {
       if (b.kind === 'unpaidList') {
         const r = makeUnpaidList_(b.title);
         props.setProperty(key, `sent ${now_()} ${r.total} 筆`);
-        notifyOwner_([`📋 ${b.title}（${Utilities.formatDate(new Date(), TZ, 'HH:mm')}）`, `還沒繳費共 ${r.total} 筆：`]
+        // 10/13 起報名的活動當天繳、不算逾期，和逾期未繳分開列
+        notifyOwner_([`📋 ${b.title}（${Utilities.formatDate(new Date(), TZ, 'HH:mm')}）`, `還沒繳費共 ${r.total} 筆。`, '',
+          `10/12 以前報名、${ymdAfter_(0) > PAY_DEADLINE ? '逾期' : '還'}沒繳：${r.overdue} 筆`]
           .concat(Object.keys(r.byActivity).map(k => `・${k}：${r.byActivity[k]} 筆`),
-            ['', '名單（含電話、期限、有沒有綁 LINE）：', r.url]).join('\n'));
+            r.lateTotal ? ['', `10/13 起報名、活動當天報到時現場繳（不算逾期）：${r.lateTotal} 筆`]
+              .concat(Object.keys(r.late).map(k => `・${k}：${r.late[k]} 筆`)) : [],
+            r.promoted ? ['', `候補遞補、依主辦通知的時間繳：${r.promoted} 筆`] : [],
+            ['', '名單（含類別、電話、期限、有沒有綁 LINE）：', r.url]).join('\n'));
         return;
       }
       if (b.kind === 'unpaid') {
@@ -1957,7 +2194,8 @@ function runScheduledBroadcasts() {
         const missed = Object.keys(r.missed);
         const n = missed.reduce((t, k) => t + r.missed[k], 0);
         notifyOwner_([`✅ 繳費提醒${b.head ? '（' + b.title + '）' : ''}已用 LINE 發給 ${r.sent} 位報名者${r.failed ? `（${r.failed} 位發送失敗）` : ''}`,
-          `目前未繳費共 ${r.total} 筆。`].concat(n ? ['', `另有 ${n} 筆的報名者沒在官方 LINE 傳過「報名確認」，沒辦法用 LINE 通知：`]
+          `目前未繳費共 ${r.total} 筆。` + (r.late ? `（其中 ${r.late} 筆是 10/13 起報名、活動當天報到時繳，不算逾期）` : '')]
+          .concat(n ? ['', `另有 ${n} 筆的報名者沒在官方 LINE 傳過「報名確認」，沒辦法用 LINE 通知：`]
           .concat(missed.map(k => `・${k}：${r.missed[k]} 筆`), '名單（含電話）可在試算表「活動報名名單」篩選「未繳」查看（狀態是「候補」的不用繳）。') : []).join('\n'));
         return;
       }
@@ -2011,6 +2249,14 @@ function daysUntil_(isoLike) {
   return Math.ceil((d.getTime() - Date.now()) / 864e5);
 }
 
+/** 中午快報的報名截止那一行：截止前寫截止時間；截止後寫名額沒滿的改現場報名（網站沒給截止時間就用 SIGNUP_DEADLINE）。 */
+function deadlineLine_(deadline) {
+  const dl = String(deadline || SIGNUP_DEADLINE);
+  if (signupClosed_(dl)) return '🚪 線上報名已截止，名額沒滿的改為活動當天現場報名（現場繳費，額滿為止）';
+  const d = daysUntil_(dl);
+  return `報名截止 ${dl.replace('T', ' ').slice(5)}${d === null ? '' : `（還有 ${d} 天）`}`;
+}
+
 function sessionOrder_(name) {
   const day = /10\/18|18日|日\)|週日|星期日/.test(name) ? 1 : 0;
   const pm = /下午|PM/i.test(name) ? 1 : 0;
@@ -2024,7 +2270,14 @@ function buildSignupReport_() {
   const noKey = !prop_('CCS_EXPORT_KEY');
   const unknown = noKey ? '（待設定）' : '查詢失敗';
   const unpaidText = (map, key) => (map ? String(map[key] || 0) : unknown);
-  let anyData = false, unpaidTotal = 0;
+  // 10/13 起報名的活動當天繳，不算在未繳數，另外註明（ccsUnpaid_ 的 _late）
+  const lateText = (map, key) => (map && map._late && map._late[key] ? `（另 ${map._late[key]} 筆活動當天繳）` : '');
+  let anyData = false, unpaidTotal = 0, lateTotal = 0;
+  const addUnpaid = u => {
+    if (!u) return;
+    unpaidTotal += u._total;
+    lateTotal += u._late ? u._late._total : 0;
+  };
 
   try {
     const b = ccsJson_('/api/beyblade-count');
@@ -2036,11 +2289,11 @@ function buildSignupReport_() {
     names.forEach(n => {
       const c = b.counts[n];
       total += c;
-      lines.push(`・${n}：已報 ${c}｜剩 ${max - c}｜未繳費 ${unpaidText(unpaid, n)}${hot(max - c)}`);
+      lines.push(`・${n}：已報 ${c}｜剩 ${max - c}｜未繳費 ${unpaidText(unpaid, n)}${lateText(unpaid, n)}${hot(max - c)}`);
     });
     if (!names.length) lines.push('・目前尚無報名');
-    lines.push(`陀螺賽合計：已報 ${total}｜未繳費 ${unpaid ? unpaid._total : unknown}`, '');
-    if (unpaid) unpaidTotal += unpaid._total;
+    lines.push(`陀螺賽合計：已報 ${total}｜未繳費 ${unpaid ? unpaid._total : unknown}${lateText(unpaid, '_total')}`, deadlineLine_(b.deadline), '');
+    addUnpaid(unpaid);
     anyData = true;
   } catch (err) {
     lines.push('🌀 戰鬥陀螺賽：查詢異常，請稍後手動確認', '');
@@ -2050,11 +2303,10 @@ function buildSignupReport_() {
     const c = ccsJson_('/api/cosplay-count');
     const max = c.max || 40, left = max - c.count;
     const unpaid = ccsUnpaid_('cosplay', '', '保證金', '未繳');
-    const d = daysUntil_(c.deadline);
     lines.push(`🎭 百鬼嘉年華變裝大賽（上限 ${max} 組）`,
-      `已報 ${c.count} 組｜剩 ${left} 組｜未繳保證金 ${unpaid ? unpaid._total : unknown} 組${hot(left)}`,
-      d === null ? '' : d < 0 ? '報名已截止' : `報名截止 ${String(c.deadline).replace('T', ' ').slice(5)}（還有 ${d} 天）`, '');
-    if (unpaid) unpaidTotal += unpaid._total;
+      `已報 ${c.count} 組｜剩 ${left} 組｜未繳保證金 ${unpaid ? unpaid._total : unknown} 組${lateText(unpaid, '_total')}${hot(left)}`,
+      deadlineLine_(c.deadline), '');
+    addUnpaid(unpaid);
     anyData = true;
   } catch (err) {
     lines.push('🎭 變裝大賽：查詢異常，請稍後手動確認', '');
@@ -2077,12 +2329,11 @@ function buildSignupReport_() {
         const waiting = dy.waiting && typeof dy.waiting === 'object' ? dy.waiting : null;
         ['第一梯次 14:00-15:00', '第二梯次 15:30-16:30'].forEach(s => {
           const n = (dy.counts || {})[s] || 0;
-          lines.push(`・${s}：已報 ${n}｜剩 ${max - n}｜未繳 ${unpaidText(unpaid, s)}${hot(max - n)}`);
+          lines.push(`・${s}：已報 ${n}｜剩 ${max - n}｜未繳 ${unpaidText(unpaid, s)}${lateText(unpaid, s)}${hot(max - n)}`);
           if (waiting) lines.push(`　⏳ 候補 ${waiting[s] || 0}/${dy.waitMax || 5}`);
         });
-        const d = daysUntil_(dy.deadline);
-        if (d !== null) lines.push(d < 0 ? '報名已截止' : `報名截止 ${String(dy.deadline).replace('T', ' ').slice(5)}（還有 ${d} 天）`);
-        if (unpaid) unpaidTotal += unpaid._total;
+        lines.push(deadlineLine_(dy.deadline));
+        addUnpaid(unpaid);
       }
       lines.push('');
       anyData = true;
@@ -2093,8 +2344,10 @@ function buildSignupReport_() {
 
   if (!anyData) lines.splice(2, lines.length, '今日報名統計查詢異常，請稍後手動確認', '');
   if (unpaidTotal > 0) lines.push(`💰 目前還有 ${unpaidTotal} 筆未繳費，請櫃台與報名者盡快完成繳費。`, '');
+  if (lateTotal > 0) lines.push(`🕒 另有 ${lateTotal} 筆是 10/13 起報名的，活動當天報到時到現場繳費（不算逾期）。`, '');
 
-  lines.push('📣 請群組每位夥伴幫忙推廣，分享到自己的社群與社區群組！',
+  lines.push(signupClosed_() ? '📣 線上報名已截止，名額沒滿的場次活動當天開放現場報名（現場繳費，額滿為止），請夥伴們幫忙轉告！'
+    : '📣 請群組每位夥伴幫忙推廣，分享到自己的社群與社區群組！',
     '活動總覽：' + CCS_BASE,
     '陀螺賽報名：' + CCS_BASE + '/signup/beyblade/',
     '變裝報名：' + CCS_BASE + '/signup/cosplay/',
