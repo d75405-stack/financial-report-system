@@ -40,6 +40,7 @@ const SHEETS = {
   好友紀錄: ['at', 'userId', 'displayName', 'event'],
   私訊關注: ['at', 'userId', 'displayName', 'keyword', 'text', 'signups', 'handled'],
   報名確認紀錄: ['at', 'userId', 'displayName', 'text'],
+  繳費通知紀錄: ['at', 'userId', 'displayName', 'items'],
   群組紀錄: ['groupId', 'groupName', 'type', 'joinedAt', 'status'],
   群組成員: ['groupId', 'groupName', 'userId', 'displayName', 'status', 'firstSeen', 'lastSeen', 'note'],
   活動報名名單: ['活動', '場次梯次', '編號', '姓名', '同行者', '電話', '繳費', '狀態', '報名時間', '同步時間'],
@@ -156,7 +157,6 @@ const HELP_TEXT = [
   '・我的預約：活動報名＋法律諮詢預約',
   '・律師諮詢：免費律師諮詢介紹與預約',
   '・公告：萬聖節活動與最新消息',
-  '・快速報修：路燈、水溝、路面等問題回報',
   '',
   '🎃 北屯鬧起來萬聖節活動：https://ccs2024taiwan.pages.dev',
 ].join('\n');
@@ -288,10 +288,7 @@ function handleEvent_(ev) {
       return;
     case '快速報修':
     case '報修':
-      // 工作人員走回報表單；一般里民直接在聊天室留言（由里辦人員處理）
-      reply_(ev.replyToken, [isActiveMember_(member)
-        ? linkButton_('填寫回報表單，可附照片與位置。', '開啟回報表單', liffUrl_('report'))
-        : text_(REPAIR_GUIDE_TEXT)]);
+      reply_(ev.replyToken, [text_(REPAIR_GUIDE_TEXT)]);
       return;
     case '公告':
     case '最新公告':
@@ -306,15 +303,8 @@ function handleEvent_(ev) {
   // 其他訊息不自動回覆，留給里辦人員在官方帳號後台以聊天回覆。
 }
 
-const REPAIR_GUIDE_TEXT = [
-  '🔧 快速報修',
-  '請直接在這個聊天室傳給我們：',
-  '1️⃣ 地點（地址、路口或附近地標，也可以傳 LINE 位置資訊）',
-  '2️⃣ 狀況說明（例如：路燈不亮、水溝堵塞、路面坑洞）',
-  '3️⃣ 照片（有的話更好）',
-  '',
-  '里辦收到後會盡快處理並回覆您，謝謝！🙏',
-].join('\n');
+// 快速報修：里長指示「建置中尚未開放」
+const REPAIR_GUIDE_TEXT = '🔧 快速報修功能建置中，尚未開放，敬請期待！';
 
 const PRIVATE_CANNED_DEFAULT = [
   '您好，感謝您的訊息！🙏',
@@ -498,20 +488,20 @@ const CONFIRM_REPLY = {
     '🌀 已收到您的戰鬥陀螺賽報名！',
     '💰 報名費每場 200 元（全數捐心路基金會），請在 10/12(一) 前到裕國豐展或惠宇開朗社區櫃台繳交，繳完才算報名完成；逾期視同放棄，由候補遞補。',
     '🎫 比賽當天憑手環入場，並發放捐款收據。',
-    '📋 櫃台登記繳費後，輸入「查詢報名」就能確認繳費狀態。',
+    '📋 繳費完成後會用 LINE 通知您，也可以輸入「查詢報名」確認繳費狀態。',
     '對戰表：https://ccs2024taiwan.pages.dev/bracket/',
   ].join('\n'),
   '變裝大賽': [
     '🎭 已收到您的百鬼嘉年華變裝大賽報名！',
     '📅 10/18(日) 18:00 裕國豐展（太順路60號），17:30–17:50 報到',
     '💰 保證金每組 100 元，請在 10/12(一) 前到裕國豐展社區櫃台繳交（10/12 之後報名的請於報名後 7 天內），完成報到即退還；逾期視同放棄名額。',
-    '📋 櫃台登記繳費後，輸入「查詢報名」就能確認繳費狀態。',
+    '📋 繳費完成後會用 LINE 通知您，也可以輸入「查詢報名」確認繳費狀態。',
   ].join('\n'),
   'DIY手工皂': [
     '🧼 已收到您的甜點造型手工皂DIY報名！',
     '📅 10/18(日) 總太共好共享食堂（祥順路一段480號）',
     '💰 保證金 100 元，請在 10/12(一) 前到總太共好櫃檯繳交，繳完才算報名完成，完成報到即退還；逾期視同放棄，由候補遞補。',
-    '📋 櫃台登記繳費後，輸入「查詢報名」就能確認繳費狀態。',
+    '📋 繳費完成後會用 LINE 通知您，也可以輸入「查詢報名」確認繳費狀態。',
   ].join('\n'),
 };
 
@@ -1305,7 +1295,82 @@ const SIGNUP_SYNC_FORMS = [
 
 function syncSignups() {
   checkBroadcasts_();  // 每小時順便檢查預約推播（一次性排程的備援）
-  return syncSignupsNow_();
+  const n = syncSignupsNow_();
+  try { sendPaidNotices_(); } catch (err) { console.error('繳費完成通知失敗：' + err.message); }
+  return n;
+}
+
+// ───────────────────────── 繳費完成通知（取代 aibus） ─────────────────────────
+// 活動網站 /api/notify-pending 列出「已繳費、還沒通知」的報名。連得到 LINE 的人（傳過報名確認或用
+// 查詢報名連結過）就推播通知，再回網站標記已通知；連不到的先留著，之後綁定了下一輪就會發。
+// 指令碼屬性 PAID_NOTICE_OFF = 'true' 可暫停。
+
+const PAID_NOTICE_FORMS = [
+  { key: 'beyblade', label: '🌀 陀螺賽', no: 'player_no', group: 'session' },
+  { key: 'cosplay', label: '🎭 變裝大賽', no: 'group_no', group: '' },
+  { key: 'diy', label: '🧼 手工皂DIY', no: 'player_no', group: 'slot' },
+  { key: 'bag', label: '👜 彩繪提袋DIY', no: 'player_no', group: 'slot' },
+];
+
+const PAID_NOTICE_INFO = {
+  '🌀 陀螺賽': '比賽當天請準時報到，憑手環入場並領取捐款收據。\n對戰表：https://ccs2024taiwan.pages.dev/bracket/',
+  '🎭 變裝大賽': '📅 10/18(日) 18:00 裕國豐展（太順路60號），17:30–17:50 報到，完成報到保證金退還。',
+  '🧼 手工皂DIY': '📅 10/18(日) 總太共好共享食堂（祥順路一段480號），請依梯次準時報到，完成報到保證金退還。',
+  '👜 彩繪提袋DIY': '📅 10/17(六) 總太悅來社區・活力廚房（祥順路一段500號），請依梯次準時報到，當天參加保證金全額退還。',
+};
+
+function ccsApi_(path, payload) {
+  const key = String(prop_('CCS_EXPORT_KEY')).trim();
+  if (!key) throw new Error('尚未設定活動網站匯出密碼');
+  const opts = { headers: { 'User-Agent': 'Mozilla/5.0' }, muteHttpExceptions: true, followRedirects: true };
+  if (payload) Object.assign(opts, { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload) });
+  const res = UrlFetchApp.fetch(CCS_BASE + path + '?key=' + encodeURIComponent(key), opts);
+  if (res.getResponseCode() !== 200) throw new Error('活動網站回應 HTTP ' + res.getResponseCode());
+  return JSON.parse(res.getContentText());
+}
+
+function paidNoticeText_(items) {
+  const lines = ['✅ 繳費完成通知｜北屯鬧起來', `${items[0].name} 您好，已收到您的繳費，報名完成！`];
+  items.forEach(x => {
+    lines.push('', `${x.label}${x.group ? '｜' + x.group : ''}${x.no ? '｜' + x.no + ' 號' : ''}`, `　👤 ${x.name}`);
+    if (PAID_NOTICE_INFO[x.label]) lines.push('　' + PAID_NOTICE_INFO[x.label].replace(/\n/g, '\n　'));
+  });
+  lines.push('', '📋 輸入「查詢報名」可以隨時查看報名資料。', '期待在活動見到您！🎃', '', '里長參選人莊晴全 敬上');
+  return lines.join('\n').slice(0, 4900);
+}
+
+/** 發繳費完成通知；回傳發送人數、標記筆數與連不到 LINE 的筆數。 */
+function sendPaidNotices_() {
+  if (prop_('PAID_NOTICE_OFF') === 'true' || !String(prop_('CCS_EXPORT_KEY')).trim()) return { sent: 0 };
+  const pending = ccsApi_('/api/notify-pending');
+  const owners = {};
+  Array.from(new Set(readAll_('報名確認紀錄').map(c => c.userId).filter(Boolean))).forEach(uid =>
+    (findMySignups_(uid).rows || []).forEach(r => {
+      const k = signupKey_(r.活動, r.編號, r.姓名);
+      (owners[k] = owners[k] || new Set()).add(uid);
+    }));
+  const byUser = {};
+  let unlinked = 0;
+  PAID_NOTICE_FORMS.forEach(f => (pending[f.key] || []).forEach(r => {
+    const item = { form: f.key, id: r.id, label: f.label, name: String(r.name || '').trim(),
+      no: r[f.no] == null ? '' : String(r[f.no]), group: f.group ? String(r[f.group] || '') : '' };
+    const uids = owners[signupKey_(item.label, item.no, item.name)];
+    if (!uids) return unlinked++;
+    uids.forEach(uid => (byUser[uid] = byUser[uid] || []).push(item));
+  }));
+  let sent = 0;
+  const done = {};
+  Object.keys(byUser).forEach(uid => {
+    if (!push_(uid, [text_(paidNoticeText_(byUser[uid]))])) return;
+    sent++;
+    append_('繳費通知紀錄', { at: now_(), userId: uid, displayName: '',
+      items: byUser[uid].map(x => `${x.label}${x.no ? ' ' + x.no + '號' : ''} ${x.name}`).join('、') });
+    byUser[uid].forEach(x => { done[x.form + ':' + x.id] = x; });
+  });
+  Object.keys(done).forEach(k => {
+    try { ccsApi_('/api/notify-pending', { form: done[k].form, id: done[k].id }); } catch (err) { console.error('標記已通知失敗 ' + k + '：' + err.message); }
+  });
+  return { sent, marked: Object.keys(done).length, unlinked };
 }
 
 function syncSignupsNow_() {
