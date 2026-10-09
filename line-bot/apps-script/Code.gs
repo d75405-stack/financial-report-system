@@ -1405,7 +1405,7 @@ function smsText_(rows) {
     const due = unpaidDue_(r);
     return `${a.short}${r.編號 ? r.編號 + '號' : ''}請${due && due >= today ? '於' + (+due.slice(5, 7)) + '/' + (+due.slice(8, 10)) + '前' : '盡快'}至${a.place}繳${a.pay}`;
   });
-  return `【北屯鬧起來】${rows[0].姓名}您好，您報名的活動尚未繳費：${items.join('；')}。逾期將取消名額，已繳請忽略。洽詢官方LINE @401mmxpw`;
+  return `【北屯鬧起來】${rows[0].姓名}您好，您報名的活動尚未繳費：${items.join('；')}。逾期將取消名額，已繳請忽略。加LINE查詢：https://line.me/R/ti/p/@401mmxpw`;
 }
 
 /** 簡訊則數估算：70 字內 1 則，超過每 67 字 1 則。 */
