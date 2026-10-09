@@ -151,13 +151,14 @@ function doPost(e) {
 // ───────────────────────── LINE webhook ─────────────────────────
 
 const HELP_TEXT = [
-  '可以輸入以下關鍵字：',
-  '・回報：開啟回報表單（工作人員）',
-  '・回報 內容：直接用文字回報',
-  '・律師諮詢：查看時段並預約',
-  '・我的預約：查看預約紀錄',
-  '・公告：最新宣達事項',
-  '・綁定 邀請碼 姓名：工作人員綁定身分',
+  '點下方「服務選單」就能使用各項功能，也可以直接輸入：',
+  '・查詢報名：查看自己的活動報名與繳費狀態',
+  '・我的預約：活動報名＋法律諮詢預約',
+  '・律師諮詢：免費律師諮詢介紹與預約',
+  '・公告：萬聖節活動與最新消息',
+  '・快速報修：路燈、水溝、路面等問題回報',
+  '',
+  '🎃 北屯鬧起來萬聖節活動：https://ccs2024taiwan.pages.dev',
 ].join('\n');
 
 function handleEvent_(ev) {
@@ -210,9 +211,11 @@ function handleEvent_(ev) {
   // 只記錄、不回覆（reply token 留給後面的關鍵字回覆與 aibus）
   watchPrivateMessage_(uid, t);
 
-  // 活動報名確認（報名成功頁會預填訊息）：其他活動由 aibus 的關鍵字規則回覆
-  if (t.indexOf('彩繪提袋報名確認') >= 0) {
-    reply_(ev.replyToken, [text_(BAG_CONFIRM_TEXT)]);
+  // 活動報名確認（報名成功頁會預填訊息）：直接回覆繳費須知。
+  // aibus 從 10/4 起收不到事件（希利克鳥 10/9 交接說明），不再等 aibus 回覆。
+  const confirmKey = Object.keys(CONFIRM_REPLY).find(k => t.indexOf(k + '報名確認') >= 0);
+  if (confirmKey) {
+    reply_(ev.replyToken, [text_(CONFIRM_REPLY[confirmKey])]);
     return;
   }
 
@@ -276,6 +279,20 @@ function handleEvent_(ev) {
     case '查詢預約':
       reply_(ev.replyToken, myReservationsMessages_(uid));
       return;
+    case '特約商店':
+    case '特約商家':
+      reply_(ev.replyToken, [linkButton_('🛍 廍子里大小事特約商家：活動期間到店出示就有優惠，名單和社群 QR Code 都在這裡 👇', '看特約商家', 'https://ccs2024taiwan.pages.dev/shops/')]);
+      return;
+    case '里民生活資訊':
+      reply_(ev.replyToken, [linkButton_('🏘 里民生活資訊：里民推薦的美食、生活好店與實用資訊 👇', '看里民生活資訊', 'https://ccs2024taiwan.pages.dev/neighbors/')]);
+      return;
+    case '快速報修':
+    case '報修':
+      // 工作人員走回報表單；一般里民直接在聊天室留言（由里辦人員處理）
+      reply_(ev.replyToken, [isActiveMember_(member)
+        ? linkButton_('填寫回報表單，可附照片與位置。', '開啟回報表單', liffUrl_('report'))
+        : text_(REPAIR_GUIDE_TEXT)]);
+      return;
     case '公告':
     case '最新公告':
       reply_(ev.replyToken, announceMessages_(member));
@@ -288,6 +305,16 @@ function handleEvent_(ev) {
   }
   // 其他訊息不自動回覆，留給里辦人員在官方帳號後台以聊天回覆。
 }
+
+const REPAIR_GUIDE_TEXT = [
+  '🔧 快速報修',
+  '請直接在這個聊天室傳給我們：',
+  '1️⃣ 地點（地址、路口或附近地標，也可以傳 LINE 位置資訊）',
+  '2️⃣ 狀況說明（例如：路燈不亮、水溝堵塞、路面坑洞）',
+  '3️⃣ 照片（有的話更好）',
+  '',
+  '里辦收到後會盡快處理並回覆您，謝謝！🙏',
+].join('\n');
 
 const PRIVATE_CANNED_DEFAULT = [
   '您好，感謝您的訊息！🙏',
@@ -463,6 +490,30 @@ const BAG_CONFIRM_TEXT = [
   '✅ 當天參加活動,保證金全額退還;沒到場的保證金捐給心路基金會。',
   '繳費完成後會再用 LINE 通知您!',
 ].join('\n');
+
+/** 各活動「報名確認」訊息的自動回覆（繳費期限 10/12，里長指定）。 */
+const CONFIRM_REPLY = {
+  '彩繪提袋': BAG_CONFIRM_TEXT,
+  '陀螺賽': [
+    '🌀 已收到您的戰鬥陀螺賽報名！',
+    '💰 報名費每場 200 元（全數捐心路基金會），請在 10/12(一) 前到裕國豐展或惠宇開朗社區櫃台繳交，繳完才算報名完成；逾期視同放棄，由候補遞補。',
+    '🎫 比賽當天憑手環入場，並發放捐款收據。',
+    '📋 櫃台登記繳費後，輸入「查詢報名」就能確認繳費狀態。',
+    '對戰表：https://ccs2024taiwan.pages.dev/bracket/',
+  ].join('\n'),
+  '變裝大賽': [
+    '🎭 已收到您的百鬼嘉年華變裝大賽報名！',
+    '📅 10/18(日) 18:00 裕國豐展（太順路60號），17:30–17:50 報到',
+    '💰 保證金每組 100 元，請在 10/12(一) 前到裕國豐展社區櫃台繳交（10/12 之後報名的請於報名後 7 天內），完成報到即退還；逾期視同放棄名額。',
+    '📋 櫃台登記繳費後，輸入「查詢報名」就能確認繳費狀態。',
+  ].join('\n'),
+  'DIY手工皂': [
+    '🧼 已收到您的甜點造型手工皂DIY報名！',
+    '📅 10/18(日) 總太共好共享食堂（祥順路一段480號）',
+    '💰 保證金 100 元，請在 10/12(一) 前到總太共好櫃檯繳交，繳完才算報名完成，完成報到即退還；逾期視同放棄，由候補遞補。',
+    '📋 櫃台登記繳費後，輸入「查詢報名」就能確認繳費狀態。',
+  ].join('\n'),
+};
 
 // ───────────────────────── 報名查詢（報名者本人） ─────────────────────────
 
@@ -2837,8 +2888,20 @@ function setWebhookEndpoint_() {
 }
 
 /** 建立 6 格圖文選單並設為所有好友的預設選單。重複執行會換掉舊的。 */
+/** 兩頁切換選單（希利克鳥 10/9 建立，alias 管理）：有的話就不重建單頁選單，避免蓋掉萬聖節頁。 */
+const RICH_MENU_ALIASES = ['lizhang-tab-halloween', 'lizhang-tab-service'];
+
+function tabbedRichMenu_() {
+  const res = lineApi_('richmenu/alias/list', null, 'get');
+  if (!res.ok) return null;
+  const list = (JSON.parse(res.body).aliases || []).filter(a => RICH_MENU_ALIASES.indexOf(a.richMenuAliasId) >= 0);
+  return list.length ? list : null;
+}
+
 function setupRichMenu() {
   if (!prop_('LIFF_ID')) throw new Error('請先在「一鍵設定」填入 LIFF ID');
+  const tabs = tabbedRichMenu_();
+  if (tabs) return '✅ 已有兩頁切換選單（' + tabs.map(a => a.richMenuAliasId).join('、') + '），保留不重建';
   const image = UrlFetchApp.fetch(RICH_MENU_IMAGE_URL, { muteHttpExceptions: true });
   if (image.getResponseCode() !== 200) throw new Error('圖文選單圖片還沒上線，等網頁部署完成後點「LINE 系統 → 建立圖文選單」');
 
