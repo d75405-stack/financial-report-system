@@ -108,6 +108,13 @@ function ensureDailyTrigger_(handler, hour) {
 
 // ───────────────────────── 進入點 ─────────────────────────
 
+/** 放在最前面，方便在編輯器的函式選單找到。在 Apps Script 編輯器執行一次，授權用 Gmail 寄信（Google 要求本人同意）。 */
+function authorizeGmail() {
+  const quota = MailApp.getRemainingDailyQuota();
+  console.log('✅ 已授權 Gmail 寄信，今天還能寄 ' + quota + ' 封。回到試算表按「寄 Email 繳費提醒」即可。');
+  return quota;
+}
+
 function doGet() {
   // 部署完成時 GitHub Actions 會打一次這個網址，讓已到時間的預約推播馬上發出
   checkBroadcasts_();
@@ -1530,7 +1537,13 @@ function sendUnpaidEmails_(targets) {
   return { sent: n, rows, failed, left: emails.length - n - failed, noEmail: t.noEmail, linked: t.linked };
 }
 
-/** 試算表選單：寄 Email 繳費提醒（第一次按會請你授權用 Gmail 寄信）。 */
+const GMAIL_AUTH_HELP = '還沒授權用 Gmail 寄信。請這樣做一次：\n' +
+  '1. 上方選單「擴充功能」→「Apps Script」\n' +
+  '2. 在上方工具列的函式選單選「authorizeGmail」，按「執行」\n' +
+  '3. 跳出「需要授權」→ 選你的帳號 →（出現「尚未驗證」就點「進階」→「前往」）→ 勾選「以你的名義傳送電子郵件」→「繼續／允許」\n' +
+  '4. 回到試算表，再按一次「寄 Email 繳費提醒」';
+
+/** 試算表選單：寄 Email 繳費提醒（第一次要先執行 authorizeGmail 授權）。 */
 function sendUnpaidEmailsFromMenu() {
   const ui = SpreadsheetApp.getUi();
   try {
@@ -1550,7 +1563,7 @@ function sendUnpaidEmailsFromMenu() {
       (r.left > 0 ? `\n今天的寄信額度用完了，還有 ${r.left} 封，明天再按一次。` : '') +
       (r.noEmail ? `\n沒填 Email 的 ${r.noEmail} 筆請改用電話聯絡。` : ''));
   } catch (err) {
-    ui.alert('寄信失敗：' + err.message);
+    ui.alert(/send_mail|MailApp/.test(err.message) ? GMAIL_AUTH_HELP : '寄信失敗：' + err.message);
   }
 }
 
