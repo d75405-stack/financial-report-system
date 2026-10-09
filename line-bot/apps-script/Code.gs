@@ -459,7 +459,7 @@ const BAG_CONFIRM_TEXT = [
   '👜 已收到您的彩繪提袋DIY報名!',
   '📅 10/17(六) 總太悅來社區・活力廚房(祥順路一段500號)',
   '⏰ 第一梯次 14:00–15:00/第二梯次 15:30–16:30',
-  '💰 請在 10/13(二) 前到總太悅來櫃檯繳交保證金 100 元,繳完才算報名完成;10/13 前沒繳視同放棄,由候補遞補。',
+  '💰 請在 10/12(一) 前到總太悅來櫃檯繳交保證金 100 元,繳完才算報名完成;10/12 前沒繳視同放棄,由候補遞補。',
   '✅ 當天參加活動,保證金全額退還;沒到場的保證金捐給心路基金會。',
   '繳費完成後會再用 LINE 通知您!',
 ].join('\n');
@@ -467,10 +467,10 @@ const BAG_CONFIRM_TEXT = [
 // ───────────────────────── 報名查詢（報名者本人） ─────────────────────────
 
 const SIGNUP_PAY_HINT = {
-  '🌀 陀螺賽': '報名費每場 200 元（全數捐心路基金會），請於 10/13(二) 前至裕國豐展或惠宇開朗社區櫃台繳交。',
-  '🎭 變裝大賽': '保證金每組 100 元，請於報名後 7 日內至裕國豐展社區櫃台繳交，完成報到即退還。',
-  '🧼 手工皂DIY': '保證金 100 元，請於 10/13 前至總太共好櫃檯繳交，完成報到即退還。',
-  '👜 彩繪提袋DIY': '保證金 100 元，請於 10/13(二) 前至總太悅來櫃檯繳交，當天參加全額退還。',
+  '🌀 陀螺賽': '報名費每場 200 元（全數捐心路基金會），請於 10/12(一) 前至裕國豐展或惠宇開朗社區櫃台繳交。',
+  '🎭 變裝大賽': '保證金每組 100 元，請於 10/12(一) 前至裕國豐展社區櫃台繳交（10/12 之後報名的請於報名後 7 日內），完成報到即退還。',
+  '🧼 手工皂DIY': '保證金 100 元，請於 10/12(一) 前至總太共好櫃檯繳交，完成報到即退還。',
+  '👜 彩繪提袋DIY': '保證金 100 元，請於 10/12(一) 前至總太悅來櫃檯繳交，當天參加全額退還。',
 };
 const SIGNUP_CONFIRM_LABEL = { '陀螺賽': '🌀 陀螺賽', '變裝大賽': '🎭 變裝大賽', 'DIY手工皂': '🧼 手工皂DIY', '彩繪提袋': '👜 彩繪提袋DIY' };
 
@@ -957,7 +957,7 @@ const KNOWLEDGE_SEED = [
   ['百鬼夜行集章', '全里 18 個集章點（16 個主要關卡＋2 個前哨站），10/12–10/16 另有前哨戰限定章。路線、關卡玩法與導航請看集章地圖：https://ccs2024taiwan.pages.dev/map/ ，Q版街道地圖：https://ccs2024taiwan.pages.dev/gmap/'],
   ['戰鬥陀螺賽', '共 4 場次：10/17 上午「開放組」、10/17 下午「廍子陀螺王」，地點惠宇開朗（太原路三段1299號）；10/18 上午「親子賽」、10/18 下午「變裝限定場」，地點裕國豐展（太順路60號）。每場最多 64 位選手，報名費每場 200 元，全數捐給心路基金會，繳費地點為兩個社區櫃台。報名：https://ccs2024taiwan.pages.dev/signup/beyblade/ ，對戰表：https://ccs2024taiwan.pages.dev/bracket/'],
   ['百鬼嘉年華變裝大賽', '10/18 18:00 於裕國豐展（太順路60號），17:30–17:50 報到，限 40 組，需繳保證金 100 元，報名截止 10/14 12:00。報名：https://ccs2024taiwan.pages.dev/signup/cosplay/'],
-  ['甜點造型手工皂DIY', '10/18 於總太共好共享食堂（祥順路一段480號），兩梯次 14:00–15:00、15:30–16:30，各 40 人，需於 10/13 前繳保證金 100 元。報名：https://ccs2024taiwan.pages.dev/signup/diy/'],
+  ['甜點造型手工皂DIY', '10/18 於總太共好共享食堂（祥順路一段480號），兩梯次 14:00–15:00、15:30–16:30，各 40 人，需於 10/12(一) 前繳保證金 100 元。報名：https://ccs2024taiwan.pages.dev/signup/diy/'],
   ['報名後流程', '報名成功後頁面會自動開啟官方 LINE 並預填「報名確認」訊息，請按傳送，就會收到繳費提醒。完成繳費後會再收到繳費完成通知。'],
   ['特約商家', '廍子里大小事特約商家共 40 家，提供活動期間優惠，名單與社群 QR Code：https://ccs2024taiwan.pages.dev/shops/'],
   ['驅魔小遊戲', '線上小遊戲有「收集闖關版」與「對戰 RPG 版」，從活動網站首頁進入即可遊玩，進度存在手機上。'],
@@ -992,7 +992,8 @@ function knowledgeText_() {
 }
 
 const KNOWLEDGE_EXTRA = [
-  ['彩繪提袋DIY', '10/17(六) 於總太悅來社區・活力廚房(祥順路一段500號)，兩梯次 14:00–15:00、15:30–16:30，每梯 30 人，活動免費，需在 10/13(二) 前到總太悅來櫃檯繳保證金 100 元才算報名完成，當天參加全額退還，沒到場的保證金捐給心路基金會。報名：https://ccs2024taiwan.pages.dev/signup/bag/'],
+  ['繳費期限（最新，以此為準）', '所有活動（陀螺賽報名費、變裝大賽／手工皂DIY／彩繪提袋DIY 保證金）都要在 10/12(一) 前繳完（含 10/12 當天），逾期未繳視同放棄名額，由候補遞補。變裝大賽 10/12 之後才報名的，請在報名後 7 天內繳交。陀螺賽到裕國豐展或惠宇開朗社區櫃台繳，變裝到裕國豐展社區櫃台，手工皂到總太共好櫃檯，彩繪提袋到總太悅來櫃檯。'],
+  ['彩繪提袋DIY', '10/17(六) 於總太悅來社區・活力廚房(祥順路一段500號)，兩梯次 14:00–15:00、15:30–16:30，每梯 30 人，活動免費，需在 10/12(一) 前到總太悅來櫃檯繳保證金 100 元才算報名完成，當天參加全額退還，沒到場的保證金捐給心路基金會。報名：https://ccs2024taiwan.pages.dev/signup/bag/'],
 ];
 
 const AI_SYSTEM_PROMPT = [
@@ -1327,7 +1328,7 @@ SCHEDULED_BROADCASTS.push(
 SCHEDULED_BROADCASTS.push({ id: 'unpaid-1009', at: '2026-10-09T12:20:00+08:00', title: '繳費提醒（逾期取消名額）', kind: 'unpaid' });
 // 截止前最後一次個人提醒（10/12 中午，發給到時候連得上 LINE 的所有未繳報名者）
 SCHEDULED_BROADCASTS.push({ id: 'unpaid-1012', at: '2026-10-12T12:00:00+08:00', title: '繳費最後提醒', kind: 'unpaid',
-  head: '⏰ 繳費最後提醒｜北屯鬧起來' });
+  head: '⏰ 繳費最後提醒｜今天 10/12（一）截止' });
 // 沒綁 LINE 的報名者收不到個別提醒，再發一則通用的繳費須知給所有好友（里長指示）
 SCHEDULED_BROADCASTS.push({ id: 'unpaid-all-1009', at: '2026-10-09T12:45:00+08:00', title: '繳費提醒｜北屯鬧起來',
   text: [
@@ -1343,14 +1344,20 @@ SCHEDULED_BROADCASTS.push({ id: 'unpaid-all-1009', at: '2026-10-09T12:45:00+08:0
     '',
     '里長參選人莊晴全 敬上',
   ].join('\n') });
+// 10/13 早上 9 點：整理還沒繳費的名單（試算表）並用 LINE 傳連結給里長
+SCHEDULED_BROADCASTS.push({ id: 'unpaid-list-1013', at: '2026-10-13T09:00:00+08:00', title: '10/13 未繳費名單', kind: 'unpaidList' });
 const BROADCAST_WINDOW_MS = 3 * 3600e3;
 
-/** 各活動的繳費方式與期限（陀螺賽期限 10/13 由里長指定；變裝為報名後 7 天內）。 */
+/**
+ * 各活動的繳費方式與期限：里長指定所有繳費 10/12(一) 前繳完（含當天）。
+ * 變裝大賽還在收報名：10/12 之後報名的，期限是報名後 7 天（lateDays）。
+ */
+const PAY_DEADLINE = '2026-10-12';
 const UNPAID_PAY_INFO = {
-  '🌀 陀螺賽': { pay: '報名費 200 元｜至裕國豐展或惠宇開朗社區櫃台繳交', due: '2026-10-13' },
-  '🎭 變裝大賽': { pay: '保證金 100 元｜至裕國豐展社區櫃台繳交，完成報到即退還', dueDays: 7 },
-  '🧼 手工皂DIY': { pay: '保證金 100 元｜至總太共好櫃檯繳交，完成報到即退還', due: '2026-10-13' },
-  '👜 彩繪提袋DIY': { pay: '保證金 100 元｜至總太悅來櫃檯繳交，當天參加全額退還', due: '2026-10-13' },
+  '🌀 陀螺賽': { pay: '報名費 200 元｜至裕國豐展或惠宇開朗社區櫃台繳交', due: PAY_DEADLINE },
+  '🎭 變裝大賽': { pay: '保證金 100 元｜至裕國豐展社區櫃台繳交，完成報到即退還', due: PAY_DEADLINE, lateDays: 7 },
+  '🧼 手工皂DIY': { pay: '保證金 100 元｜至總太共好櫃檯繳交，完成報到即退還', due: PAY_DEADLINE },
+  '👜 彩繪提袋DIY': { pay: '保證金 100 元｜至總太悅來櫃檯繳交，當天參加全額退還', due: PAY_DEADLINE },
 };
 
 function isUnpaidSignup_(r) {
@@ -1361,7 +1368,8 @@ function isUnpaidSignup_(r) {
 function unpaidDue_(r) {
   const info = UNPAID_PAY_INFO[r.活動] || {};
   const signed = String(r.報名時間 || '').slice(0, 10);
-  return info.due || (info.dueDays && /^\d{4}-\d{2}-\d{2}$/.test(signed) ? ymdAfter_(info.dueDays, signed) : '');
+  if (info.lateDays && /^\d{4}-\d{2}-\d{2}$/.test(signed) && signed > info.due) return ymdAfter_(info.lateDays, signed);
+  return info.due || '';
 }
 
 /** 每筆未繳報名的活動、姓名、繳費方式與期限（LINE 與 Email 共用）。 */
@@ -1375,7 +1383,7 @@ function unpaidBlockLines_(rows) {
     lines.push('', `${r.活動}${r.場次梯次 ? '｜' + r.場次梯次 : ''}${r.編號 ? '｜' + r.編號 + ' 號' : ''}`,
       `　👤 ${r.姓名}${r.同行者 && r.活動 !== '🎭 變裝大賽' ? '（' + String(r.同行者).slice(0, 40) + '）' : ''}`,
       `　💰 ${info.pay || '請依報名頁說明繳費'}`);
-    if (due) lines.push(due >= today ? `　⏰ 請於 ${md(due)}前繳費` : '　⏰ 已超過繳費期限（報名後 7 天內），請盡快繳費');
+    if (due) lines.push(due >= today ? `　⏰ 請於 ${md(due)}前繳費` : '　⏰ 已超過繳費期限，請盡快繳費');
   });
   return lines;
 }
@@ -1451,6 +1459,28 @@ function makeSmsList_() {
   // 放到備份資料夾（跟其他名單放一起；失敗就留在雲端硬碟根目錄）
   try { if (prop_('BACKUP_FOLDER_ID')) DriveApp.getFileById(ss.getId()).moveTo(backupRoot_()); } catch (err) { console.warn('簡訊名單留在根目錄：' + err.message); }
   return { url: ss.getUrl(), count: out.length, segments: out.reduce((n, r) => n + r[5], 0), noPhone: t.noPhone };
+}
+
+/** 未繳費名單（全部未繳、含電話與期限）：在雲端硬碟產生試算表。 */
+function makeUnpaidList_(title) {
+  try { syncSignupsNow_(); } catch (err) { console.warn('整理名單前同步失敗，使用上次的名單：' + err.message); }
+  const linked = new Set();
+  Array.from(new Set(readAll_('報名確認紀錄').map(c => c.userId).filter(Boolean))).forEach(uid =>
+    (findMySignups_(uid).rows || []).forEach(r => linked.add(r._row)));
+  const rows = readAll_('活動報名名單').filter(isUnpaidSignup_)
+    .sort((a, b) => String(a.活動 + a.場次梯次).localeCompare(String(b.活動 + b.場次梯次)) || (+a.編號 || 0) - (+b.編號 || 0));
+  const out = rows.map(r => [r.活動, r.場次梯次, r.編號, r.姓名, r.同行者, normPhone_(r.電話) || r.電話, unpaidDue_(r),
+    linked.has(r._row) ? '有' : '', r.報名時間]);
+  const ss = SpreadsheetApp.create((title || '未繳費名單') + '_' + Utilities.formatDate(new Date(), TZ, 'yyyyMMdd_HHmm'));
+  const sh = ss.getSheets()[0];
+  sh.getRange(1, 1, 1, 9).setValues([['活動', '場次／梯次', '編號', '姓名', '同行者', '電話', '繳費期限', '已綁 LINE', '報名時間']]).setFontWeight('bold');
+  if (out.length) {
+    sh.getRange(2, 6, out.length, 1).setNumberFormat('@');
+    sh.getRange(2, 1, out.length, 9).setValues(out);
+  }
+  sh.setFrozenRows(1);
+  try { if (prop_('BACKUP_FOLDER_ID')) DriveApp.getFileById(ss.getId()).moveTo(backupRoot_()); } catch (err) { console.warn('未繳費名單留在根目錄：' + err.message); }
+  return { url: ss.getUrl(), total: out.length, byActivity: countBy_(rows, '活動') };
 }
 
 /** 試算表選單：產生簡訊名單。 */
@@ -1643,6 +1673,14 @@ function runScheduledBroadcasts() {
       return;
     }
     try {
+      if (b.kind === 'unpaidList') {
+        const r = makeUnpaidList_(b.title);
+        props.setProperty(key, `sent ${now_()} ${r.total} 筆`);
+        notifyOwner_([`📋 ${b.title}（${Utilities.formatDate(new Date(), TZ, 'HH:mm')}）`, `還沒繳費共 ${r.total} 筆：`]
+          .concat(Object.keys(r.byActivity).map(k => `・${k}：${r.byActivity[k]} 筆`),
+            ['', '名單（含電話、期限、有沒有綁 LINE）：', r.url]).join('\n'));
+        return;
+      }
       if (b.kind === 'unpaid') {
         const r = sendUnpaidReminders_(b.head);
         props.setProperty(key, `sent ${now_()} ${r.sent} 人`);
