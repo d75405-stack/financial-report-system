@@ -1318,6 +1318,9 @@ SCHEDULED_BROADCASTS.push(
     to: { confirmAt: '2026-10-08 20:20', activity: '🎭 變裝大賽' } });
 // 繳費提醒：發給在官方 LINE 傳過「報名確認」、還有報名沒繳費的人，每人一則（列出他所有沒繳的報名）
 SCHEDULED_BROADCASTS.push({ id: 'unpaid-1009', at: '2026-10-09T12:20:00+08:00', title: '繳費提醒（逾期取消名額）', kind: 'unpaid' });
+// 截止前最後一次個人提醒（10/12 中午，發給到時候連得上 LINE 的所有未繳報名者）
+SCHEDULED_BROADCASTS.push({ id: 'unpaid-1012', at: '2026-10-12T12:00:00+08:00', title: '繳費最後提醒', kind: 'unpaid',
+  head: '⏰ 繳費最後提醒｜北屯鬧起來' });
 // 沒綁 LINE 的報名者收不到個別提醒，再發一則通用的繳費須知給所有好友（里長指示）
 SCHEDULED_BROADCASTS.push({ id: 'unpaid-all-1009', at: '2026-10-09T12:45:00+08:00', title: '繳費提醒｜北屯鬧起來',
   text: [
@@ -1364,8 +1367,8 @@ function unpaidBlockLines_(rows) {
   return lines;
 }
 
-function unpaidReminderText_(rows) {
-  return ['📢 繳費提醒｜北屯鬧起來', '您好！您報名的活動還沒有完成繳費：'].concat(unpaidBlockLines_(rows), ['',
+function unpaidReminderText_(rows, head) {
+  return [head || '📢 繳費提醒｜北屯鬧起來', '您好！您報名的活動還沒有完成繳費：'].concat(unpaidBlockLines_(rows), ['',
     '⚠️ 逾期未繳費將取消名額，由候補遞補。',
     '✅ 已經繳了嗎？櫃台登記後約 10 分鐘會更新，輸入「查詢報名」可以確認。', '有問題請直接在這裡留言 🙏', '', '里長參選人莊晴全 敬上'])
     .join('\n').slice(0, 4900);
@@ -1466,7 +1469,7 @@ function sendUnpaidEmailsFromMenu() {
 }
 
 /** 發繳費提醒，回傳發送結果與連不到 LINE 的未繳筆數（依活動）。 */
-function sendUnpaidReminders_() {
+function sendUnpaidReminders_(head) {
   try { syncSignupsNow_(); } catch (err) { console.warn('提醒前同步失敗，使用上次的名單：' + err.message); }
   const list = readAll_('活動報名名單');
   const covered = new Set();
@@ -1475,7 +1478,7 @@ function sendUnpaidReminders_() {
     const rows = (findMySignups_(uid).rows || []).filter(isUnpaidSignup_);
     if (!rows.length) return;
     rows.forEach(r => covered.add(r._row));
-    if (push_(uid, [text_(unpaidReminderText_(rows))])) sent++;
+    if (push_(uid, [text_(unpaidReminderText_(rows, head))])) sent++;
     else failed++;
   });
   const unpaid = list.filter(isUnpaidSignup_);
@@ -1542,11 +1545,11 @@ function runScheduledBroadcasts() {
     }
     try {
       if (b.kind === 'unpaid') {
-        const r = sendUnpaidReminders_();
+        const r = sendUnpaidReminders_(b.head);
         props.setProperty(key, `sent ${now_()} ${r.sent} 人`);
         const missed = Object.keys(r.missed);
         const n = missed.reduce((t, k) => t + r.missed[k], 0);
-        notifyOwner_([`✅ 繳費提醒已用 LINE 發給 ${r.sent} 位報名者${r.failed ? `（${r.failed} 位發送失敗）` : ''}`,
+        notifyOwner_([`✅ 繳費提醒${b.head ? '（' + b.title + '）' : ''}已用 LINE 發給 ${r.sent} 位報名者${r.failed ? `（${r.failed} 位發送失敗）` : ''}`,
           `目前未繳費共 ${r.total} 筆。`].concat(n ? ['', `另有 ${n} 筆的報名者沒在官方 LINE 傳過「報名確認」，沒辦法用 LINE 通知：`]
           .concat(missed.map(k => `・${k}：${r.missed[k]} 筆`), '名單（含電話）可在試算表「活動報名名單」篩選「未繳」查看。') : []).join('\n'));
         return;
