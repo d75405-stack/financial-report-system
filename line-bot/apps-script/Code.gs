@@ -460,7 +460,7 @@ const BAG_CONFIRM_TEXT = [
 // ───────────────────────── 報名查詢（報名者本人） ─────────────────────────
 
 const SIGNUP_PAY_HINT = {
-  '🌀 陀螺賽': '報名費每場 200 元（全數捐心路基金會），請至裕國豐展或惠宇開朗社區櫃台繳交。',
+  '🌀 陀螺賽': '報名費每場 200 元（全數捐心路基金會），請於 10/13(二) 前至裕國豐展或惠宇開朗社區櫃台繳交。',
   '🎭 變裝大賽': '保證金每組 100 元，請於報名後 7 日內至裕國豐展社區櫃台繳交，完成報到即退還。',
   '🧼 手工皂DIY': '保證金 100 元，請於 10/13 前至總太共好櫃檯繳交，完成報到即退還。',
   '👜 彩繪提袋DIY': '保證金 100 元，請於 10/13(二) 前至總太悅來櫃檯繳交，當天參加全額退還。',
@@ -508,7 +508,7 @@ function findMySignups_(uid, query) {
 function ensureFreshSignups_() {
   const last = parseTime_(prop_('SIGNUP_SYNC_AT'));
   if (!last || Date.now() - last.getTime() > 10 * 60 * 1000) {
-    try { syncSignups(); } catch (err) { console.warn('查詢前同步失敗，使用上次的名單：' + err.message); }
+    try { syncSignupsNow_(); } catch (err) { console.warn('查詢前同步失敗，使用上次的名單：' + err.message); }
   }
 }
 
@@ -1223,6 +1223,10 @@ const SIGNUP_SYNC_FORMS = [
 
 function syncSignups() {
   checkBroadcasts_();  // 每小時順便檢查預約推播（一次性排程的備援）
+  return syncSignupsNow_();
+}
+
+function syncSignupsNow_() {
   const props = PropertiesService.getScriptProperties();
   try {
     const at = now_();
@@ -1289,7 +1293,56 @@ const SCHEDULED_BROADCASTS = [
 SCHEDULED_BROADCASTS.push(
   { id: 'cosplay-ok-1008-2020', at: '2026-10-09T00:50:00+08:00', title: '變裝大賽報名成功通知', silent: true,
     to: { confirmAt: '2026-10-08 20:20', activity: '🎭 變裝大賽' } });
+// 繳費提醒：發給在官方 LINE 傳過「報名確認」、還有報名沒繳費的人，每人一則（列出他所有沒繳的報名）
+SCHEDULED_BROADCASTS.push({ id: 'unpaid-1009', at: '2026-10-09T12:20:00+08:00', title: '繳費提醒（逾期取消名額）', kind: 'unpaid' });
 const BROADCAST_WINDOW_MS = 3 * 3600e3;
+
+/** 各活動的繳費方式與期限（陀螺賽期限 10/13 由里長指定；變裝為報名後 7 天內）。 */
+const UNPAID_PAY_INFO = {
+  '🌀 陀螺賽': { pay: '報名費 200 元｜至裕國豐展或惠宇開朗社區櫃台繳交', due: '2026-10-13' },
+  '🎭 變裝大賽': { pay: '保證金 100 元｜至裕國豐展社區櫃台繳交，完成報到即退還', dueDays: 7 },
+  '🧼 手工皂DIY': { pay: '保證金 100 元｜至總太共好櫃檯繳交，完成報到即退還', due: '2026-10-13' },
+  '👜 彩繪提袋DIY': { pay: '保證金 100 元｜至總太悅來櫃檯繳交，當天參加全額退還', due: '2026-10-13' },
+};
+
+function isUnpaidSignup_(r) {
+  return !/^已取消/.test(r.狀態) && !/已繳/.test(r.繳費);
+}
+
+function unpaidReminderText_(rows) {
+  const today = ymdAfter_(0);
+  const md = d => `${+d.slice(5, 7)}/${+d.slice(8, 10)}（${weekdayOf_(d).slice(1)}）`;
+  const lines = ['📢 繳費提醒｜北屯鬧起來', '您好！您報名的活動還沒有完成繳費：'];
+  rows.slice().sort((a, b) => String(a.活動 + a.場次梯次 + a.編號).localeCompare(String(b.活動 + b.場次梯次 + b.編號))).forEach(r => {
+    const info = UNPAID_PAY_INFO[r.活動] || {};
+    const signed = String(r.報名時間 || '').slice(0, 10);
+    const due = info.due || (info.dueDays && /^\d{4}-\d{2}-\d{2}$/.test(signed) ? ymdAfter_(info.dueDays, signed) : '');
+    lines.push('', `${r.活動}${r.場次梯次 ? '｜' + r.場次梯次 : ''}${r.編號 ? '｜' + r.編號 + ' 號' : ''}`,
+      `　👤 ${r.姓名}${r.同行者 && r.活動 !== '🎭 變裝大賽' ? '（' + String(r.同行者).slice(0, 40) + '）' : ''}`,
+      `　💰 ${info.pay || '請依報名頁說明繳費'}`);
+    if (due) lines.push(due >= today ? `　⏰ 請於 ${md(due)}前繳費` : '　⏰ 已超過繳費期限（報名後 7 天內），請盡快繳費');
+  });
+  lines.push('', '⚠️ 逾期未繳費將取消名額，由候補遞補。',
+    '✅ 已經繳了嗎？櫃台登記後約 10 分鐘會更新，輸入「查詢報名」可以確認。', '有問題請直接在這裡留言 🙏', '', '里長參選人莊晴全 敬上');
+  return lines.join('\n').slice(0, 4900);
+}
+
+/** 發繳費提醒，回傳發送結果與連不到 LINE 的未繳筆數（依活動）。 */
+function sendUnpaidReminders_() {
+  try { syncSignupsNow_(); } catch (err) { console.warn('提醒前同步失敗，使用上次的名單：' + err.message); }
+  const list = readAll_('活動報名名單');
+  const covered = new Set();
+  let sent = 0, failed = 0;
+  Array.from(new Set(readAll_('報名確認紀錄').map(c => c.userId).filter(Boolean))).forEach(uid => {
+    const rows = (findMySignups_(uid).rows || []).filter(isUnpaidSignup_);
+    if (!rows.length) return;
+    rows.forEach(r => covered.add(r._row));
+    if (push_(uid, [text_(unpaidReminderText_(rows))])) sent++;
+    else failed++;
+  });
+  const unpaid = list.filter(isUnpaidSignup_);
+  return { sent, failed, total: unpaid.length, missed: countBy_(unpaid.filter(r => !covered.has(r._row)), '活動') };
+}
 
 const SIGNUP_EVENT_INFO = {
   '🎭 變裝大賽': '「百鬼嘉年華變裝大賽」\n📅 10/18（日）18:00 裕國豐展（太順路60號）\n⏰ 17:30–17:50 報到，完成報到保證金即退還',
@@ -1350,6 +1403,16 @@ function runScheduledBroadcasts() {
       return;
     }
     try {
+      if (b.kind === 'unpaid') {
+        const r = sendUnpaidReminders_();
+        props.setProperty(key, `sent ${now_()} ${r.sent} 人`);
+        const missed = Object.keys(r.missed);
+        const n = missed.reduce((t, k) => t + r.missed[k], 0);
+        notifyOwner_([`✅ 繳費提醒已用 LINE 發給 ${r.sent} 位報名者${r.failed ? `（${r.failed} 位發送失敗）` : ''}`,
+          `目前未繳費共 ${r.total} 筆。`].concat(n ? ['', `另有 ${n} 筆的報名者沒在官方 LINE 傳過「報名確認」，沒辦法用 LINE 通知：`]
+          .concat(missed.map(k => `・${k}：${r.missed[k]} 筆`), '名單（含電話）可在試算表「活動報名名單」篩選「未繳」查看。') : []).join('\n'));
+        return;
+      }
       if (b.to) {
         const uid = confirmUserId_(b.to.confirmAt, b.to.activity);
         const body = uid ? signupOkText_(uid, b.to.activity) : '';
