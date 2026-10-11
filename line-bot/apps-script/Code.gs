@@ -1460,6 +1460,12 @@ SCHEDULED_BROADCASTS.push({ id: 'unpaid-all-1009', at: '2026-10-09T12:45:00+08:0
     '',
     '里長參選人莊晴全 敬上',
   ].join('\n') });
+// 10/11 再次通知未繳費者（里長指示）：未繳費將取消報名並開放名額。LINE 先發，11:30 寄 Email、產生新簡訊名單
+SCHEDULED_BROADCASTS.push({ id: 'unpaid-1011', at: '2026-10-11T11:00:00+08:00', title: '繳費提醒（未繳將取消並開放名額）', kind: 'unpaid',
+  head: '📢 繳費提醒｜10/12（一）前未繳費將取消名額' });
+SCHEDULED_BROADCASTS.push({ id: 'unpaid-email-1011', at: '2026-10-11T11:30:00+08:00', title: 'Email 繳費提醒（第 2 輪）', kind: 'unpaidEmail',
+  round: '1011', subject: '【北屯鬧起來】繳費提醒：10/12（一）前未繳費將取消報名並開放名額' });
+SCHEDULED_BROADCASTS.push({ id: 'sms-list-1011', at: '2026-10-11T11:30:00+08:00', title: '簡訊名單（第 2 輪）', kind: 'smsList' });
 // 10/13 早上 9 點：整理還沒繳費的名單（試算表）並用 LINE 傳連結給里長
 SCHEDULED_BROADCASTS.push({ id: 'unpaid-list-1013', at: '2026-10-13T09:00:00+08:00', title: '10/13 未繳費名單', kind: 'unpaidList' });
 const BROADCAST_WINDOW_MS = 3 * 3600e3;
@@ -1506,7 +1512,7 @@ function unpaidBlockLines_(rows) {
 
 function unpaidReminderText_(rows, head) {
   return [head || '📢 繳費提醒｜北屯鬧起來', '您好！您報名的活動還沒有完成繳費：'].concat(unpaidBlockLines_(rows), ['',
-    '⚠️ 逾期未繳費將取消名額，由候補遞補。',
+    '⚠️ 期限內未繳費，將取消報名並開放名額給其他人報名（手工皂、彩繪提袋由候補遞補）。',
     '✅ 已經繳了嗎？櫃台登記後約 10 分鐘會更新，輸入「查詢報名」可以確認。', '有問題請直接在這裡留言 🙏', '', '里長參選人莊晴全 敬上'])
     .join('\n').slice(0, 4900);
 }
@@ -1529,7 +1535,7 @@ function smsText_(rows) {
     const due = unpaidDue_(r);
     return `${a.short}${r.編號 ? r.編號 + '號' : ''}請${due && due >= today ? '於' + (+due.slice(5, 7)) + '/' + (+due.slice(8, 10)) + '前' : '盡快'}至${a.place}繳${a.pay}`;
   });
-  return `【北屯鬧起來】${rows[0].姓名}您好，您報名的活動尚未繳費：${items.join('；')}。逾期將取消名額，已繳請忽略。加LINE查詢：https://line.me/R/ti/p/@401mmxpw`;
+  return `【北屯鬧起來】${rows[0].姓名}您好，您報名的活動尚未繳費：${items.join('；')}。逾期將取消報名並開放名額，已繳請忽略。加LINE查詢：https://line.me/R/ti/p/@401mmxpw`;
 }
 
 /** 簡訊則數估算：70 字內 1 則，超過每 67 字 1 則。 */
@@ -1624,12 +1630,17 @@ function signupKey_(label, no, name) {
 }
 
 /** 要寄 Email 的未繳報名：沒連到 LINE、有 Email、還沒寄過，依 Email 合併。 */
-function unpaidEmailTargets_() {
+/** round：第幾輪寄信（每輪各自記錄寄過誰，同一輪不重寄）；不給就是第一輪。 */
+function emailSentKey_(round) {
+  return round ? 'UNPAID_EMAIL_SENT_' + round : 'UNPAID_EMAIL_SENT';
+}
+
+function unpaidEmailTargets_(round) {
   try { syncSignupsNow_(); } catch (err) { console.warn('寄信前同步失敗，使用上次的名單：' + err.message); }
   const covered = new Set();
   Array.from(new Set(readAll_('報名確認紀錄').map(c => c.userId).filter(Boolean))).forEach(uid =>
     (findMySignups_(uid).rows || []).forEach(r => covered.add(signupKey_(r.活動, r.編號, r.姓名))));
-  const sent = new Set(JSON.parse(prop_('UNPAID_EMAIL_SENT') || '[]'));
+  const sent = new Set(JSON.parse(prop_(emailSentKey_(round)) || '[]'));
   const byEmail = {};
   let noEmail = 0, linked = 0;
   SIGNUP_SYNC_FORMS.forEach(f => {
@@ -1655,22 +1666,22 @@ function unpaidEmailTargets_() {
 
 function unpaidEmailBody_(rows) {
   return ['您好，', '', '感謝您報名 2026「北屯鬧起來」廍子里萬聖節活動！', '您報名的活動還沒有完成繳費：']
-    .concat(unpaidBlockLines_(rows), ['', '⚠️ 逾期未繳費將取消名額，由候補遞補。', '已經繳費的朋友請忽略這封信，謝謝！', '',
+    .concat(unpaidBlockLines_(rows), ['', '⚠️ 期限內未繳費，將取消報名並開放名額給其他人報名（手工皂、彩繪提袋由候補遞補）。', '已經繳費的朋友請忽略這封信，謝謝！', '',
       '📱 歡迎加入官方 LINE「里長參選人莊晴全」，繳費與賽程通知都會從 LINE 發送：', 'https://line.me/R/ti/p/@401mmxpw',
       '加入後輸入「查詢報名 姓名 電話」就能隨時查詢繳費狀態。', '', '活動網站：https://ccs2024taiwan.pages.dev', '',
       '里長參選人莊晴全 敬上', '（有問題可以直接回信，或在官方 LINE 留言）']).join('\n');
 }
 
-function sendUnpaidEmails_(targets) {
-  const t = targets || unpaidEmailTargets_();
-  const sent = new Set(JSON.parse(prop_('UNPAID_EMAIL_SENT') || '[]'));
+function sendUnpaidEmails_(targets, round, subject) {
+  const t = targets || unpaidEmailTargets_(round);
+  const sent = new Set(JSON.parse(prop_(emailSentKey_(round)) || '[]'));
   const emails = Object.keys(t.byEmail);
   let n = 0, rows = 0, failed = 0;
   for (const email of emails) {
     if (MailApp.getRemainingDailyQuota() < 2) break;
     const list = t.byEmail[email];
     try {
-      MailApp.sendEmail({ to: email, subject: UNPAID_EMAIL_SUBJECT, body: unpaidEmailBody_(list), name: '里長參選人莊晴全｜北屯鬧起來' });
+      MailApp.sendEmail({ to: email, subject: subject || UNPAID_EMAIL_SUBJECT, body: unpaidEmailBody_(list), name: '里長參選人莊晴全｜北屯鬧起來' });
       list.forEach(r => sent.add(r._key));
       n++;
       rows += list.length;
@@ -1679,7 +1690,7 @@ function sendUnpaidEmails_(targets) {
       failed++;
     }
   }
-  PropertiesService.getScriptProperties().setProperty('UNPAID_EMAIL_SENT', JSON.stringify(Array.from(sent)));
+  PropertiesService.getScriptProperties().setProperty(emailSentKey_(round), JSON.stringify(Array.from(sent)));
   return { sent: n, rows, failed, left: emails.length - n - failed, noEmail: t.noEmail, linked: t.linked };
 }
 
@@ -1756,9 +1767,14 @@ function signupOkText_(uid, activity) {
 function ensureBroadcastTrigger_() {
   const now = Date.now();
   const next = SCHEDULED_BROADCASTS.filter(b => !prop_('BC_' + b.id) && new Date(b.at).getTime() > now)
-    .sort((a, b) => a.at.localeCompare(b.at))[0];
-  const have = ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'runScheduledBroadcasts');
-  if (next && !have) ScriptApp.newTrigger('runScheduledBroadcasts').timeBased().at(new Date(next.at)).create();
+    .sort((a, b) => new Date(a.at) - new Date(b.at))[0];
+  const have = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'runScheduledBroadcasts');
+  // 已經排的是同一個時間就不動；新增了更早的推播時重排（一次只留一個一次性排程）
+  if (have.length && (!next || prop_('BC_TRIGGER_AT') === next.at)) return;
+  have.forEach(t => ScriptApp.deleteTrigger(t));
+  if (!next) return PropertiesService.getScriptProperties().deleteProperty('BC_TRIGGER_AT');
+  ScriptApp.newTrigger('runScheduledBroadcasts').timeBased().at(new Date(next.at)).create();
+  PropertiesService.getScriptProperties().setProperty('BC_TRIGGER_AT', next.at);
 }
 
 function checkBroadcasts_() {
@@ -1789,6 +1805,21 @@ function runScheduledBroadcasts() {
       return;
     }
     try {
+      if (b.kind === 'unpaidEmail') {
+        const r = sendUnpaidEmails_(null, b.round, b.subject);
+        props.setProperty(key, `sent ${now_()} ${r.sent} 封`);
+        notifyOwner_(`✉️ ${b.title}：已寄出 ${r.sent} 封（${r.rows} 筆報名）` + (r.failed ? `，${r.failed} 封失敗` : '') +
+          (r.left > 0 ? `\n今天的寄信額度用完，還有 ${r.left} 封沒寄，明天在試算表按「寄 Email 繳費提醒」補寄。` : '') +
+          (r.noEmail ? `\n沒填 Email 的 ${r.noEmail} 筆請用電話或簡訊聯絡。` : ''));
+        return;
+      }
+      if (b.kind === 'smsList') {
+        const r = makeSmsList_();
+        props.setProperty(key, `sent ${now_()} ${r.count} 支`);
+        notifyOwner_([`📱 ${b.title}已產生：${r.count} 支手機（沒綁 LINE、還沒繳費），預估 ${r.segments} 則簡訊。`,
+          '打開 → 檔案 → 下載 → Microsoft Excel，再上傳到簡訊平台的個人化發送：', r.url].join('\n'));
+        return;
+      }
       if (b.kind === 'unpaidList') {
         const r = makeUnpaidList_(b.title);
         props.setProperty(key, `sent ${now_()} ${r.total} 筆`);
