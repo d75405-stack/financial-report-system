@@ -1701,9 +1701,12 @@ function ccsApi_(path, payload) {
 }
 
 function paidNoticeText_(items) {
-  const lines = ['✅ 繳費完成通知｜北屯鬧起來', `${items[0].name} 您好，已收到您的繳費，報名完成！`];
+  // proxy：主辦代繳（外縣市等不方便到櫃台繳費的，後台按「🤝代繳」，網站 paid_note 有值）
+  const lines = ['✅ 繳費完成通知｜北屯鬧起來', items.every(x => x.proxy)
+    ? `${items[0].name} 您好，主辦人已幫您代繳，報名完成！`
+    : `${items[0].name} 您好，已收到您的繳費，報名完成！`];
   items.forEach(x => {
-    lines.push('', `${x.label}${x.group ? '｜' + x.group : ''}${x.no ? '｜' + x.no + ' 號' : ''}`, `　👤 ${x.name}`);
+    lines.push('', `${x.label}${x.group ? '｜' + x.group : ''}${x.no ? '｜' + x.no + ' 號' : ''}${x.proxy ? '｜主辦代繳' : ''}`, `　👤 ${x.name}`);
     if (PAID_NOTICE_INFO[x.label]) lines.push('　' + PAID_NOTICE_INFO[x.label].replace(/\n/g, '\n　'));
   });
   lines.push('', '📋 輸入「查詢報名」可以隨時查看報名資料。', '期待在活動見到您！🎃', '', '里長參選人莊晴全 敬上');
@@ -1724,7 +1727,8 @@ function sendPaidNotices_() {
   let unlinked = 0;
   PAID_NOTICE_FORMS.forEach(f => (pending[f.key] || []).forEach(r => {
     const item = { form: f.key, id: r.id, label: f.label, name: String(r.name || '').trim(),
-      no: r[f.no] == null ? '' : String(r[f.no]), group: f.group ? String(r[f.group] || '') : '' };
+      no: r[f.no] == null ? '' : String(r[f.no]), group: f.group ? String(r[f.group] || '') : '',
+      proxy: /主辦代繳/.test(String(r.paid_note || '')) };
     const uids = owners[signupKey_(item.label, item.no, item.name)];
     if (!uids) return unlinked++;
     uids.forEach(uid => (byUser[uid] = byUser[uid] || []).push(item));
