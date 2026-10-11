@@ -1857,6 +1857,17 @@ SCHEDULED_BROADCASTS.push({ id: 'sms-list-1011', at: '2026-10-11T11:30:00+08:00'
 SCHEDULED_BROADCASTS.push({ id: 'addr-stats-1011', at: '2026-10-11T11:20:00+08:00', title: '陀螺賽報名者居住縣市統計', kind: 'addrStats' });
 // 10/11 里長指示：問所有未繳費的人是不是住外縣市（LINE 快速回覆按鈕，回覆記到「居住地回覆」）
 SCHEDULED_BROADCASTS.push({ id: 'city-ask-1011', at: '2026-10-11T12:30:00+08:00', title: '詢問未繳費者居住地', kind: 'cityAsk' });
+// 里長 10/12 指示：沒綁 LINE 的未繳費報名者也寄 Email，跟 LINE 一樣截止前每天中午（12:10，排在 LINE 提醒後面）
+// 每天一輪（round 各自記錄寄過誰，同一天不重寄）；寄的當下才同步名單、看綁定，中午才綁 LINE 的就不寄 Email
+SCHEDULED_BROADCASTS.push(
+  { id: 'unpaid-email-1012', at: '2026-10-12T12:10:00+08:00', title: 'Email 繳費提醒（10/12）', kind: 'unpaidEmail',
+    round: '1012', subject: '【北屯鬧起來】繳費期限延到 10/15（四），還沒繳費的請記得繳' },
+  { id: 'unpaid-email-1013', at: '2026-10-13T12:10:00+08:00', title: 'Email 繳費提醒（10/13）', kind: 'unpaidEmail',
+    round: '1013', subject: '【北屯鬧起來】繳費提醒：10/15（四）前未繳費將取消報名並開放名額' },
+  { id: 'unpaid-email-1014', at: '2026-10-14T12:10:00+08:00', title: 'Email 繳費提醒（10/14）', kind: 'unpaidEmail',
+    round: '1014', subject: '【北屯鬧起來】繳費提醒：明天 10/15（四）截止，未繳費將取消名額' },
+  { id: 'unpaid-email-1015', at: '2026-10-15T12:10:00+08:00', title: 'Email 繳費最後提醒（10/15）', kind: 'unpaidEmail',
+    round: '1015', subject: '【北屯鬧起來】繳費最後提醒：今天 10/15（四）截止' });
 // 10/7 14:41 以前（系統接手回覆報名確認之前）傳的報名確認沒有人回覆、也沒有紀錄，綁不到 LINE（10/12 統計 97 筆：已繳 61、未繳 36）。
 // 里長 10/12 指示：中午推播一次給所有好友，請他們輸入「查詢報名 姓名 電話」補綁定，之後就收得到繳費提醒與報名完成通知
 SCHEDULED_BROADCASTS.push({ id: 'relink-1012', at: '2026-10-12T12:05:00+08:00', title: '報名確認補登記',
