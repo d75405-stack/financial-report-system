@@ -1808,7 +1808,64 @@ SCHEDULED_BROADCASTS.push({ id: 'city-ask-1011', at: '2026-10-11T12:30:00+08:00'
 // 10/13 早上 9 點：整理還沒繳費的名單（試算表）並用 LINE 傳連結給里長。
 // 10/13 起報名的（晚報名）活動當天繳、不算逾期：名單另列一類，通知裡和逾期未繳分開算（見 makeUnpaidList_）
 SCHEDULED_BROADCASTS.push({ id: 'unpaid-list-1013', at: '2026-10-13T09:00:00+08:00', title: '10/13 未繳費名單', kind: 'unpaidList' });
+// 10/11 里長指示：推播宣傳還有名額的場次。名額在發送當下向活動網站查（openSpotsText_），只列還有名額的
+SCHEDULED_BROADCASTS.push({ id: 'open-spots-1011', at: '2026-10-11T15:00:00+08:00', title: '還有名額！北屯鬧起來報名中', kind: 'openSpots',
+  button: { text: '🌀 戰鬥陀螺賽還有名額，馬上報名 👇', label: '立即報名', uri: CCS_BASE + '/signup/beyblade/' } });
 const BROADCAST_WINDOW_MS = 3 * 3600e3;
+
+/** 活動網站的公開名額查詢（不用密碼）。 */
+function ccsPublic_(path) {
+  const res = UrlFetchApp.fetch(CCS_BASE + path, { headers: { 'User-Agent': 'Mozilla/5.0' }, muteHttpExceptions: true, followRedirects: true });
+  if (res.getResponseCode() !== 200) throw new Error('活動網站名額查詢 HTTP ' + res.getResponseCode() + '（' + path + '）');
+  return JSON.parse(res.getContentText());
+}
+
+// 陀螺賽場次（名稱要和活動網站 BEY_SESSIONS 一樣）
+const BEY_SPOT_SESSIONS = [
+  { key: '10/17上午 開放組(惠宇開朗)', label: '10/17(六) 上午｜開放組｜惠宇開朗', rule: '不限資格' },
+  { key: '10/17下午 廍子陀螺王(惠宇開朗)', label: '10/17(六) 下午｜廍子陀螺王｜惠宇開朗', rule: '限廍子里里民' },
+  { key: '10/18上午 親子賽(裕國豐展)', label: '10/18(日) 上午｜親子賽｜裕國豐展', rule: '一大一小組隊，小朋友限國小以下' },
+  { key: '10/18下午 變裝限定場(裕國豐展)', label: '10/18(日) 下午｜變裝限定場｜裕國豐展', rule: '需穿萬聖節變裝' },
+];
+const DIY_SPOT_SLOTS = ['第一梯次 14:00-15:00', '第二梯次 15:30-16:30'];
+
+/** 手工皂/彩繪提袋各梯次：正取剩幾位、額滿後候補剩幾位；全滿回傳空字串。 */
+function slotSpotLines_(d) {
+  return DIY_SPOT_SLOTS.map(s => {
+    const left = d.max - (d.counts[s] || 0);
+    const wait = (d.waitMax || 0) - (d.waiting[s] || 0);
+    const name = s.replace('-', '–');
+    if (left > 0) return `　・${name}｜剩 ${left} 位`;
+    if (wait > 0) return `　・${name}｜額滿，可候補（剩 ${wait} 位）`;
+    return '';
+  }).filter(Boolean);
+}
+
+/** 推播用：依活動網站目前的報名人數，列出還有名額的場次。陀螺賽查不到就丟錯（不發舊數字）。 */
+function openSpotsText_() {
+  const bey = ccsPublic_('/api/beyblade-count');
+  const lines = ['🎃 北屯鬧起來萬聖節活動，這些場次還有名額，歡迎報名 👇', ''];
+  const open = BEY_SPOT_SESSIONS.filter(s => bey.max - (bey.counts[s.key] || 0) > 0);
+  const full = BEY_SPOT_SESSIONS.filter(s => open.indexOf(s) < 0);
+  if (open.length) {
+    lines.push('🌀 戰鬥陀螺64強爭霸賽（每場 200 元，全數捐給心路基金會）');
+    open.forEach(s => lines.push(`　・${s.label}`, `　　${s.rule}｜剩 ${bey.max - (bey.counts[s.key] || 0)} 個名額`));
+    if (full.length) lines.push(`　（${full.map(s => s.label.split('｜')[1]).join('、')}已額滿）`);
+    lines.push('　報名 👉 ' + CCS_BASE + '/signup/beyblade/', '');
+  }
+  const extra = (path, fn) => { try { return fn(ccsPublic_(path)); } catch (err) { console.error(err.message); return []; } };
+  lines.push.apply(lines, extra('/api/cosplay-count', c => c.max - c.count > 0 ? [
+    `🎭 百鬼嘉年華變裝大賽｜10/18(日) 18:00 裕國豐展｜剩 ${c.max - c.count} 組`, '　報名 👉 ' + CCS_BASE + '/signup/cosplay/', ''] : []));
+  lines.push.apply(lines, extra('/api/diy-count', d => { const s = slotSpotLines_(d); return s.length ? [
+    '🧼 甜點造型手工皂DIY｜10/18(日) 總太共好共享食堂'].concat(s, '　報名 👉 ' + CCS_BASE + '/signup/diy/', '') : []; }));
+  lines.push.apply(lines, extra('/api/bag-count', d => { const s = slotSpotLines_(d); return s.length ? [
+    '👜 彩繪提袋DIY｜10/17(六) 總太悅來活力廚房'].concat(s, '　報名 👉 ' + CCS_BASE + '/signup/bag/', '') : []; }));
+  if (lines.length <= 2) return '';
+  lines.push('📅 線上報名到 10/15(四) 中午 12:00，之後名額沒滿改現場報名',
+    '💰 10/12(一) 以前報名的，請在 10/12 前到社區櫃台繳費（24 小時都可以繳）；10/13 起報名的，活動當天報到時現場繳',
+    '', '里長參選人莊晴全 敬上');
+  return lines.join('\n');
+}
 
 /**
  * 各活動的繳費方式與期限（主辦 10/9 決定）：
@@ -2357,13 +2414,22 @@ function runScheduledBroadcasts() {
         notifyOwner_(`✅ 已發送「${b.title}」給 ${lineDisplayName_(uid) || '報名者'}：\n\n${body}`);
         return;
       }
-      const messages = [text_(`【${b.title}】\n${b.text}`)];
-      if (b.button && prop_('LIFF_ID')) messages.push(linkButton_(b.button.text, b.button.label, liffUrl_(b.button.page)));
+      // openSpots：內容在發送當下依活動網站的報名人數產生
+      const body = b.kind === 'openSpots' ? openSpotsText_() : b.text;
+      if (!body) {
+        props.setProperty(key, 'skipped ' + now_() + ' 已全部額滿');
+        notifyOwner_(`ℹ️「${b.title}」沒有發出：所有場次都已額滿。`);
+        return;
+      }
+      const messages = [text_(`【${b.title}】\n${body}`)];
+      const uri = b.button && (b.button.uri || (prop_('LIFF_ID') && liffUrl_(b.button.page)));
+      if (uri) messages.push(linkButton_(b.button.text, b.button.label, uri));
       broadcastAll_(messages);
       props.setProperty(key, 'sent ' + now_());
-      append_('公告', { id: newId_('A'), createdAt: now_(), target: 'all', title: b.title, content: b.text, recipients: '所有好友' });
+      append_('公告', { id: newId_('A'), createdAt: now_(), target: 'all', title: b.title, content: body, recipients: '所有好友' });
       const q = messageQuota_();
-      notifyOwner_(`✅ 已推播「${b.title}」給所有好友（原訂 ${when}）` + (q && q.limit ? `\n本月訊息已用 ${q.used}/${q.limit} 則` : ''));
+      notifyOwner_(`✅ 已推播「${b.title}」給所有好友（原訂 ${when}）` + (q && q.limit ? `\n本月訊息已用 ${q.used}/${q.limit} 則` : '') +
+        (b.kind === 'openSpots' ? '\n\n' + body : ''));
     } catch (err) {
       props.setProperty(key, 'failed ' + now_() + ' ' + String(err.message).slice(0, 200));
       notifyOwner_(`❌ 預約推播「${b.title}」發送失敗：${err.message}`);
