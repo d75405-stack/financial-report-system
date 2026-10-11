@@ -40,6 +40,7 @@ const SHEETS = {
   好友紀錄: ['at', 'userId', 'displayName', 'event'],
   私訊關注: ['at', 'userId', 'displayName', 'keyword', 'text', 'signups', 'handled'],
   報名確認紀錄: ['at', 'userId', 'displayName', 'text'],
+  報名統計: ['at', '項目', '結果'],
   繳費通知紀錄: ['at', 'userId', 'displayName', 'items'],
   群組紀錄: ['groupId', 'groupName', 'type', 'joinedAt', 'status'],
   群組成員: ['groupId', 'groupName', 'userId', 'displayName', 'status', 'firstSeen', 'lastSeen', 'note'],
@@ -1793,6 +1794,8 @@ SCHEDULED_BROADCASTS.push({ id: 'unpaid-1011', at: '2026-10-11T11:00:00+08:00', 
 SCHEDULED_BROADCASTS.push({ id: 'unpaid-email-1011', at: '2026-10-11T11:30:00+08:00', title: 'Email 繳費提醒（第 2 輪）', kind: 'unpaidEmail',
   round: '1011', subject: '【北屯鬧起來】繳費提醒：10/12（一）前未繳費將取消報名並開放名額' });
 SCHEDULED_BROADCASTS.push({ id: 'sms-list-1011', at: '2026-10-11T11:30:00+08:00', title: '簡訊名單（第 2 輪）', kind: 'smsList' });
+// 10/11 里長問「有多少參加者不是台中市」：只有陀螺賽有住址欄，統計各縣市人數（只記數字，不記姓名）
+SCHEDULED_BROADCASTS.push({ id: 'addr-stats-1011', at: '2026-10-11T11:20:00+08:00', title: '陀螺賽報名者居住縣市統計', kind: 'addrStats' });
 // 10/13 早上 9 點：整理還沒繳費的名單（試算表）並用 LINE 傳連結給里長。
 // 10/13 起報名的（晚報名）活動當天繳、不算逾期：名單另列一類，通知裡和逾期未繳分開算（見 makeUnpaidList_）
 SCHEDULED_BROADCASTS.push({ id: 'unpaid-list-1013', at: '2026-10-13T09:00:00+08:00', title: '10/13 未繳費名單', kind: 'unpaidList' });
@@ -1984,6 +1987,51 @@ function makeUnpaidList_(title) {
   const of = rule => rows.filter(r => payRule_(r) === rule);
   return { url: ss.getUrl(), total: out.length, byActivity: countBy_(of('deadline'), '活動'), overdue: of('deadline').length,
     late: countBy_(of('late'), '活動'), lateTotal: of('late').length, promoted: of('promoted').length };
+}
+
+// ───────────────────────── 報名者居住縣市統計 ─────────────────────────
+// 只有陀螺賽報名表有「住址」（選填）；其他三個活動沒有住址欄，無法統計。只輸出各縣市人數。
+
+const TW_CITIES = ['臺北市', '新北市', '桃園市', '臺中市', '臺南市', '高雄市', '基隆市', '新竹市', '新竹縣', '苗栗縣', '彰化縣',
+  '南投縣', '雲林縣', '嘉義市', '嘉義縣', '屏東縣', '宜蘭縣', '花蓮縣', '臺東縣', '澎湖縣', '金門縣', '連江縣'];
+// 只寫區名、沒寫縣市時，台中市才有的區（北區、東區這類各縣市都有的不算）
+const TAICHUNG_ONLY_DISTRICTS = ['北屯', '西屯', '南屯', '太平', '大里', '霧峰', '烏日', '豐原', '后里', '石岡', '東勢', '和平', '新社',
+  '潭子', '大雅', '神岡', '大肚', '沙鹿', '龍井', '梧棲', '清水', '大甲', '外埔', '大安'];
+
+function cityOf_(addr) {
+  const a = String(addr || '').replace(/\s/g, '').replace(/台/g, '臺').replace(/^\d{3,6}/, '').replace(/^(中華民國|臺灣省?)/, '');
+  if (!a) return '';
+  const hit = TW_CITIES.find(c => a.indexOf(c) === 0) || TW_CITIES.find(c => a.indexOf(c) >= 0);
+  if (hit) return hit;
+  if (/^臺中縣/.test(a)) return '臺中市';
+  if (TAICHUNG_ONLY_DISTRICTS.some(d => a.indexOf(d + '區') === 0 || a.indexOf(d + '區') >= 0)) return '臺中市';
+  if (/廍子/.test(a)) return '臺中市';
+  return '?';
+}
+
+function beybladeCityStatsText_() {
+  const { head, rows } = ccsExport_('');
+  const ai = head.indexOf('住址'), si = head.indexOf('報名狀態'), pi = head.indexOf('電話');
+  if (ai < 0) throw new Error('陀螺賽匯出檔找不到「住址」欄位');
+  const live = rows.filter(r => r.length > 1 && !/^已取消/.test(String(r[si] || '')));
+  const byCity = {};
+  let blank = 0, unknown = 0;
+  const people = { tc: new Set(), other: new Set() };
+  live.forEach(r => {
+    const c = cityOf_(r[ai]);
+    const who = normPhone_(r[pi]) || String(r[pi] || '');
+    if (!c) return blank++;
+    if (c === '?') return unknown++;
+    byCity[c] = (byCity[c] || 0) + 1;
+    (c === '臺中市' ? people.tc : people.other).add(who);
+  });
+  const others = Object.keys(byCity).filter(c => c !== '臺中市').sort((a, b) => byCity[b] - byCity[a]);
+  const otherN = others.reduce((n, c) => n + byCity[c], 0);
+  return [`陀螺賽有效報名 ${live.length} 筆（住址是選填）：`,
+    `・臺中市：${byCity['臺中市'] || 0} 筆（約 ${people.tc.size} 人）`,
+    `・非臺中市：${otherN} 筆（約 ${people.other.size} 人）` + (others.length ? '：' + others.map(c => `${c} ${byCity[c]}`).join('、') : ''),
+    `・沒填住址：${blank} 筆`, `・看不出縣市：${unknown} 筆`,
+    '（變裝大賽、手工皂、彩繪提袋的報名表沒有住址欄，無法統計）'].join('\n');
 }
 
 /** 試算表選單：產生簡訊名單。 */
@@ -2193,6 +2241,13 @@ function runScheduledBroadcasts() {
       return;
     }
     try {
+      if (b.kind === 'addrStats') {
+        const text = beybladeCityStatsText_();
+        append_('報名統計', { at: now_(), 項目: b.title, 結果: text });
+        props.setProperty(key, 'sent ' + now_());
+        notifyOwner_('📊 ' + b.title + '\n' + text);
+        return;
+      }
       if (b.kind === 'unpaidEmail') {
         const r = sendUnpaidEmails_(null, b.round, b.subject);
         props.setProperty(key, `sent ${now_()} ${r.sent} 封`);
