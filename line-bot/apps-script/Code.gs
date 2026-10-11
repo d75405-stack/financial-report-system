@@ -41,6 +41,7 @@ const SHEETS = {
   私訊關注: ['at', 'userId', 'displayName', 'keyword', 'text', 'signups', 'handled'],
   報名確認紀錄: ['at', 'userId', 'displayName', 'text'],
   報名統計: ['at', '項目', '結果'],
+  居住地回覆: ['at', 'userId', 'displayName', 'answer', 'signups'],
   繳費通知紀錄: ['at', 'userId', 'displayName', 'items'],
   群組紀錄: ['groupId', 'groupName', 'type', 'joinedAt', 'status'],
   群組成員: ['groupId', 'groupName', 'userId', 'displayName', 'status', 'firstSeen', 'lastSeen', 'note'],
@@ -212,6 +213,12 @@ function handleEvent_(ev) {
   // 只記錄、不回覆（reply token 留給後面的關鍵字回覆與 aibus）
   watchPrivateMessage_(uid, t);
 
+  // 居住地詢問的回覆（快速回覆按鈕送出「居住地：臺中市／外縣市」）
+  const cityAns = t.match(CITY_ANSWER_RE);
+  if (cityAns) {
+    reply_(ev.replyToken, [text_(recordCityAnswer_(uid, cityAns[1]))]);
+    return;
+  }
   // DIY 候補報名確認（「…手工皂候補報名確認|…」「…彩繪提袋候補報名確認|…」）回覆候補說明，不要求繳保證金。
   // 要先於一般報名確認判斷；候補訊息不含「DIY手工皂報名確認」「彩繪提袋報名確認」這兩個連續字串。
   const waitText = waitlistConfirmText_(t);
@@ -1796,6 +1803,8 @@ SCHEDULED_BROADCASTS.push({ id: 'unpaid-email-1011', at: '2026-10-11T11:30:00+08
 SCHEDULED_BROADCASTS.push({ id: 'sms-list-1011', at: '2026-10-11T11:30:00+08:00', title: '簡訊名單（第 2 輪）', kind: 'smsList' });
 // 10/11 里長問「有多少參加者不是台中市」：只有陀螺賽有住址欄，統計各縣市人數（只記數字，不記姓名）
 SCHEDULED_BROADCASTS.push({ id: 'addr-stats-1011', at: '2026-10-11T11:20:00+08:00', title: '陀螺賽報名者居住縣市統計', kind: 'addrStats' });
+// 10/11 里長指示：問所有未繳費的人是不是住外縣市（LINE 快速回覆按鈕，回覆記到「居住地回覆」）
+SCHEDULED_BROADCASTS.push({ id: 'city-ask-1011', at: '2026-10-11T12:30:00+08:00', title: '詢問未繳費者居住地', kind: 'cityAsk' });
 // 10/13 早上 9 點：整理還沒繳費的名單（試算表）並用 LINE 傳連結給里長。
 // 10/13 起報名的（晚報名）活動當天繳、不算逾期：名單另列一類，通知裡和逾期未繳分開算（見 makeUnpaidList_）
 SCHEDULED_BROADCASTS.push({ id: 'unpaid-list-1013', at: '2026-10-13T09:00:00+08:00', title: '10/13 未繳費名單', kind: 'unpaidList' });
@@ -1987,6 +1996,47 @@ function makeUnpaidList_(title) {
   const of = rule => rows.filter(r => payRule_(r) === rule);
   return { url: ss.getUrl(), total: out.length, byActivity: countBy_(of('deadline'), '活動'), overdue: of('deadline').length,
     late: countBy_(of('late'), '活動'), lateTotal: of('late').length, promoted: of('promoted').length };
+}
+
+// ───────────────────────── 詢問未繳費者居住地 ─────────────────────────
+
+const CITY_ANSWER_RE = /^居住地[:：]\s*(臺中市|台中市|外縣市)$/;
+const CITY_ASK_TEXT = [
+  '📋 北屯鬧起來｜想請問您一件事',
+  '您報名的活動目前還沒有繳費。請問您是住在臺中市，還是外縣市呢？',
+  '請點下方按鈕回覆，方便我們了解並協助您繳費 🙏',
+].join('\n');
+
+function cityAskMessage_() {
+  const item = (label, text) => ({ type: 'action', action: { type: 'message', label, text } });
+  return Object.assign(text_(CITY_ASK_TEXT), { quickReply: { items: [item('住臺中市', '居住地：臺中市'), item('住外縣市', '居住地：外縣市')] } });
+}
+
+/** 問有綁 LINE、還有 10/12 期限未繳報名的人（候補、晚報名不問），每人一則。 */
+function askUnpaidCity_() {
+  try { syncSignupsNow_(); } catch (err) { console.warn('詢問前同步失敗，使用上次的名單：' + err.message); }
+  let sent = 0;
+  Array.from(new Set(readAll_('報名確認紀錄').map(c => c.userId).filter(Boolean))).forEach(uid => {
+    const rows = (findMySignups_(uid).rows || []).filter(r => isUnpaidSignup_(r) && payRule_(r) === 'deadline');
+    if (rows.length && push_(uid, [cityAskMessage_()])) sent++;
+  });
+  return { sent };
+}
+
+/** 記錄居住地回覆；回外縣市的通知里長（附他的未繳報名）。 */
+function recordCityAnswer_(uid, answer) {
+  const a = answer === '外縣市' ? '外縣市' : '臺中市';
+  let signups = '';
+  try {
+    signups = (findMySignups_(uid).rows || []).filter(isUnpaidSignup_)
+      .map(r => `${r.活動}${r.場次梯次 ? ' ' + r.場次梯次 : ''}${r.編號 ? ' ' + r.編號 + '號' : ''} ${r.姓名}`).join('、');
+  } catch (err) { console.warn('查居住地回覆者的報名失敗：' + err.message); }
+  const name = lineDisplayName_(uid);
+  append_('居住地回覆', { at: now_(), userId: uid, displayName: name, answer: a, signups });
+  if (a === '外縣市') notifyOwner_(`📍 外縣市回覆：${name || '報名者'}\n未繳報名：${signups || '（沒對到）'}`);
+  return a === '外縣市'
+    ? '收到，謝謝您的回覆！🙏\n如果不方便到社區櫃台繳費，請直接在這裡留言，里辦會跟您聯繫。'
+    : '收到，謝謝您的回覆！🙏\n各社區櫃台 24 小時都可以繳費，記得在 10/12（一）前完成喔。';
 }
 
 // ───────────────────────── 報名者居住縣市統計 ─────────────────────────
@@ -2241,6 +2291,12 @@ function runScheduledBroadcasts() {
       return;
     }
     try {
+      if (b.kind === 'cityAsk') {
+        const r = askUnpaidCity_();
+        props.setProperty(key, `sent ${now_()} ${r.sent} 人`);
+        notifyOwner_(`📍 已用 LINE 詢問 ${r.sent} 位未繳費報名者「住臺中市還是外縣市」。\n回覆會記在試算表「居住地回覆」；有人回外縣市會馬上通知你。`);
+        return;
+      }
       if (b.kind === 'addrStats') {
         const text = beybladeCityStatsText_();
         append_('報名統計', { at: now_(), 項目: b.title, 結果: text });
