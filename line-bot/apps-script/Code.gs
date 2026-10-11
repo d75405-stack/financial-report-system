@@ -900,6 +900,8 @@ function signupRowsText_(list) {
 }
 
 const LAWYER_PLACE_TEXT = '📍 地點確認中，目前尚未開放預約，敬請期待！';
+// 里長 10/11 指示：律師諮詢的介紹都要寫隱密性高、一對一、無他人介入
+const LAWYER_PRIVACY_TEXT = '🔒 隱密性高：只有您與律師一對一諮詢，無他人介入';
 
 /** 地點與開放狀況：已公布地點的列出來；有可預約時段的寫開放預約，其餘寫確認中／尚未開放。 */
 function lawyerPlaceText_(list) {
@@ -936,7 +938,7 @@ function lawyerIntroMessages_() {
   const summary = lawyerScheduleSummary_(list);
   const head = '⚖️ 免費律師諮詢' + (list.length && list[0].firm ? '（' + list[0].firm + '）' : '') +
     (summary ? '\n🗓 ' + (open ? '時段' : '預計時段') + '：' + summary : '') +
-    '\n' + lawyerPlaceText_(list) + (open ? '\n請點下方按鈕選擇時段預約。' : '');
+    '\n' + LAWYER_PRIVACY_TEXT + '\n' + lawyerPlaceText_(list) + (open ? '\n請點下方按鈕選擇時段預約。' : '');
   const messages = [text_(head)];
   if (list.length) {
     const t = (text, o) => text ? [Object.assign({ type: 'text', text: String(text).slice(0, 300), wrap: true }, o || {})] : [];
@@ -974,7 +976,7 @@ function lawyerInfoText_() {
   if (!list.length) return LAWYER_CLOSED_TEXT;
   const open = list.some(l => l.bookable);
   return (open ? '⚖️ 免費律師諮詢' + (list[0].firm ? '（' + list[0].firm + '）' : '') : '⚖️ 免費律師諮詢即將開放！') + '\n' +
-    list.map(l => `・${l.name} 律師${l.schedule ? '：' + l.schedule : ''}`).join('\n') + '\n' + lawyerPlaceText_(list);
+    list.map(l => `・${l.name} 律師${l.schedule ? '：' + l.schedule : ''}`).join('\n') + '\n' + LAWYER_PRIVACY_TEXT + '\n' + lawyerPlaceText_(list);
 }
 
 const LAWYER_CLOSED_TEXT = '⚖️ 免費律師諮詢服務尚未開放，敬請期待！開放時會在官方 LINE 公告通知大家。';
@@ -1286,7 +1288,7 @@ const KNOWLEDGE_SEED = [
   ['報名後流程', '報名成功後頁面會自動開啟官方 LINE 並預填「報名確認」訊息，請按傳送，就會收到繳費提醒。完成繳費後會再收到繳費完成通知。'],
   ['特約商家', '廍子里大小事特約商家共 40 家，提供活動期間優惠，名單與社群 QR Code：https://ccs2024taiwan.pages.dev/shops/'],
   ['驅魔小遊戲', '線上小遊戲有「收集闖關版」與「對戰 RPG 版」，從活動網站首頁進入即可遊玩，進度存在手機上。'],
-  ['免費律師諮詢', '里辦提供免費律師諮詢，在官方 LINE 點圖文選單「律師諮詢」或輸入「律師諮詢」即可查看時段並預約，前一天會收到提醒。輸入「我的預約」可查詢或取消。'],
+  ['免費律師諮詢', '里辦提供免費律師諮詢，隱密性高：只有里民與律師一對一諮詢，無他人介入。在官方 LINE 點圖文選單「律師諮詢」或輸入「律師諮詢」即可查看時段並預約，前一天會收到提醒。輸入「我的預約」可查詢或取消。'],
   ['里民回報', '工作人員可在官方 LINE 點「回報」填寫表單（可附照片與定位）。一般里民遇到路燈、環境、治安等問題，請直接在聊天室留言描述地點與狀況，里辦會處理。'],
   ['最新公告', '在官方 LINE 輸入「公告」可查看最新宣達事項。'],
 ];
@@ -1319,6 +1321,8 @@ const KNOWLEDGE_STALE_FIXES = [
   [/需在 10\/1[23](?:\([一二]\))? ?前到總太悅來櫃檯繳保證金 100 元才算報名完成/g,
     '需繳保證金 100 元：10/12(一) 以前報名的要在 10/12 前到總太悅來櫃檯繳交才算報名完成，10/13 起報名的活動當天報到時到現場繳交'],
   [/(?:線上)?報名截止後不再收候補。/g, '線上報名截止（10/15(四) 中午 12:00）後不再收候補，已登記的候補照常依序遞補。'],
+  // 10/11 里長指示補上隱密性（只補一次：已經寫了「隱密性高」的不再加）
+  [/里辦提供免費律師諮詢，(?!隱密性高)/g, '里辦提供免費律師諮詢，隱密性高：只有里民與律師一對一諮詢，無他人介入。'],
 ];
 
 /** 把知識庫內容裡已經過時的截止／繳費句子換成新的說法（見 KNOWLEDGE_STALE_FIXES）；沒有就原樣回傳。 */
