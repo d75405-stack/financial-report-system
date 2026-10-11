@@ -274,6 +274,12 @@ function handleEvent_(ev) {
     return;
   }
 
+  // 律師本人私訊「預約狀況」：看自己時段的完整預約資料（群組裡只看得到遮住的姓名）
+  if ((m = t.match(/^(預約狀況|預約名單)\s*(.*)$/)) && lawyerNameOfUser_(uid)) {
+    reply_(ev.replyToken, [text_(lawyerBookingStatusText_(m[2], lawyerNameOfUser_(uid)))]);
+    return;
+  }
+
   switch (t) {
     case '回報':
       reply_(ev.replyToken, [isActiveMember_(member)
@@ -1102,7 +1108,7 @@ function handleAssistant_(ev, uid, member, text, inGroup) {
   if (inGroup && /^(設為|設定)律師群組$/.test(q)) {
     if (!isOwnerUser_(uid)) return say('只有里長可以設定律師群組。');
     PropertiesService.getScriptProperties().setProperty('LAWYER_GROUP_ID', ev.source.groupId || ev.source.roomId);
-    return say('✅ 已設為律師群組。之後有人預約或取消律師諮詢，以及每次諮詢前一天晚上 6 點的預約名單，都會發到這個群組。\n' +
+    return say('✅ 已設為律師群組。之後有人預約或取消律師諮詢，以及每次諮詢前一天晚上 6 點的預約名單，都會發到這個群組（姓名遮住；完整資料只私訊給當天的律師）。\n' +
       '隨時查詢：在群組輸入「預約狀況」（只看某天：「預約狀況 10/20」）。\n要停止請輸入「全全 取消律師群組」。');
   }
   if (inGroup && isLawyerGroup_(ev.source) && /預約|名單/.test(q)) {
@@ -2708,9 +2714,11 @@ function liffApi_(action, req, user) {
         reminded: '',
       };
       append_('諮詢預約', b);
-      notifyAdmins_(`新律師諮詢預約\n${slot.date} ${slot.start}-${slot.end}\n${b.name}｜${b.topic}`);
-      notifyLawyerGroup_(['📅 新的律師諮詢預約', slotLabel_(slot), bookingDetail_(b),
-        `此時段還剩 ${Math.max(0, slot.remaining - 1)} 位`].join('\n'));
+      // 隱密性（里長 10/11 指示）：群組和管理員只看到時段＋遮住的姓名，完整資料只私訊給該時段的律師本人
+      notifyAdmins_(`新律師諮詢預約\n${slot.date} ${slot.start}-${slot.end}\n${maskName_(b.name)}`);
+      notifyLawyerGroup_(['📅 新的律師諮詢預約', slotLabel_(slot), `👤 ${maskName_(b.name)}`,
+        `此時段還剩 ${Math.max(0, slot.remaining - 1)} 位`, LAWYER_GROUP_PRIVACY_NOTE].join('\n'));
+      notifyLawyerPrivately_(slot.lawyer, ['📅 新的律師諮詢預約（只發給您本人）', slotLabel_(slot), bookingDetail_(b)].join('\n'));
       return { id: b.id, slot };
     }
 
@@ -2979,6 +2987,10 @@ function sendBookingReminders() {
   });
   const digest = lawyerDigest_(tomorrow);
   if (digest) notifyLawyerGroup_(digest);
+  // 明天有人預約的律師：私訊完整名單
+  const booked = readAll_('諮詢預約').filter(b => b.status === '已預約' && slots[b.slotId] && slots[b.slotId].date === tomorrow);
+  booked.map(b => slots[b.slotId].lawyer).filter((n, i, a) => n && a.indexOf(n) === i)
+    .forEach(n => notifyLawyerPrivately_(n, lawyerDigest_(tomorrow, n)));
   ensureLawyerSlots_();
 }
 
@@ -3014,13 +3026,60 @@ function slotLabel_(s) {
   return `🗓 ${s.date}（${weekdayOf_(s.date)}）${s.start}–${s.end}${s.lawyer ? '｜' + s.lawyer + ' 律師' : ''}${s.note ? '\n📍 ' + s.note : ''}`;
 }
 
+/** 預約的完整資料（姓名、電話、類別、問題簡述）：只私訊給律師本人用。 */
 function bookingDetail_(b) {
-  return [`👤 ${b.name}（${b.phone}）`, `📂 ${b.topic}`].concat(b.detail ? ['📝 ' + String(b.detail).slice(0, 200)] : []).join('\n');
+  return [`👤 ${b.name}（${b.phone}）`, `📂 ${b.topic}`].concat(b.detail ? ['📝 ' + String(b.detail).slice(0, 1000)] : []).join('\n');
+}
+
+const LAWYER_GROUP_PRIVACY_NOTE = '🔒 預約人資料只私訊給當天的律師';
+
+/** 遮住姓名（王小明 → 王○明、王明 → 王○），群組和管理員通知用。 */
+function maskName_(name) {
+  const c = Array.from(String(name || '').trim());
+  if (c.length <= 1) return c.length ? c[0] + '○' : '里民';
+  return c[0] + '○'.repeat(Math.max(1, c.length - 2)) + (c.length > 2 ? c[c.length - 1] : '');
+}
+
+/** 律師本人的 LINE userId：從 MEMBER_NOTES 或「群組成員」備註找「律師…姓名」。找不到回傳空字串。 */
+function lawyerUserId_(name) {
+  if (!name) return '';
+  // 姓名要完整相符（「陳」不能配到「陳沂裴」）
+  const hit = note => /律師/.test(note) && String(note).split(/[\s・，,、（）()]+/).indexOf(name) >= 0;
+  const k = Object.keys(MEMBER_NOTES).find(id => hit(MEMBER_NOTES[id]));
+  if (k) return k;
+  const r = readAll_('群組成員').find(x => x.userId && hit(x.note || ''));
+  return r ? r.userId : '';
+}
+
+/** 這個 LINE 帳號是哪位律師（不是律師回傳空字串）。 */
+function lawyerNameOfUser_(uid) {
+  if (!uid) return '';
+  const names = LAWYER_SEED.map(l => l.name).concat(readAll_('律師資料').map(l => l.name)).filter(Boolean);
+  return names.find(n => lawyerUserId_(n) === uid) || '';
+}
+
+/** 私訊給律師本人；發不出去（律師還沒加官方 LINE 好友）時每天提醒里長一次，提醒裡不含預約內容。 */
+function notifyLawyerPrivately_(lawyer, message) {
+  const uid = lawyerUserId_(lawyer);
+  let ok = false;
+  if (uid) {
+    try { ok = push_(uid, [text_(String(message).slice(0, 4900))]); } catch (err) { console.error('私訊律師失敗：' + err.message); }
+  }
+  if (!ok) {
+    const key = 'LAWYER_DM_WARN_' + (uid || lawyer || 'x').slice(0, 40);
+    if (prop_(key) !== ymdAfter_(0)) {
+      PropertiesService.getScriptProperties().setProperty(key, ymdAfter_(0));
+      notifyAdmins_(`⚠️ ${lawyer ? lawyer + ' ' : ''}律師收不到律師諮詢預約的詳細資料（${uid ? '律師還沒加官方 LINE 好友' : '找不到律師的 LINE 帳號'}）。\n` +
+        '請律師加官方 LINE @401mmxpw 好友；在那之前，詳細資料請到試算表「諮詢預約」查看。', true);
+    }
+  }
+  return ok;
 }
 
 function notifyBookingCancelled_(b, who) {
   const s = indexBy_(readAll_('律師時段'), 'slotId')[b.slotId] || {};
-  notifyLawyerGroup_(['❌ 律師諮詢預約取消（' + who + '）', slotLabel_(s), `👤 ${b.name}｜${b.topic}`].join('\n'));
+  notifyLawyerGroup_(['❌ 律師諮詢預約取消（' + who + '）', slotLabel_(s), `👤 ${maskName_(b.name)}`].join('\n'));
+  notifyLawyerPrivately_(s.lawyer, ['❌ 律師諮詢預約取消（' + who + '）', slotLabel_(s), `👤 ${b.name}（${b.phone}）｜${b.topic}`].join('\n'));
 }
 
 function isLawyerGroup_(source) {
@@ -3034,7 +3093,8 @@ const LAWYER_STATUS_RE = /^(預約狀況|預約名單|預約查詢|查詢預約|
  * 律師群組查詢用：今天起各場次的預約名單（姓名、電話、類別），空的時段也列出來。
  * 指定日期（例「10/20」）只看那一天；沒有人預約的日期縮成一行。
  */
-function lawyerBookingStatusText_(query) {
+/** 預約狀況。lawyer 有給（律師本人私訊查）：只列這位律師的時段、完整資料；沒給（群組）：遮住姓名、不列電話與內容。 */
+function lawyerBookingStatusText_(query, lawyer) {
   const today = ymdAfter_(0);
   const m = String(query || '').match(/(\d{1,2})\s*[\/／月.-]\s*(\d{1,2})/);
   let only = '';
@@ -3043,9 +3103,9 @@ function lawyerBookingStatusText_(query) {
     only = y + '-' + pad(m[1]) + '-' + pad(m[2]);
     if (only < ymdAfter_(-180)) only = (y + 1) + only.slice(4);
   }
-  const slots = readAll_('律師時段').filter(s => only ? s.date === only : s.date >= today)
+  const slots = readAll_('律師時段').filter(s => (only ? s.date === only : s.date >= today) && (!lawyer || s.lawyer === lawyer))
     .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
-  if (!slots.length) return only ? `${only.slice(5).replace('-', '/')} 沒有律師諮詢時段。` : '目前沒有律師諮詢時段。';
+  if (!slots.length) return only ? `${only.slice(5).replace('-', '/')} 沒有${lawyer ? '您的' : ''}律師諮詢時段。` : `目前沒有${lawyer ? '您的' : ''}律師諮詢時段。`;
   const bookings = readAll_('諮詢預約').filter(b => b.status === '已預約');
   const lines = ['⚖️ 律師諮詢預約狀況（' + Utilities.formatDate(new Date(), TZ, 'MM/dd HH:mm') + ' 更新）'];
   const days = [];
@@ -3063,16 +3123,19 @@ function lawyerBookingStatusText_(query) {
     if (!booked && !only) return lines.push('　還沒有人預約');
     list.forEach(x => {
       if (!x.bs.length) return lines.push(`・${x.s.start}　（空）`);
-      x.bs.forEach(b => lines.push(`・${x.s.start}　${b.name}（${b.phone}）｜${b.topic}` + (b.detail ? '\n　　' + String(b.detail).slice(0, 60) : '')));
+      x.bs.forEach(b => lines.push(lawyer
+        ? `・${x.s.start}　${b.name}（${b.phone}）｜${b.topic}` + (b.detail ? '\n　　' + String(b.detail).slice(0, 300) : '')
+        : `・${x.s.start}　${maskName_(b.name)}`));
     });
   });
   if (!only) lines.push('', '只看某天：輸入「預約狀況 10/20」');
+  lines.push(lawyer ? '🔒 這份資料只給您本人，請勿轉傳' : LAWYER_GROUP_PRIVACY_NOTE + '；律師私訊官方 LINE 輸入「預約狀況」可看完整資料');
   return lines.join('\n').slice(0, 4900);
 }
 
 /** 前一天的預約名單（隔天有開時段才發）。 */
-function lawyerDigest_(date) {
-  const slots = readAll_('律師時段').filter(s => s.date === date)
+function lawyerDigest_(date, lawyer) {
+  const slots = readAll_('律師時段').filter(s => s.date === date && (!lawyer || s.lawyer === lawyer))
     .sort((a, b) => String(a.start).localeCompare(String(b.start)));
   if (!slots.length) return '';
   const bookings = readAll_('諮詢預約').filter(b => b.status === '已預約');
@@ -3081,9 +3144,11 @@ function lawyerDigest_(date) {
     const list = bookings.filter(b => b.slotId === s.slotId);
     lines.push('', slotLabel_(s) + `｜${list.length}/${s.capacity || 1} 位`);
     if (!list.length) lines.push('（目前沒有預約）');
-    list.forEach((b, i) => lines.push(`${i + 1}. ${b.name}（${b.phone}）｜${b.topic}` + (b.detail ? '\n   ' + String(b.detail).slice(0, 80) : '')));
+    list.forEach((b, i) => lines.push(lawyer
+      ? `${i + 1}. ${b.name}（${b.phone}）｜${b.topic}` + (b.detail ? '\n   ' + String(b.detail).slice(0, 300) : '')
+      : `${i + 1}. ${maskName_(b.name)}`));
   });
-  lines.push('', '隨時查詢：在群組輸入「預約狀況」');
+  lines.push('', lawyer ? '🔒 這份資料只給您本人，請勿轉傳' : LAWYER_GROUP_PRIVACY_NOTE, lawyer ? '隨時查詢：私訊輸入「預約狀況」' : '隨時查詢：在群組輸入「預約狀況」');
   return lines.join('\n');
 }
 
