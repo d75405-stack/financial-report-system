@@ -1821,7 +1821,24 @@ SCHEDULED_BROADCASTS.push({ id: 'unpaid-list-1013', at: '2026-10-13T09:00:00+08:
 // 10/11 里長指示：推播宣傳還有名額的場次。名額在發送當下向活動網站查（openSpotsText_），只列還有名額的
 SCHEDULED_BROADCASTS.push({ id: 'open-spots-1011', at: '2026-10-11T15:00:00+08:00', title: '還有名額！北屯鬧起來報名中', kind: 'openSpots',
   button: { text: '🌀 戰鬥陀螺賽還有名額，馬上報名 👇', label: '立即報名', uri: CCS_BASE + '/signup/beyblade/' } });
+// 10/11 律師諮詢隱密性改版：預約資料改私訊給律師，先查三位律師加官方 LINE 好友了沒（只通知里長）
+SCHEDULED_BROADCASTS.push({ id: 'lawyer-friend-check-1011', at: '2026-10-11T15:40:00+08:00', title: '律師好友檢查', kind: 'lawyerFriends' });
 const BROADCAST_WINDOW_MS = 3 * 3600e3;
+
+/** 每位上架律師能不能收到官方 LINE 私訊（有加好友才查得到個人資料）。 */
+function lawyerFriendStatusText_() {
+  const lines = ['⚖️ 律師諮詢預約資料改成私訊給律師本人（群組只顯示遮住的姓名）。', ''];
+  const need = [];
+  publicLawyers_().forEach(l => {
+    const uid = lawyerUserId_(l.name);
+    const ok = !!uid && !!lineDisplayName_(uid);
+    if (!ok) need.push(l.name);
+    lines.push(`${ok ? '✅' : '⚠️'} ${l.name} 律師：${ok ? '已加官方 LINE 好友，收得到預約私訊' : uid ? '還沒加官方 LINE 好友' : '找不到 LINE 帳號'}`);
+  });
+  if (need.length) lines.push('', `請 ${need.join('、')} 律師加官方 LINE 好友：https://line.me/R/ti/p/@401mmxpw`, '加好友之後，新的預約就會私訊給律師；在那之前預約資料請看試算表「諮詢預約」。');
+  else lines.push('', '三位律師都收得到預約私訊，不用另外處理。');
+  return lines.join('\n');
+}
 
 /** 活動網站的公開名額查詢（不用密碼）。 */
 function ccsPublic_(path) {
@@ -2362,6 +2379,11 @@ function runScheduledBroadcasts() {
         const r = askUnpaidCity_();
         props.setProperty(key, `sent ${now_()} ${r.sent} 人`);
         notifyOwner_(`📍 已用 LINE 詢問 ${r.sent} 位未繳費報名者「住臺中市還是外縣市」。\n回覆會記在試算表「居住地回覆」；有人回外縣市會馬上通知你。`);
+        return;
+      }
+      if (b.kind === 'lawyerFriends') {
+        props.setProperty(key, 'sent ' + now_());
+        notifyOwner_(lawyerFriendStatusText_());
         return;
       }
       if (b.kind === 'addrStats') {
