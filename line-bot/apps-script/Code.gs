@@ -296,6 +296,11 @@ function handleEvent_(ev) {
           : text_(lawyerInfoText_())]);
       }
       return;
+    case '額度':
+    case '訊息額度':
+      // 只有里長／管理員看得到
+      if (isOwnerUser_(uid)) { reply_(ev.replyToken, [text_(quotaText_())]); return; }
+      break;
     case '現場報名':
     case '現場報名表':
       reply_(ev.replyToken, [onsiteSignupMessage_()]);
@@ -1859,6 +1864,8 @@ SCHEDULED_BROADCASTS.push({ id: 'addr-stats-1011', at: '2026-10-11T11:20:00+08:0
 SCHEDULED_BROADCASTS.push({ id: 'city-ask-1011', at: '2026-10-11T12:30:00+08:00', title: '詢問未繳費者居住地', kind: 'cityAsk' });
 // 里長 10/12 指示：沒綁 LINE 的未繳費報名者也寄 Email，跟 LINE 一樣截止前每天中午（12:10，排在 LINE 提醒後面）
 // 每天一輪（round 各自記錄寄過誰，同一天不重寄）；寄的當下才同步名單、看綁定，中午才綁 LINE 的就不寄 Email
+// 里長 10/12 問剩下多少訊息額度：部署後馬上用 LINE 回報一次（只發給里長）
+SCHEDULED_BROADCASTS.push({ id: 'quota-1012', at: '2026-10-12T00:30:00+08:00', title: '訊息額度', kind: 'quota' });
 SCHEDULED_BROADCASTS.push(
   { id: 'unpaid-email-1012', at: '2026-10-12T12:10:00+08:00', title: 'Email 繳費提醒（10/12）', kind: 'unpaidEmail',
     round: '1012', subject: '【北屯鬧起來】繳費期限延到 10/15（四），還沒繳費的請記得繳' },
@@ -2442,6 +2449,11 @@ function runScheduledBroadcasts() {
       return;
     }
     try {
+      if (b.kind === 'quota') {
+        props.setProperty(key, 'sent ' + now_());
+        notifyOwner_(quotaText_() + '\n\n之後在官方 LINE 私訊輸入「額度」就能隨時查。');
+        return;
+      }
       if (b.kind === 'cityAsk') {
         const r = askUnpaidCity_();
         props.setProperty(key, `sent ${now_()} ${r.sent} 人`);
@@ -3992,6 +4004,18 @@ function multicast_(ids, messages) {
 function broadcastAll_(messages) {
   const res = lineApi_('message/broadcast', { messages });
   if (!res.ok) throw new Error('推播失敗：' + res.body);
+}
+
+/** 里長問「剩下多少訊息額度」：LINE 本月訊息用量／上限，加上今天 Gmail 還能寄幾封。 */
+function quotaText_() {
+  const q = messageQuota_();
+  const lines = ['📊 訊息額度（' + Utilities.formatDate(new Date(), TZ, 'M/d HH:mm') + '）'];
+  if (q && q.type === 'limited') lines.push(`LINE 本月已用 ${q.used} / ${q.limit} 則，剩 ${Math.max(0, q.limit - q.used)} 則`);
+  else if (q) lines.push(`LINE 本月已用 ${q.used} 則（方案沒有上限）`);
+  else lines.push('LINE 額度查詢失敗，請稍後再試');
+  try { lines.push(`Gmail 今天還能寄 ${MailApp.getRemainingDailyQuota()} 封`); } catch (err) { /* 沒授權寄信就不顯示 */ }
+  lines.push('', '※ 推播給所有好友，每位好友算 1 則；個人提醒每人算 1 則。');
+  return lines.join('\n');
 }
 
 function messageQuota_() {
