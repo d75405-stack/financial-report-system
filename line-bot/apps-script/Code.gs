@@ -41,6 +41,7 @@ const SHEETS = {
   私訊關注: ['at', 'userId', 'displayName', 'keyword', 'text', 'signups', 'handled'],
   報名確認紀錄: ['at', 'userId', 'displayName', 'text'],
   報名統計: ['at', '項目', '結果'],
+  未回覆訊息: ['at', 'userId', 'displayName', 'text'],
   居住地回覆: ['at', 'userId', 'displayName', 'answer', 'signups'],
   繳費通知紀錄: ['at', 'userId', 'displayName', 'items'],
   群組紀錄: ['groupId', 'groupName', 'type', 'joinedAt', 'status'],
@@ -236,7 +237,7 @@ function handleEvent_(ev) {
   }
 
   // 報名者查詢自己的報名與繳費狀態（只會看到自己的資料）
-  const lookup = t.match(/^(查詢報名|報名查詢|我的報名|查報名)\s*([\s\S]*)$/);
+  const lookup = t.match(/^(查詢報名|報名查詢|我的報名|查報名)\s*([\s\S]*)$/) || lookupLike_(t);
   if (lookup) {
     reply_(ev.replyToken, [text_(signupLookupText_(uid, lookup[2]))]);
     return;
@@ -339,7 +340,42 @@ function handleEvent_(ev) {
       reply_(ev.replyToken, [text_(privateCannedText_())]);
       return;
   }
-  // 其他訊息不自動回覆，留給里辦人員在官方帳號後台以聊天回覆。
+  // 其他訊息不自動回覆，留給里辦人員在官方帳號後台以聊天回覆；記到「未回覆訊息」，之後查得到誰沒收到回覆。
+  logUnanswered_(uid, t);
+}
+
+/**
+ * 其他問法也當成查詢報名（里長 10/12：很多人問「查詢」沒有回應，原本只認「查詢報名」開頭）。回傳跟 match 一樣的陣列，[2] 是姓名電話。
+ * 1. 「查詢」「查詢 王小明 0912…」「我要查詢」「查詢繳費」「查一下」等（含「預約」「律師」的是律師諮詢，不算）
+ * 2. 只傳「姓名 電話」或「電話 姓名」（例：王小明 0912345678）
+ * 3. 問「有報名成功嗎」「繳費了嗎」「沒收到通知」這類的話 → 先用綁定的資料查，查不到就回覆查詢方式
+ */
+const LOOKUP_PHONE_RE = /0?9\d{2}[-\s]?\d{3}[-\s]?\d{3}/;
+function lookupLike_(t) {
+  const s = String(t).replace(/[：:]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!s || s.length > 60 || /預約|律師/.test(s)) return null;
+  const m = s.match(/^(?:我要|我想|請問|請幫我|幫我|麻煩)?(?:查詢|查一下|查)(?:我的)?(?:報名|繳費)?(?:狀態|資料|結果|狀況)?\s*(.*)$/);
+  if (m) {
+    const rest = m[1].trim();
+    if (!rest || LOOKUP_PHONE_RE.test(rest)) return [t, '查詢', rest];
+    return null;   // 「查詢集章點」之類的不是查報名
+  }
+  // 只傳姓名＋電話
+  const np = s.match(/^([\u4e00-\u9fff·．]{2,6}|[A-Za-z][A-Za-z .]{1,30})[ ,，、]*(0?9\d{2}[-\s]?\d{3}[-\s]?\d{3})$/) ||
+    s.match(/^(0?9\d{2}[-\s]?\d{3}[-\s]?\d{3})[ ,，、]*([\u4e00-\u9fff·．]{2,6}|[A-Za-z][A-Za-z .]{1,30})$/);
+  if (np) return [t, '查詢', s];
+  if (/^0?9\d{2}[-\s]?\d{3}[-\s]?\d{3}$/.test(s)) return [t, '查詢', s];   // 只傳電話：回覆請補姓名
+  if (/報名(?:有)?成功|有(?:沒有)?報名|報到了嗎|繳費(?:了|成功)?(?:嗎|沒)|有繳(?:費)?(?:嗎|了嗎)|繳了嗎|沒(?:有)?收到(?:回覆|通知|確認)|查不到/.test(s)) return [t, '查詢', ''];
+  return null;
+}
+
+/** 沒有自動回覆的私訊記到「未回覆訊息」（之後要補回覆時找得到人）。 */
+function logUnanswered_(uid, text) {
+  try {
+    append_('未回覆訊息', { at: now_(), userId: uid, displayName: lineDisplayName_(uid), text: String(text).slice(0, 300) });
+  } catch (err) {
+    console.error('記錄未回覆訊息失敗：' + err.message);
+  }
 }
 
 // 快速報修：里長指示「建置中尚未開放」
@@ -847,7 +883,7 @@ function ensureFreshSignups_() {
 function signupLookupText_(uid, query) {
   ensureFreshSignups_();
   const r = findMySignups_(uid, query);
-  const ask = '請輸入「查詢報名 姓名 電話」（報名時填的姓名與電話），例如：\n查詢報名 王小明 0912345678';
+  const ask = '請輸入「查詢報名 姓名 電話」（報名時填的姓名與電話），例如：\n查詢報名 王小明 0912345678\n\n也可以在網站查詢：https://ccs2024taiwan.pages.dev/signup/check/';
   if (r.needInput) return '格式好像不太對 🙏\n' + ask;
   if (query && r.rows.length) linkSignupsToUser_(uid, r.rows);
   if (!r.rows.length) {
