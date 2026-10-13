@@ -181,7 +181,6 @@ const HELP_TEXT = [
   '・查詢報名：查看自己的活動報名與繳費狀態',
   '・我的預約：活動報名＋法律諮詢預約',
   '・律師諮詢：免費律師諮詢介紹與預約',
-  '・快速報修：路燈、剪草、修樹、道路坑洞…拍照通報',
   '・公告：萬聖節活動與最新消息',
   '',
   '🎃 北屯鬧起來萬聖節活動：https://ccs2024taiwan.pages.dev',
@@ -422,8 +421,20 @@ const REPAIR_REPS = [
 const REPAIR_SELF = { key: 'S', name: '莊晴全服務團隊', short: '莊晴全團隊', re: /莊晴全|自己|團隊/ };
 const REPAIR_PAGE_URL = 'https://ccs2024taiwan.pages.dev/repair/';
 const REPAIR_DAILY_LIMIT = 5;
+// 開放前（里長 10/13：「先不要開放，我先串聯好」）：里民輸入「報修」回覆建置中，表單和網站進度也不開放；
+// 里長和已綁定的服務處窗口照常可以用（綁定、測試流程）。里長私訊「開放快速報修」就開放（指令碼屬性 REPAIR_OPEN）。
+const REPAIR_CLOSED_TEXT = '🔧 快速報修功能建置中，尚未開放，敬請期待！';
 const REPAIR_CMD_RE = /^報修(分派|交給|完成|進度|不處理)\s*([Ff]?\s*\d{1,4})\s*([\s\S]*)$/;
 const REPAIR_LIST_RE = /^(我的報修|報修進度|查詢報修|報修查詢|報修清單|報修案件)$/;
+
+function repairOpen_() {
+  return prop_('REPAIR_OPEN') === 'true';
+}
+
+/** 能不能用報修：開放後所有人；開放前只有里長和服務處窗口（測試用）。 */
+function canRepair_(uid) {
+  return repairOpen_() || isOwnerUser_(uid) || !!repairWindowOf_(uid);
+}
 
 function repairId_(text) {
   const m = String(text || '').trim().match(/^[Ff]?\s*0*(\d{1,4})$/);
@@ -481,6 +492,7 @@ function repairGuideMessage_() {
 
 /** LIFF 送出報修：寫入「報修」，通知里長分派。 */
 function submitRepair_(user, req) {
+  if (!canRepair_(user.userId)) throw new Error(REPAIR_CLOSED_TEXT);
   const category = REPAIR_CATEGORIES.indexOf(req.category) >= 0 ? req.category : '其他';
   const location = requireText_(req.location, '地點', 200);
   const content = requireText_(req.content, '狀況說明', 1000);
@@ -723,11 +735,18 @@ function repairWindowsText_() {
 function handleRepairText_(ev, uid, t) {
   let m;
   if (t === '快速報修' || t === '報修' || t === '我要報修') {
-    reply_(ev.replyToken, [repairGuideMessage_()]);
+    if (!canRepair_(uid)) reply_(ev.replyToken, [text_(REPAIR_CLOSED_TEXT)]);
+    else reply_(ev.replyToken, (repairOpen_() ? [] : [text_('（快速報修還沒開放，現在只有您和服務處窗口能用，可以先測試。準備好了輸入「開放快速報修」。）')])
+      .concat([repairGuideMessage_()]));
     return true;
   }
   if (REPAIR_LIST_RE.test(t)) {
-    reply_(ev.replyToken, [text_(repairListText_(uid))]);
+    reply_(ev.replyToken, [text_(canRepair_(uid) ? repairListText_(uid) : REPAIR_CLOSED_TEXT)]);
+    return true;
+  }
+  if (t === '開放快速報修' || t === '關閉快速報修') {
+    if (!isOwnerUser_(uid)) return false;
+    reply_(ev.replyToken, [text_(setRepairOpen_(t === '開放快速報修'))]);
     return true;
   }
   if (t === '報修窗口' || (m = t.match(/^報修窗口\s*解除\s*(.+)$/))) {
@@ -827,9 +846,28 @@ function handleRepairText_(ev, uid, t) {
   return true;
 }
 
+/**
+ * 里長私訊「開放快速報修」「關閉快速報修」。開放時，開放前建立的報修（都是里長或窗口測試的）自動設為不處理，網站不會顯示。
+ */
+function setRepairOpen_(open) {
+  if (open === repairOpen_()) return open ? '快速報修已經是開放狀態。' : '快速報修本來就還沒開放。';
+  PropertiesService.getScriptProperties().setProperty('REPAIR_OPEN', open ? 'true' : 'false');
+  clearRepairCache_();
+  if (!open) return '✅ 已關閉快速報修：里民輸入「報修」會看到「建置中，尚未開放」，網站進度頁也不顯示。您和服務處窗口照常可以用。';
+  const tests = readAll_('報修').filter(r => r.status !== '不處理');
+  tests.forEach(r => update_('報修', r._row, { status: '不處理', repNote: '開放前測試', updatedAt: now_() }));
+  const ws = readAll_('報修窗口').filter(w => w.status !== 'disabled');
+  const missing = REPAIR_REPS.filter(rep => !ws.some(w => w.repKey === rep.key)).map(rep => rep.name);
+  return ['✅ 快速報修已開放！里民點選單「快速報修」或輸入「報修」就能報修，網站進度：' + REPAIR_PAGE_URL]
+    .concat(tests.length ? [`開放前測試的 ${tests.length} 件（${tests[0].id}${tests.length > 1 ? '–' + tests[tests.length - 1].id : ''}）已設為不處理，網站不會顯示。`] : [])
+    .concat(missing.length ? ['⚠️ 還沒綁定窗口：' + missing.join('、') + '（交給他們時系統會給您一段文字轉傳）'] : ['三個服務處都已綁定窗口 👍'])
+    .join('\n');
+}
+
 /** 活動網站 /repair/ 用的公開資料：不含報修人姓名、電話、LINE、狀況說明、照片、定位。 */
 function publicRepairs_() {
   const cache = CacheService.getScriptCache();
+  if (!repairOpen_()) return { open: false, updatedAt: now_(), reps: [], list: [] };
   const hit = cache.get('repairs_public');
   if (hit) return JSON.parse(hit);
   const from = ymdAfter_(-120);
@@ -839,7 +877,7 @@ function publicRepairs_() {
       id: r.id, createdAt: r.createdAt, category: r.category, location: r.location, status: r.status,
       rep: r.status === '待分派' ? '' : r.rep, note: r.repNote, doneAt: r.doneAt,
     }));
-  const data = { updatedAt: now_(), reps: REPAIR_REPS.map(x => x.name).concat([REPAIR_SELF.name]), list };
+  const data = { open: true, updatedAt: now_(), reps: REPAIR_REPS.map(x => x.name).concat([REPAIR_SELF.name]), list };
   // 快取一筆最多 100KB，太大存不進去就不快取（不影響回傳）
   try { cache.put('repairs_public', JSON.stringify(data), 60); } catch (err) { console.warn('報修進度快取失敗：' + err.message); }
   return data;
@@ -854,7 +892,6 @@ const PRIVATE_CANNED_DEFAULT = [
   '您的留言我們都會看到，將由專人盡快回覆您。',
   '',
   '📋 查詢自己的報名與繳費狀態：輸入「查詢報名」',
-  '🔧 路燈、剪草、修樹、道路坑洞要報修：輸入「報修」',
   '北屯鬧起來活動資訊：https://ccs2024taiwan.pages.dev',
   '',
   '里長參選人莊晴全 敬上',
@@ -1914,15 +1951,21 @@ function knowledgeText_() {
   });
   // 程式內建的補充資料：試算表裡還沒有同名主題時才加進去（試算表裡的內容優先）；
   // 但主題標「以此為準」的（報名截止、繳費期限）一律用程式裡的最新版本，試算表裡同名的舊內容不用
-  const latest = new Set(KNOWLEDGE_EXTRA.filter(k => /以此為準/.test(k[0])).map(k => k[0]));
+  const extra = knowledgeExtra_();
+  const latest = new Set(extra.filter(k => /以此為準/.test(k[0])).map(k => k[0]));
   const out = rows.filter(r => !latest.has(r[0]));
   const topics = out.map(r => r[0]);
-  KNOWLEDGE_EXTRA.forEach(k => { if (topics.indexOf(k[0]) < 0) out.push(k); });
+  extra.forEach(k => { if (topics.indexOf(k[0]) < 0) out.push(k); });
   return out.map(r => '## ' + r[0] + '\n' + r[1]).join('\n\n');
 }
 
+/** 快速報修還沒開放時，全全回答「建置中，尚未開放」。 */
+function knowledgeExtra_() {
+  return KNOWLEDGE_EXTRA.map(k => (/^快速報修/.test(k[0]) && !repairOpen_() ? [k[0], '快速報修（路燈、剪草、修樹等報修）目前建置中，尚未開放，敬請期待；開放時會公告。'] : k));
+}
+
 const KNOWLEDGE_EXTRA = [
-  ['快速報修（最新，以此為準）', '快速報修 10/13 起開放：路燈故障、剪草、修剪樹木、道路坑洞、水溝清理、環境清潔等，在官方 LINE 點選單「快速報修」或輸入「報修」，填類別、地點、狀況說明，可以附照片和定位。送出後由莊晴全分派給黃健豪立委服務處、曾朝榮議員服務處、賴順仁議員服務處或莊晴全服務團隊處理，處理完成會用 LINE 通知報修人。處理進度公開在 https://ccs2024taiwan.pages.dev/repair/ （只顯示類別、地點、處理單位和進度，不顯示報修人姓名電話）。輸入「我的報修」可以看自己報修的進度。'],
+  ['快速報修（最新，以此為準）', '快速報修：路燈故障、剪草、修剪樹木、道路坑洞、水溝清理、環境清潔等，在官方 LINE 點選單「快速報修」或輸入「報修」，填類別、地點、狀況說明，可以附照片和定位。送出後由莊晴全分派給黃健豪立委服務處、曾朝榮議員服務處、賴順仁議員服務處或莊晴全服務團隊處理，處理完成會用 LINE 通知報修人。處理進度公開在 https://ccs2024taiwan.pages.dev/repair/ （只顯示類別、地點、處理單位和進度，不顯示報修人姓名電話）。輸入「我的報修」可以看自己報修的進度。'],
   ['集章兌換規則（最新，以此為準）', '集印章活動：集滿 5 顆印章、集滿 10 顆印章，各可以換一次獎品（兩種都集到就能換兩次），兌換地點惠宇開朗，10/18(日) 14:00–16:00，換完為止。集滿 15 顆印章可以換抽獎券：先在惠宇開朗換抽獎券，再拿抽獎券到裕國豐展抽獎。'],
   ['集章地圖卡發放位置（最新，以此為準）', '紙本「集章地圖卡」（集章圖紙）10/12（一）起開始發放，限量 500 份，發完為止；共 15 處發放，任一處都可以拿：裕國豐展、惠宇開朗、總太聚作、總太2020、總太悅來、總太共好、總太美樂地、八月小確幸、敬甜點、簇新美學、全家太順店、臥野、御脊傳統整復推拿、中醫大市立醫院、全聯建和店。在官方 LINE 輸入「集章」也查得到。集章點與路線：https://ccs2024taiwan.pages.dev/map/'],
   ['查詢報名（最新，以此為準）', '想知道有沒有報名成功、繳費了沒：① 活動網站查詢報名頁 https://ccs2024taiwan.pages.dev/signup/check/ ，填報名時的姓名和電話，四個活動一次查；② 在官方 LINE 私訊輸入「查詢報名 姓名 電話」，綁定後繳費提醒和報名完成通知都會用 LINE 發送。'],
@@ -3315,6 +3358,8 @@ function liffApi_(action, req, user) {
         member: isActiveMember_(member) ? pick_(member, ['name', 'role', 'group']) : null,
         categories: REPORT_CATEGORIES,
         repairCategories: REPAIR_CATEGORIES,
+        repairOpen: repairOpen_(),
+        canRepair: canRepair_(user.userId),
       };
 
     case 'register': {
@@ -3356,6 +3401,7 @@ function liffApi_(action, req, user) {
       return submitRepair_(user, req);
 
     case 'myRepairs':
+      if (!canRepair_(user.userId)) return [];
       return readAll_('報修').filter(r => r.userId === user.userId).slice(-20).reverse()
         .map(r => Object.assign(pick_(r, ['id', 'createdAt', 'category', 'content', 'location', 'status', 'repNote', 'doneAt']),
           { rep: r.status === '待分派' ? '' : r.rep }));
@@ -3449,6 +3495,7 @@ function adminApi_(action, req) {
         reportCategories: REPORT_CATEGORIES, reportStatuses: REPORT_STATUSES, bookingStatuses: BOOKING_STATUSES, adminRoles: ADMIN_ROLES,
         repairCategories: REPAIR_CATEGORIES, repairStatuses: REPAIR_STATUSES,
         repairReps: REPAIR_REPS.concat([REPAIR_SELF]).map(r => ({ key: r.key, name: r.name })), repairPage: REPAIR_PAGE_URL,
+        repairOpen: repairOpen_(),
       };
 
     case 'reports':

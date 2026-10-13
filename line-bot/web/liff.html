@@ -19,7 +19,7 @@
     <h1>里辦公處服務</h1>
     <p class="muted" id="hello"></p>
     <div class="menu">
-      <a href="#repair"><span>🔧</span>快速報修</a>
+      <a href="#repair" id="menu-repair"><span>🔧</span>快速報修</a>
       <a href="#report"><span>📝</span>回報</a>
       <a href="#booking"><span>⚖️</span>律師諮詢</a>
       <a href="#news"><span>📢</span>公告</a>
@@ -69,6 +69,8 @@
   <!-- 快速報修（里民） -->
   <section id="view-repair" class="hidden">
     <h1>快速報修</h1>
+    <div class="card center muted hidden" id="repair-closed">🔧 快速報修功能建置中，尚未開放，敬請期待！</div>
+    <p class="muted hidden" id="repair-testing">（還沒開放，現在只有莊晴全和服務處窗口看得到，可以先測試。）</p>
     <form id="form-repair" class="card">
       <p class="muted">路燈不亮、雜草太高、樹木要修剪、道路坑洞、水溝堵塞…送出後由莊晴全交給民意代表服務處處理，完成會用 LINE 通知您。</p>
       <label>類別</label>
@@ -93,7 +95,7 @@
       <p class="muted">🔒 姓名、電話只提供給負責處理的服務處聯絡用；網站進度只顯示類別、地點、處理單位和進度。</p>
       <button class="block" type="submit">送出報修</button>
     </form>
-    <div class="card">
+    <div class="card" id="my-repairs-card">
       <h2>我的報修</h2>
       <p class="muted">所有報修的處理進度：<a href="https://ccs2024taiwan.pages.dev/repair/" target="_blank" rel="noopener">網站報修進度</a></p>
       <ul class="list" id="my-repairs"></ul>
@@ -187,7 +189,14 @@ function route() {
   $('#back-home').classList.toggle('hidden', section.id === 'view-home');
   $('#menu-register').classList.toggle('hidden', !!me.member);
   if (view === 'report') loadReports();
-  if (view === 'repair') loadRepairs();
+  // 快速報修還沒開放：里民看到建置中；里長和服務處窗口可以測試
+  const canRepair = me.canRepair !== false;
+  $('#menu-repair').classList.toggle('hidden', !canRepair);
+  $('#repair-closed').classList.toggle('hidden', canRepair);
+  $('#repair-testing').classList.toggle('hidden', !canRepair || me.repairOpen !== false);
+  $('#form-repair').classList.toggle('hidden', !canRepair);
+  $('#my-repairs-card').classList.toggle('hidden', !canRepair);
+  if (view === 'repair' && canRepair) loadRepairs();
   if (view === 'booking') loadBooking();
   if (view === 'news') loadNews();
 }
