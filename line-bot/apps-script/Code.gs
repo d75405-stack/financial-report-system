@@ -903,6 +903,8 @@ function clearRepairCache_() {
 const SHOP_POST_TTL = 7200;
 const SHOP_IMG_TTL = 1800;
 const SHOP_ADD_RE = /(新增|上架|加入|更新).{0,4}特約|特約.{0,4}(新增|上架|加入|更新)/;
+// 問句（「全全 如何新增特約商家」）：回覆做法，不要真的去上架（里長 10/13：問如何新增，系統卻把上一則公告又上架一次）
+const SHOP_QUESTION_RE = /如何|怎麼|怎樣|要怎|方法|步驟|程序|流程|教學|說明|請問|可以嗎|[?？]|嗎$/;
 // 撤下：「撤下特約 店名」「取消特約 店名」「特約撤下 店名」「下架 店名」都可以
 // （「取消、刪除…」一定要帶「特約」，避免「全全 取消報名」這類話被當成撤下）
 const SHOP_REMOVE_RE = /^(?:(?:撤下|下架)(?:特約)?(?:商家|商店|店家|商)?|(?:刪除|移除|取消|撤銷|撤除|拿掉)特約(?:商家|商店|店家|商)?|特約(?:商家|商店|店家|商)?(?:撤下|下架|刪除|移除|取消|撤銷|撤除|拿掉))\s*[:：]?\s*(.+)$/;
@@ -981,7 +983,8 @@ function handleShopGroup_(ev, uid) {
     if (!isOwnerUser_(uid)) return done('發官方 LINE 公告會用到訊息額度，請里長下指令：全全 公告特約 店名');
     return done(announceShop_(m[1].trim()));
   }
-  if (!(isPost || (SHOP_ADD_RE.test(cmd) && cmd.length <= 30))) {
+  if (!isPost && SHOP_QUESTION_RE.test(cmd) && /特約/.test(cmd)) return done(SHOP_HELP_TEXT);
+  if (!(isPost || (SHOP_ADD_RE.test(cmd) && cmd.length <= 15))) {
     if (!/特約/.test(cmd)) return false;   // 不是特約的事：交給全全（「全全…」）或不處理
     return done(SHOP_HELP_TEXT);
   }
@@ -1013,11 +1016,15 @@ function handleShopGroup_(ev, uid) {
 }
 
 const SHOP_HELP_TEXT = [
-  '🛍 特約商家上架（管理群）',
-  '① 貼特約公告：店名、地址、地圖、電話、官方 LINE、專屬優惠內容（可以接著傳菜單照片）',
-  '② 再傳「全全 特約新增」（或 @官方帳號 特約新增）→ 自動上架到網站特約商家',
+  '🛍 如何新增特約商家（在管理群）',
   '',
-  '撤下（所有特約商家都可以）：全全 撤下特約 店名',
+  '① 把特約公告貼到群組，內容要有：店名、地址、專屬優惠內容（地圖連結、電話、官方 LINE 有的話也寫上）',
+  '② 有菜單照片的話，同一個人接著傳（30 分鐘內，最多 4 張）',
+  '③ 再傳一句：全全 特約新增',
+  '④ 官方 LINE 回覆「✅ 已上架」和網站連結，就完成了',
+  '',
+  '寫錯了：改好公告重貼，再傳一次「全全 特約新增」',
+  '撤下：全全 撤下特約 店名',
   '發官方 LINE 公告給所有好友（里長，會用訊息額度）：全全 公告特約 店名',
 ].join('\n');
 
