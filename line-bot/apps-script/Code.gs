@@ -260,6 +260,8 @@ function handleEvent_(ev) {
 
   // 快速報修：報修表單、我的報修、服務處窗口綁定、里長分派、窗口回報完成
   if (handleRepairText_(ev, uid, t)) return;
+  // 變裝大賽評審：評審綁定、評分按鈕；里長看評審名單、通知評審
+  if (handleJudgeText_(ev, uid, t)) return;
 
   // 報名者查詢自己的報名與繳費狀態（只會看到自己的資料）
   const lookup = t.match(/^(查詢報名|報名查詢|我的報名|查報名)\s*([\s\S]*)$/) || lookupLike_(t);
@@ -885,6 +887,84 @@ function publicRepairs_() {
 
 function clearRepairCache_() {
   try { CacheService.getScriptCache().remove('repairs_public'); } catch (_) { /* 快取 60 秒後自己過期 */ }
+}
+
+// ───────────────────────── 變裝大賽評審 ─────────────────────────
+//
+// 里長 10/13：「我想運用官方LINE運作」。評審資料在活動網站（評分後台 /admin/score/），這裡用匯出密碼呼叫 /api/judge-line：
+//   評審傳「評審綁定 綁定碼」→ 網站記下他的 LINE 帳號、換新評分連結 → 回覆「開始評分」按鈕
+//   評審輸入「評分」→ 用 LINE 帳號找到評審 → 回覆「開始評分」按鈕（連結只出現在評審自己的官方 LINE 聊天室）
+//   里長輸入「評審名單」→ 綁定狀況與進度；「通知評審 文字」→ 推播給已綁定的評審（每位 1 則）
+const JUDGE_BIND_RE = /^評審綁定\s*([A-Za-z0-9]{4,8})$/;
+const JUDGE_ASK_RE = /^(評分|我要評分|開始評分|評分連結|評審評分|評審)$/;
+const JUDGE_NOTIFY_RE = /^通知評審\s*([\s\S]*)$/;
+
+function judgeButton_(text, url) {
+  return linkButton_(String(text).slice(0, 160), '開始評分', url);
+}
+
+function handleJudgeText_(ev, uid, t) {
+  let m;
+  if ((m = t.match(JUDGE_BIND_RE))) {
+    let r;
+    const dn = lineDisplayName_(uid);
+    try {
+      r = ccsApi_('/api/judge-line', { action: 'bind', code: m[1], userId: uid, displayName: dn });
+    } catch (err) {
+      console.error('評審綁定失敗：' + err.message);
+      reply_(ev.replyToken, [text_('系統忙線中，請稍後再傳一次「評審綁定 綁定碼」，或聯絡莊晴全。')]);
+      return true;
+    }
+    if (!r.ok) { reply_(ev.replyToken, [text_('⚠️ ' + r.error)]); return true; }
+    reply_(ev.replyToken, [judgeButton_((r.already ? '您已經綁定過了 👍\n' : '✅ 綁定完成！\n') + '變裝大賽評審：' + r.name +
+      '\n10/18(日) 18:00 比賽開始後，點下方按鈕評分。之後輸入「評分」可以再叫出按鈕。', r.url)]);
+    if (!r.already) notifyOwner_(`🎭 評審已綁定官方 LINE：${r.name}（LINE：${dn || 'LINE 用戶'}）`);
+    return true;
+  }
+  if (JUDGE_ASK_RE.test(t)) {
+    let r;
+    try { r = ccsApi_('/api/judge-line', { action: 'lookup', userId: uid }); } catch (err) {
+      console.error('查評審失敗：' + err.message);
+      return false;
+    }
+    if (r.judge) {
+      reply_(ev.replyToken, [judgeButton_(`🎭 變裝大賽評審：${r.judge.name}\n點下方按鈕開始評分（這個按鈕是您專用的，請勿轉傳）。`, r.judge.url)]);
+      return true;
+    }
+    if (isOwnerUser_(uid)) {
+      reply_(ev.replyToken, [text_('您還沒有綁定評審身分。\n您自己評分：在評分後台按「✏️ 我要直接評分」。\n看評審綁定狀況：輸入「評審名單」。')]);
+      return true;
+    }
+    return false;
+  }
+  if (t === '評審名單' || (m = t.match(JUDGE_NOTIFY_RE))) {
+    if (!isOwnerUser_(uid)) return false;
+    let r;
+    try { r = ccsApi_('/api/judge-line', { action: m ? 'notifyList' : 'list' }); } catch (err) {
+      reply_(ev.replyToken, [text_('讀不到評審名單：' + err.message)]);
+      return true;
+    }
+    if (!m) {
+      const bound = r.judges.filter(j => j.bound).length;
+      reply_(ev.replyToken, [text_([`🎭 變裝大賽評審（已綁定官方 LINE ${bound}/${r.judges.length} 位）`, '']
+        .concat(r.judges.map((j, i) => `${i + 1}. ${j.name}\n　` + (j.bound ? `✅ LINE：${j.lineName || 'LINE 用戶'}` : `⏳ 未綁定｜綁定碼 ${j.code}`) +
+          `｜已評 ${j.done}/${j.of}`))
+        .concat(['', '通知已綁定的評審開始評分：輸入「通知評審」（每位算 1 則訊息）', '評分後台：' + CCS_BASE + '/admin/score/']).join('\n').slice(0, 4900))]);
+      return true;
+    }
+    const note = (m[1] || '').trim() || '🎭 變裝大賽評分開始囉！請點下方按鈕評分，評完一組按「儲存，下一組」。';
+    let sent = 0;
+    const failed = [];
+    r.judges.forEach(j => {
+      if (push_(j.userId, [judgeButton_(`${note}\n（評審：${j.name}）`, j.url)])) sent++;
+      else failed.push(j.name);
+    });
+    reply_(ev.replyToken, [text_(r.judges.length
+      ? `✅ 已通知 ${sent} 位評審` + (failed.length ? `\n⚠️ 沒送到：${failed.join('、')}（可能封鎖了官方 LINE）` : '') + '\n還沒綁定的評審收不到，輸入「評審名單」可以看。'
+      : '目前還沒有評審綁定官方 LINE。輸入「評審名單」看綁定碼。')]);
+    return true;
+  }
+  return false;
 }
 
 const PRIVATE_CANNED_DEFAULT = [
