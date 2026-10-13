@@ -213,7 +213,8 @@ function handleEvent_(ev) {
       reply_(ev.replyToken, [text_(lawyerBookingStatusText_(status[2]))]);
       return;
     }
-    // 管理群：特約公告／照片先記著；@官方帳號或「全全」說「特約新增」就上架到網站（見 handleShopGroup_）
+    // 管理群：特約公告／照片先記著；@官方帳號或「全全」說「特約新增」就上架到網站（見 handleShopGroup_）；
+    // 群組每個人也都可以管理生活資訊、網站公告，查報名人數、評審進度（見 mgmtGroupCommand_）
     if (ev.type === 'message' && handleShopGroup_(ev, uid)) return;
     if (ev.type === 'message' && ev.message.type === 'text' && ev.message.text.trim().indexOf(ASSISTANT_NAME) === 0) {
       handleAssistant_(ev, uid, findMember_(uid), ev.message.text.trim(), true);
@@ -968,9 +969,17 @@ function handleShopGroup_(ev, uid) {
   let cmd = stripMentions_(msg);
   if (cmd.indexOf(ASSISTANT_NAME) === 0) cmd = cmd.slice(ASSISTANT_NAME.length).trim();
   const isPost = looksLikeShopPost_(cmd);
-  if (isPost) cache.put('shop_post_' + gid, JSON.stringify({ text: cmd.slice(0, 3000), uid, at: Date.now() }), SHOP_POST_TTL);
+  const saved = JSON.stringify({ text: cmd.slice(0, 3000), uid, at: Date.now() });
+  if (isPost) cache.put('shop_post_' + gid, saved, SHOP_POST_TTL);
+  if (looksLikePlacePost_(cmd)) cache.put('nb_post_' + gid, saved, SHOP_POST_TTL);
+  // 每則長一點的訊息都記著：有人「回覆」那則訊息叫全全時，就用被回覆的那一則
+  if (cmd.length >= 12) cache.put('gmsg_' + msg.id, saved, SHOP_POST_TTL);
   if (!called) return false;
   const done = text => { reply_(ev.replyToken, [text_(text)]); logShop_(gid, uid, cmd, text.split('\n')[0]); return true; };
+  const quoted = msg.quotedMessageId ? shopCache_('gmsg_' + msg.quotedMessageId, null) : null;
+  // 特約以外的網站管理（生活資訊、網站公告、報名人數、評審進度、說明），見 mgmtGroupCommand_
+  const mg = mgmtGroupCommand_(cmd, { gid, uid, isPost, quoted, quotedMissing: !!msg.quotedMessageId && !quoted });
+  if (mg) return done(mg);
   let m;
   if ((m = cmd.match(SHOP_REMOVE_RE))) {
     let r;
@@ -988,8 +997,9 @@ function handleShopGroup_(ev, uid) {
     if (!/特約/.test(cmd)) return false;   // 不是特約的事：交給全全（「全全…」）或不處理
     return done(SHOP_HELP_TEXT);
   }
-  const post = isPost ? { text: cmd, uid, at: Date.now() } : shopCache_('shop_post_' + gid, null);
-  if (!post) return done('找不到要上架的特約公告 🙏\n請先在群組貼公告（店名、地址、優惠內容…，可以接著傳菜單照片），再傳「全全 特約新增」。\n（公告貼出後 2 小時內有效）');
+  if (!isPost && msg.quotedMessageId && !quoted) return done(QUOTE_MISSING_TEXT.replace('{cmd}', '全全 特約新增'));
+  const post = isPost ? { text: cmd, uid, at: Date.now() } : quoted || shopCache_('shop_post_' + gid, null);
+  if (!post) return done('找不到要上架的特約公告 🙏\n請先在群組貼公告（店名、地址、優惠內容…，可以接著傳菜單照片），再傳「全全 特約新增」。\n（公告貼出後 2 小時內有效；也可以長按那則公告按「回覆」，再打「全全 特約新增」）');
   const shop = parseShopPost_(post.text, uid);
   if (!shop || shop.notShop) return done('⚠️ 看不出這則是特約商家公告，請確認有寫店名和優惠內容。');
   if (!shop.n || !shop.o) return done('⚠️ 公告裡找不到' + (!shop.n ? '店名' : '優惠內容') + '，請補上後重貼，再傳「全全 特約新增」。');
@@ -1026,6 +1036,258 @@ const SHOP_HELP_TEXT = [
   '寫錯了：改好公告重貼，再傳一次「全全 特約新增」',
   '撤下：全全 撤下特約 店名',
   '發官方 LINE 公告給所有好友（里長，會用訊息額度）：全全 公告特約 店名',
+].join('\n');
+
+// ───────────────────────── 管理群：網站管理（每個人都可以用）─────────────────────────
+//
+// 里長 10/13：「我要在那群組的每個人都可以管理網頁功能」。管理群裡任何人 @官方帳號 或「全全」：
+//   網站功能／說明            → 可以用的功能清單（MGMT_HELP_TEXT）
+//   生活資訊新增              → 把群組裡貼的推薦（店名、推薦重點、地址或地圖）加到網站「里民生活資訊」（/api/neighbors）
+//                               用哪一則：同一句後面直接寫內容 → 「回覆」的那一則 → 最近 2 小時貼的推薦（有地址或地圖連結的）
+//   撤下生活資訊 名稱          → 撤下（網站內建的也可以，之後再新增同名就恢復）
+//   網站公告 內容              → 網站每一頁最上面顯示這則公告（/api/site-info）；「網站公告」看目前的；「撤下網站公告」撤下
+//   報名人數                  → 各活動報名人數、剩餘名額、未繳費筆數（跟每天中午的報名快報一樣，只有數字）
+//   評審進度                  → 變裝大賽評審綁定與評分進度（群組裡不顯示綁定碼，避免別人拿去綁定）
+// 特約商家見上面 handleShopGroup_。會用訊息額度或有個資的（公告特約、通知評審、報修開放、查個人報名、備份）還是只有里長能用。
+const NB_ADD_RE = /^(?:幫我)?(?:(?:新增|上架|加入|更新|加)(?:到)?(?:里民)?(?:生活資訊|里民推薦|在地推薦)|(?:里民)?(?:生活資訊|里民推薦|在地推薦)(?:新增|上架|加入|更新))/;
+const NB_REMOVE_RE = /^(?:(?:撤下|下架|刪除|移除|取消|拿掉)(?:里民)?(?:生活資訊|里民推薦|在地推薦)|(?:里民)?(?:生活資訊|里民推薦|在地推薦)(?:撤下|下架|刪除|移除|取消|拿掉))\s*[:：]?\s*(.+)$/;
+const NOTICE_CLEAR_RE = /^(?:(?:撤下|下架|刪除|移除|取消|拿掉|關閉)(?:網站|網頁)公告|(?:網站|網頁)公告\s*(?:撤下|下架|刪除|移除|取消|拿掉|關閉))$/;
+const NOTICE_SET_RE = /^(?:(?:發布?|設定|更新|新增|換)?(?:網站|網頁)公告)\s*[:：]?\s*([\s\S]*)$/;
+const SIGNUP_COUNT_RE = /^(?:報名(?:人數|狀況|情形|情況|快報|統計|進度|名額)|(?:剩餘|還有幾個|剩幾個)?名額|各活動(?:報名)?人數)$/;
+const JUDGE_PROGRESS_RE = /^(?:評審|評分)(?:進度|狀況|名單|情形)$/;
+const MGMT_HELP_RE = /^(?:說明|幫助|help|選單|指令|功能|使用說明)$|網站功能|管理功能|網站管理|網頁功能|管理網[站頁]|有(?:什麼|哪些|甚麼)功能|(?:可以|能)(?:做|操作|管理)(?:什麼|哪些|甚麼)(?:功能)?[?？]?$/i;
+const QUOTE_MISSING_TEXT = '找不到你回覆的那則訊息（超過 2 小時，或是在官方帳號加入群組前貼的）🙏\n請把內容重貼一次，再傳「{cmd}」。';
+const NB_CAT_NAMES = { med: '🏥 看醫生', food: '🍜 吃什麼', pet: '🐶 寵物友善餐廳', life: '🧺 生活大小事', car: '🚗 汽車', faith: '🙏 收驚' };
+
+/** 看起來是在推薦一個地方（有地址或地圖連結）。 */
+function looksLikePlacePost_(t) {
+  const s = String(t || '');
+  return s.length >= 12 && /(縣|市|區).{0,12}[路街道巷].{0,14}\d+.{0,4}號|[路街道巷]\S{0,10}\d+(?:-\d+)?號|maps\.app|goo\.gl|g\.co\/|share\.google|google\.com\/maps/.test(s);
+}
+
+/** 管理群的網站管理指令；不是這些指令回傳 null（交給特約商家或全全）。 */
+function mgmtGroupCommand_(cmd, c) {
+  if (c.isPost && !NB_ADD_RE.test(cmd)) return null;   // 貼特約公告同時 @官方帳號：特約上架
+  let m;
+  if ((m = cmd.match(NB_REMOVE_RE))) {
+    let r;
+    try { r = ccsApi_('/api/neighbors', { action: 'remove', name: m[1].trim() }); } catch (err) { return '網站忙線中，請稍後再試一次：' + err.message; }
+    return r.ok ? `✅ 已從網站「里民生活資訊」撤下「${r.name}」（現在 ${r.total} 則推薦）\n要再放回去：重貼推薦後「全全 生活資訊新增」。` : '⚠️ ' + r.error;
+  }
+  if (/生活資訊|里民推薦|在地推薦/.test(cmd) && SHOP_QUESTION_RE.test(cmd) && cmd.length <= 25) return NB_HELP_TEXT;
+  if (NB_ADD_RE.test(cmd)) return addNeighborPick_(cmd, c);
+  if (NOTICE_CLEAR_RE.test(cmd)) {
+    let r;
+    try { r = ccsApi_('/api/site-info', { action: 'clearNotice' }); } catch (err) { return '網站忙線中，請稍後再試一次：' + err.message; }
+    return r.ok ? `✅ 已撤下網站公告「${String(r.cleared.text).slice(0, 40)}」` : '⚠️ ' + r.error;
+  }
+  if ((m = cmd.match(NOTICE_SET_RE))) {
+    const text = m[1].trim();
+    if (!text || (SHOP_QUESTION_RE.test(text) && text.length <= 12)) {
+      let r;
+      try { r = ccsApi_('/api/site-info', { action: 'getNotice' }); } catch (err) { return '網站忙線中，請稍後再試一次：' + err.message; }
+      return (r.notice ? `📢 網站目前的公告（${r.notice.by || ''} ${String(r.notice.at).slice(5)} 設定）：\n${r.notice.text}\n\n` : '網站目前沒有公告。\n\n') + NOTICE_HELP_TEXT;
+    }
+    let r;
+    try { r = ccsApi_('/api/site-info', { action: 'setNotice', text, by: lineDisplayName_(c.uid) }); } catch (err) { return '網站忙線中，沒有發布成功，請稍後再試一次：' + err.message; }
+    if (!r.ok) return '⚠️ ' + r.error;
+    return ['✅ 網站公告已上線（每一頁最上面都看得到，看過的人可以按 ✕ 收起）', '', '📢 ' + r.notice.text, '', '👉 ' + CCS_BASE]
+      .concat(r.replaced ? ['', `（原本的公告「${String(r.replaced.text).slice(0, 30)}」已換掉）`] : [])
+      .concat(['', '要換內容：再傳一次「全全 網站公告 新內容」', '撤下：全全 撤下網站公告']).join('\n');
+  }
+  if (SIGNUP_COUNT_RE.test(cmd)) {
+    try { return buildSignupReport_().slice(0, 4900); } catch (err) { return '讀不到報名資料，請稍後再試：' + err.message; }
+  }
+  if (JUDGE_PROGRESS_RE.test(cmd)) return judgeProgressText_();
+  if (MGMT_HELP_RE.test(cmd) && !/特約/.test(cmd)) return MGMT_HELP_TEXT;
+  return null;
+}
+
+/** 變裝大賽評審進度（群組版：不顯示綁定碼、評審的 LINE 名稱）。 */
+function judgeProgressText_() {
+  let r;
+  try { r = ccsApi_('/api/judge-line', { action: 'list' }); } catch (err) { return '讀不到評審名單：' + err.message; }
+  const bound = r.judges.filter(j => j.bound).length;
+  return [`🎭 變裝大賽評審（已綁定官方 LINE ${bound}/${r.judges.length} 位）`, '']
+    .concat(r.judges.map((j, i) => `${i + 1}. ${j.name}｜${j.bound ? '✅ 已綁定' : '⏳ 未綁定'}｜已評 ${j.done}/${j.of}`))
+    .concat(['', '綁定碼、通知評審：請里長私訊官方 LINE 輸入「評審名單」。']).join('\n').slice(0, 4900);
+}
+
+/** 「全全 生活資訊新增」：找到要用的推薦 → 整理 → 加到網站。 */
+function addNeighborPick_(cmd, c) {
+  const inline = cmd.replace(NB_ADD_RE, '').replace(/^[\s:：,，、]+/, '').trim();
+  let post = null;
+  if (inline.length >= 8) post = { text: inline, uid: c.uid };
+  else if (c.quoted) post = c.quoted;
+  else if (c.quotedMissing) return QUOTE_MISSING_TEXT.replace('{cmd}', '全全 生活資訊新增');
+  else post = shopCache_('nb_post_' + c.gid, null);
+  if (!post) return '找不到要新增的推薦 🙏\n請先在群組貼推薦（店名、推薦原因、地址或地圖連結），再傳「全全 生活資訊新增」。\n（貼出後 2 小時內有效；也可以長按那則訊息按「回覆」，再打「全全 生活資訊新增」）';
+  const pick = parseNeighborPost_(post.text, c.uid);
+  if (!pick || pick.notPlace) return '⚠️ 看不出這則是在推薦哪一家店或哪個地方，請確認有寫店名。';
+  if (!pick.n) return '⚠️ 找不到店名，請補上後重貼，再傳「全全 生活資訊新增」。';
+  if (!pick.d && !pick.a && !pick.g) return '⚠️ 請寫推薦原因、地址或地圖連結（至少一樣），再傳「全全 生活資訊新增」。';
+  let r;
+  try { r = ccsApi_('/api/neighbors', { action: 'add', pick, by: lineDisplayName_(c.uid) }); } catch (err) {
+    return '網站忙線中，沒有新增成功，請稍後再傳一次「全全 生活資訊新增」：' + err.message;
+  }
+  if (!r.ok) return '⚠️ ' + r.error + (r.url ? '\n' + r.url : '');
+  if (r.restored) return `✅ 已恢復網站上的「${r.name}」（現在共 ${r.total} 則推薦）\n👉 ${r.url}`;
+  const p = r.pick;
+  return [(r.updated ? '✅ 已更新網站「里民生活資訊」' : '✅ 已加到網站「里民生活資訊」') + `（現在共 ${r.total} 則推薦）`, '',
+    `${p.em} ${p.n}`, `📂 ${NB_CAT_NAMES[p.c] || p.c} › ${p.t}`]
+    .concat(p.d ? ['👍 ' + p.d] : []).concat(p.a ? ['📍 ' + p.a] : []).concat((p.tel || []).map(t => '📞 ' + t))
+    .concat(p.line ? ['💬 LINE ' + p.line] : []).concat(p.g ? ['🗺 有地圖連結'] : [])
+    .concat(['', '👉 ' + r.url, '', '資料有錯：改好重貼，再傳「全全 生活資訊新增」就會更新', `撤下：全全 撤下生活資訊 ${p.n}`]).join('\n');
+}
+
+/** 推薦文字 → 網站里民生活資訊欄位。先用 Claude，失敗或沒設定金鑰就用簡單規則；網址、電話、LINE ID 只採用文字裡有的。 */
+function parseNeighborPost_(text, uid) {
+  const p = aiNeighborParse_(text, uid) || regexNeighborParse_(text);
+  if (!p || p.notPlace) return p;
+  const raw = String(text);
+  const digits = x => String(x || '').replace(/\D/g, '');
+  if (!p.g || raw.indexOf(p.g) < 0) p.g = '';
+  if (!p.url || raw.indexOf(p.url) < 0) { p.url = ''; p.ul = ''; }
+  if (p.line && raw.toLowerCase().indexOf(String(p.line).replace(/^@/, '').toLowerCase()) < 0) p.line = '';
+  p.tel = (p.tel || []).filter(t => digits(t).length >= 6 && digits(raw).indexOf(digits(t)) >= 0);
+  return p;
+}
+
+// 網站上現有的小類（新的推薦放得進去就用一樣的名稱，同類會排在一起）
+const NB_TOPICS = {
+  med: '婦產科、中醫、骨科、肝膽腸胃、牙醫、皮膚科、眼科',
+  food: '寶寶蛋糕、年菜・辦桌、涼麵、炒麵、燒肉',
+  pet: '帶毛孩一起去',
+  life: '修改衣服・繡學號、參考書・評量・學習卷、影印・輸出・廣告紅布條、搬家、沙發清潔・行李箱維修、洗衣、燙髮・做臉、白色褲襪哪裡買、股東紀念品領取、證件照・洗照片、養蠶寶寶',
+  car: '修車・電池・輪胎、汽車玻璃',
+  faith: '收驚',
+};
+
+const NEIGHBOR_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['is_place', 'name', 'category', 'topic', 'emoji', 'recommend', 'address', 'map_url', 'phone', 'line_id', 'other_url', 'other_label'],
+  properties: {
+    is_place: { type: 'boolean' }, name: { type: 'string' }, category: { type: 'string', enum: ['med', 'food', 'pet', 'life', 'car', 'faith'] },
+    topic: { type: 'string' }, emoji: { type: 'string' }, recommend: { type: 'string' }, address: { type: 'string' }, map_url: { type: 'string' },
+    phone: { type: 'string' }, line_id: { type: 'string' }, other_url: { type: 'string' }, other_label: { type: 'string' },
+  },
+};
+
+const NEIGHBOR_PARSE_PROMPT = [
+  '你是里辦的資料整理助手。把 LINE 管理群裡里民推薦的店家或地方，整理成網站「里民生活資訊」的一筆資料。',
+  '- 只用訊息裡寫的資訊，不要自己補充或猜測；沒寫的欄位填空字串。網址、電話、LINE ID 要和訊息一字不差。',
+  '- name：店名或地點名稱（含分店）。recommend：推薦重點，照訊息整理成一句話（例如「推薦陳醫師」「蛋餅很好吃」），40 字以內，不要加訊息沒寫的內容。',
+  '- category：med＝看醫生（診所、醫院、牙醫）；food＝吃的喝的；pet＝寵物友善餐廳（可以帶毛孩去的）；car＝汽機車；faith＝收驚、宮廟；其他都是 life。',
+  '- topic：小類。網站上已經有的小類：' + Object.keys(NB_TOPICS).map(k => k + '：' + NB_TOPICS[k]).join('；') + '。放得進去就用一模一樣的名稱，放不進去就自己取 2–8 個字的小類（例如「早餐」「小兒科」）。',
+  '- address：完整地址。map_url：Google 地圖網址。phone：電話（多支用「、」分開）。line_id：官方 LINE ID（例如 @abc123）。other_url：其他網址（粉絲專頁、官網），other_label 用 2–6 個字（例如 Facebook）。',
+  '- emoji：一個代表這筆的 emoji。',
+  '- is_place：這則訊息是不是在推薦一家店或一個地方；只是聊天、問問題就 false。',
+].join('\n');
+
+function aiNeighborParse_(text, uid) {
+  const key = prop_('ANTHROPIC_API_KEY');
+  if (!key) return null;
+  try {
+    const res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'server-side-fallback-2026-07-01' },
+      payload: JSON.stringify({
+        model: prop_('AI_MODEL') || AI_DEFAULT_MODEL,
+        max_tokens: 8000,
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: NEIGHBOR_SCHEMA } },
+        fallbacks: 'default',
+        system: NEIGHBOR_PARSE_PROMPT,
+        messages: [{ role: 'user', content: String(text).slice(0, 3000) }],
+      }),
+      muteHttpExceptions: true,
+    });
+    if (res.getResponseCode() !== 200) {
+      console.error('Claude API（生活資訊整理）' + res.getResponseCode() + '：' + res.getContentText().slice(0, 300));
+      return null;
+    }
+    const data = JSON.parse(res.getContentText());
+    if (data.stop_reason !== 'end_turn') return null;   // refusal / max_tokens：改用簡單規則
+    const j = JSON.parse((data.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
+    logAi_(uid, '生活資訊整理', String(text).slice(0, 200), j.name + '｜' + j.recommend, data.usage);
+    if (!j.is_place) return { notPlace: true };
+    return { c: j.category, t: j.topic, em: j.emoji, n: j.name, d: j.recommend, a: j.address, g: j.map_url,
+      tel: String(j.phone || '').split(/[、,，\/]/).map(x => x.trim()).filter(Boolean), line: j.line_id, url: j.other_url, ul: j.other_label };
+  } catch (err) {
+    console.error('Claude 整理生活資訊失敗：' + err.message);
+    return null;
+  }
+}
+
+/** 沒有 Claude 金鑰或 Claude 失敗時：第一行當店名，地址、地圖、電話用規則抓，其他文字當推薦重點。 */
+function regexNeighborParse_(text) {
+  const raw = String(text);
+  const url = re => (raw.match(re) || [''])[0];
+  const isAddr = l => /(縣|市|區).{0,12}[路街道巷].{0,14}\d+.{0,4}號|^(地址|店址)\s*[:：]/.test(l) && !/https?:/.test(l);
+  const isTel = l => /^(電話|聯絡電話|聯絡方式|TEL)\s*[:：]/i.test(l) || /^[\d\-()#\s]{8,}$/.test(l);
+  const lines = raw.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  const nameLine = lines.find(l => !/https?:/.test(l) && !isAddr(l) && !isTel(l)) || '';
+  // 「推薦」「店名：」「寵物友善：」這類開頭去掉；店名到第一個逗號或空白為止
+  const n = nameLine.replace(/^(?:推薦|店名|名稱|@商家)\s*[｜|:：]?\s*/, '').replace(/^[^：:｜|]{1,6}[：:｜|]\s*(?=\S)/, '')
+    .split(/[，,。！!\s]/)[0].trim().slice(0, 40);
+  const a = (lines.find(isAddr) || '').replace(/^(地址|店址)\s*[:：]\s*/, '');
+  const telM = raw.match(/(?:電話|聯絡電話|聯絡方式|TEL)\s*[:：]\s*([0-9()\-#\s]{6,20})/i) || raw.match(/0\d{1,2}-?\d{3,4}-?\d{3,4}/);
+  const rest = lines.filter(l => l !== nameLine && !/https?:/.test(l) && !isAddr(l) && !isTel(l)).join(' ');
+  const firstRest = nameLine.slice(nameLine.indexOf(n) + n.length).replace(/^[，,。！!\s]+/, '');
+  const d = [firstRest, rest].filter(Boolean).join(' ').slice(0, 100);
+  const all = n + ' ' + d;
+  const c = /收驚|宮|廟/.test(all) ? 'faith' : /寵物|毛孩|狗狗|貓咪|帶狗/.test(all) ? 'pet' : /診所|醫院|醫師|醫生|牙醫|中醫|皮膚科|眼科|婦產|骨科/.test(all) ? 'med'
+    : /汽車|機車|輪胎|電池|保養廠|車行|洗車/.test(all) ? 'car' : /餐|食|飲|茶|咖啡|麵|飯|鍋|烘焙|麵包|蛋糕|甜點|小吃|肉|早餐|便當|滷味/.test(all) ? 'food' : 'life';
+  const topicM = c === 'med' && all.match(/婦產科|中醫|骨科|牙醫|皮膚科|眼科|小兒科|耳鼻喉科|家醫科/);
+  const t = topicM ? topicM[0] : c === 'pet' ? '帶毛孩一起去' : c === 'faith' ? '收驚' : '其他推薦';
+  const em = { med: '🩺', food: '🍽️', pet: '🐶', life: '🧺', car: '🚗', faith: '🙏' }[c];
+  return { c, t, em, n, d, a, g: url(/https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl\/maps|g\.co\/kgs|share\.google|(?:www\.)?google\.com\/maps)[^\s]*/),
+    tel: telM ? [String(telM[1] || telM[0]).trim()] : [], line: '', url: url(/https?:\/\/(?:www\.)?(?:facebook\.com|fb\.me|instagram\.com)\/[^\s]+/), ul: '' };
+}
+
+const NB_HELP_TEXT = [
+  '🏘 如何新增里民生活資訊（在管理群）',
+  '',
+  '① 把推薦貼到群組：店名、推薦原因、地址或地圖連結（有電話也寫上）',
+  '② 再傳一句：全全 生活資訊新增',
+  '　（也可以長按那則推薦按「回覆」，再打「全全 生活資訊新增」）',
+  '③ 官方 LINE 回覆「✅ 已加到網站」和網站連結，就完成了',
+  '',
+  '寫錯了：改好重貼，再傳一次「全全 生活資訊新增」',
+  '撤下：全全 撤下生活資訊 店名',
+].join('\n');
+
+const NOTICE_HELP_TEXT = [
+  '📢 網站公告（每一頁最上面顯示）',
+  '・發布或更換：全全 網站公告 內容（150 字以內，可以放網址）',
+  '・撤下：全全 撤下網站公告',
+].join('\n');
+
+const MGMT_HELP_TEXT = [
+  '🛠 管理群可以用的網站功能',
+  '群組每個人都可以用，前面加「全全」或 @官方帳號',
+  '',
+  '🛍 特約商家',
+  '・新增：貼特約公告（可接著傳菜單照片）→「全全 特約新增」',
+  '・撤下：全全 撤下特約 店名',
+  '・做法說明：全全 如何新增特約',
+  '',
+  '🏘 里民生活資訊',
+  '・新增：貼推薦（店名、推薦原因、地址或地圖連結）→「全全 生活資訊新增」',
+  '・撤下：全全 撤下生活資訊 店名',
+  '',
+  '📢 網站公告（每一頁最上面顯示）',
+  '・發布或更換：全全 網站公告 內容',
+  '・看目前的公告：全全 網站公告',
+  '・撤下：全全 撤下網站公告',
+  '',
+  '📊 查詢（只有數字，沒有個資）',
+  '・全全 報名人數：各活動報名人數、剩餘名額、未繳費筆數',
+  '・全全 評審進度：變裝大賽評審綁定與評分進度',
+  '',
+  '💡 長按某則公告或推薦按「回覆」，再打「全全 特約新增」或「全全 生活資訊新增」，就會用那一則。',
+  '',
+  '只有里長能用（會用訊息額度或有個資）：公告特約（發給所有好友）、通知評審、快速報修開放、查個人報名資料、備份。',
 ].join('\n');
 
 /** 下載群組裡的照片（LINE 只保留一段時間）；太大或失敗回傳 null。 */
