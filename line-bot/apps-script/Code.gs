@@ -2264,9 +2264,10 @@ const STAMP_CARD_LEFT = { '八月小確幸': 36, '惠宇開朗': 35, '總太美�
 const STAMP_CARD_LEFT_AT = '10/14';
 const stampCardLeft_ = x => (x in STAMP_CARD_LEFT ? STAMP_CARD_LEFT[x] : -1);
 const STAMP_CARD_TEXT = '🗺 集章地圖卡（集章圖紙）10/12（一）起開始發放，限量 500 份，發完為止！\n' +
-  '發放位置共 ' + STAMP_CARD_SPOTS.length + ' 處，還有的地方都可以拿（' + STAMP_CARD_LEFT_AT + ' 回報的剩餘份數，數量隨時會變）：\n' +
+  '發放位置共 ' + STAMP_CARD_SPOTS.length + ' 處，還有的地方都可以拿（' + STAMP_CARD_LEFT_AT + ' 回報的剩餘份數）：\n' +
   STAMP_CARD_SPOTS.slice().sort((x, y) => (stampCardLeft_(x) === 0) - (stampCardLeft_(y) === 0) || stampCardLeft_(y) - stampCardLeft_(x))
     .map(x => '・' + x + (stampCardLeft_(x) > 0 ? `（剩 ${stampCardLeft_(x)} 份）` : stampCardLeft_(x) === 0 ? '（已發完）' : '')).join('\n') +
+  '\n⚠️ 備註：各點份數隨時可能被拿光，以現場為準！' +
   '\n\n' + STAMP_RULE_TEXT + '\n\n集章點、路線與玩法：https://ccs2024taiwan.pages.dev/map/';
 
 const HALLOWEEN_INFO_UNTIL = '2026-10-18';
