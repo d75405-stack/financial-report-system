@@ -274,6 +274,15 @@ function handleEvent_(ev) {
     return;
   }
 
+  // 里長私訊也可以發／撤下網站公告（「網站公告 內容」，前面有沒有「全全」都可以）
+  if (isOwnerUser_(uid)) {
+    const nt = siteNoticeCommand_(t.replace(new RegExp('^' + ASSISTANT_NAME + '[\\s,，:：]*'), ''), uid);
+    if (nt) {
+      reply_(ev.replyToken, [text_(nt)]);
+      return;
+    }
+  }
+
   // 個人私訊不提供全全功能，只回覆罐頭訊息（全全只在群組服務）
   if (t.indexOf(ASSISTANT_NAME) === 0) {
     reply_(ev.replyToken, [text_(privateCannedText_())]);
@@ -926,6 +935,14 @@ function isShopGroup_(source) {
   return ok;
 }
 
+/** 官方帳號所在的管理群（指令碼屬性 SHOP_GROUP_ID 優先，不然找「群組紀錄」裡名稱有「管理群」、還在群組中的）。 */
+function mgmtGroup_() {
+  const rows = readAll_('群組紀錄');
+  const set = prop_('SHOP_GROUP_ID');
+  if (set) return rows.find(r => r.groupId === set) || { groupId: set, groupName: '管理群' };
+  return rows.filter(r => /管理群/.test(r.groupName) && r.status !== '已離開').pop() || null;
+}
+
 function looksLikeShopPost_(t) {
   const s = String(t || '');
   // 有寫優惠、有地址或地圖，而且看得出是在介紹店家（特約、@商家、店名…）
@@ -1045,10 +1062,11 @@ const SHOP_HELP_TEXT = [
 //   生活資訊新增              → 把群組裡貼的推薦（店名、推薦重點、地址或地圖）加到網站「里民生活資訊」（/api/neighbors）
 //                               用哪一則：同一句後面直接寫內容 → 「回覆」的那一則 → 最近 2 小時貼的推薦（有地址或地圖連結的）
 //   撤下生活資訊 名稱          → 撤下（網站內建的也可以，之後再新增同名就恢復）
-//   網站公告 內容              → 網站每一頁最上面顯示這則公告（/api/site-info）；「網站公告」看目前的；「撤下網站公告」撤下
+//   網站公告 內容              → 網站每一頁最上面顯示這則公告（/api/site-info）；「撤下網站公告」撤下。這兩個只有里長（10/13「網站公告只有我能發」），
+//                               里長私訊官方帳號也可以下；「網站公告」看目前的，大家都可以
 //   報名人數                  → 各活動報名人數、剩餘名額、未繳費筆數（跟每天中午的報名快報一樣，只有數字）
 //   評審進度                  → 變裝大賽評審綁定與評分進度（群組裡不顯示綁定碼，避免別人拿去綁定）
-// 特約商家見上面 handleShopGroup_。會用訊息額度或有個資的（公告特約、通知評審、報修開放、查個人報名、備份）還是只有里長能用。
+// 特約商家見上面 handleShopGroup_。網站公告、會用訊息額度或有個資的（公告特約、通知評審、報修開放、查個人報名、備份）只有里長能用。
 const NB_ADD_RE = /^(?:幫我)?(?:(?:新增|上架|加入|更新|加)(?:到)?(?:里民)?(?:生活資訊|里民推薦|在地推薦)|(?:里民)?(?:生活資訊|里民推薦|在地推薦)(?:新增|上架|加入|更新))/;
 const NB_REMOVE_RE = /^(?:(?:撤下|下架|刪除|移除|取消|拿掉)(?:里民)?(?:生活資訊|里民推薦|在地推薦)|(?:里民)?(?:生活資訊|里民推薦|在地推薦)(?:撤下|下架|刪除|移除|取消|拿掉))\s*[:：]?\s*(.+)$/;
 const NOTICE_CLEAR_RE = /^(?:(?:撤下|下架|刪除|移除|取消|拿掉|關閉)(?:網站|網頁)公告|(?:網站|網頁)公告\s*(?:撤下|下架|刪除|移除|取消|拿掉|關閉))$/;
@@ -1076,31 +1094,40 @@ function mgmtGroupCommand_(cmd, c) {
   }
   if (/生活資訊|里民推薦|在地推薦/.test(cmd) && SHOP_QUESTION_RE.test(cmd) && cmd.length <= 25) return NB_HELP_TEXT;
   if (NB_ADD_RE.test(cmd)) return addNeighborPick_(cmd, c);
-  if (NOTICE_CLEAR_RE.test(cmd)) {
-    let r;
-    try { r = ccsApi_('/api/site-info', { action: 'clearNotice' }); } catch (err) { return '網站忙線中，請稍後再試一次：' + err.message; }
-    return r.ok ? `✅ 已撤下網站公告「${String(r.cleared.text).slice(0, 40)}」` : '⚠️ ' + r.error;
-  }
-  if ((m = cmd.match(NOTICE_SET_RE))) {
-    const text = m[1].trim();
-    if (!text || (SHOP_QUESTION_RE.test(text) && text.length <= 12)) {
-      let r;
-      try { r = ccsApi_('/api/site-info', { action: 'getNotice' }); } catch (err) { return '網站忙線中，請稍後再試一次：' + err.message; }
-      return (r.notice ? `📢 網站目前的公告（${r.notice.by || ''} ${String(r.notice.at).slice(5)} 設定）：\n${r.notice.text}\n\n` : '網站目前沒有公告。\n\n') + NOTICE_HELP_TEXT;
-    }
-    let r;
-    try { r = ccsApi_('/api/site-info', { action: 'setNotice', text, by: lineDisplayName_(c.uid) }); } catch (err) { return '網站忙線中，沒有發布成功，請稍後再試一次：' + err.message; }
-    if (!r.ok) return '⚠️ ' + r.error;
-    return ['✅ 網站公告已上線（每一頁最上面都看得到，看過的人可以按 ✕ 收起）', '', '📢 ' + r.notice.text, '', '👉 ' + CCS_BASE]
-      .concat(r.replaced ? ['', `（原本的公告「${String(r.replaced.text).slice(0, 30)}」已換掉）`] : [])
-      .concat(['', '要換內容：再傳一次「全全 網站公告 新內容」', '撤下：全全 撤下網站公告']).join('\n');
-  }
+  const nt = siteNoticeCommand_(cmd, c.uid);
+  if (nt) return nt;
   if (SIGNUP_COUNT_RE.test(cmd)) {
     try { return buildSignupReport_().slice(0, 4900); } catch (err) { return '讀不到報名資料，請稍後再試：' + err.message; }
   }
   if (JUDGE_PROGRESS_RE.test(cmd)) return judgeProgressText_();
   if (MGMT_HELP_RE.test(cmd) && !/特約/.test(cmd)) return MGMT_HELP_TEXT;
   return null;
+}
+
+/**
+ * 網站公告指令（里長 10/13：「網站公告只有我能發」）：發布、更換、撤下只有里長；看目前的公告大家都可以。
+ * 管理群和里長私訊官方帳號都可以用；不是網站公告的指令回傳 null。
+ */
+function siteNoticeCommand_(cmd, uid) {
+  const clear = NOTICE_CLEAR_RE.test(cmd), m = clear ? null : cmd.match(NOTICE_SET_RE);
+  if (!clear && !m) return null;
+  const text = m ? m[1].trim() : '';
+  if (m && (!text || (SHOP_QUESTION_RE.test(text) && text.length <= 12))) {
+    let r;
+    try { r = ccsApi_('/api/site-info', { action: 'getNotice' }); } catch (err) { return '網站忙線中，請稍後再試一次：' + err.message; }
+    return (r.notice ? `📢 網站目前的公告（${String(r.notice.at).slice(5)} 發布）：\n${r.notice.text}\n\n` : '網站目前沒有公告。\n\n') + NOTICE_HELP_TEXT;
+  }
+  if (!isOwnerUser_(uid)) return '網站公告只有里長可以發布或撤下 🙏\n要公告什麼請跟里長說。看目前的公告：全全 網站公告';
+  let r;
+  if (clear) {
+    try { r = ccsApi_('/api/site-info', { action: 'clearNotice' }); } catch (err) { return '網站忙線中，請稍後再試一次：' + err.message; }
+    return r.ok ? `✅ 已撤下網站公告「${String(r.cleared.text).slice(0, 40)}」` : '⚠️ ' + r.error;
+  }
+  try { r = ccsApi_('/api/site-info', { action: 'setNotice', text, by: lineDisplayName_(uid) }); } catch (err) { return '網站忙線中，沒有發布成功，請稍後再試一次：' + err.message; }
+  if (!r.ok) return '⚠️ ' + r.error;
+  return ['✅ 網站公告已上線（每一頁最上面都看得到，看過的人可以按 ✕ 收起）', '', '📢 ' + r.notice.text, '', '👉 ' + CCS_BASE]
+    .concat(r.replaced ? ['', `（原本的公告「${String(r.replaced.text).slice(0, 30)}」已換掉）`] : [])
+    .concat(['', '要換內容：再傳一次「全全 網站公告 新內容」', '撤下：全全 撤下網站公告']).join('\n');
 }
 
 /** 變裝大賽評審進度（群組版：不顯示綁定碼、評審的 LINE 名稱）。 */
@@ -1258,9 +1285,10 @@ const NB_HELP_TEXT = [
 ].join('\n');
 
 const NOTICE_HELP_TEXT = [
-  '📢 網站公告（每一頁最上面顯示）',
+  '📢 網站公告（每一頁最上面顯示，只有里長可以發）',
   '・發布或更換：全全 網站公告 內容（150 字以內，可以放網址）',
   '・撤下：全全 撤下網站公告',
+  '（里長在管理群或私訊官方帳號都可以下這兩個指令）',
 ].join('\n');
 
 const MGMT_HELP_TEXT = [
@@ -1276,18 +1304,14 @@ const MGMT_HELP_TEXT = [
   '・新增：貼推薦（店名、推薦原因、地址或地圖連結）→「全全 生活資訊新增」',
   '・撤下：全全 撤下生活資訊 店名',
   '',
-  '📢 網站公告（每一頁最上面顯示）',
-  '・發布或更換：全全 網站公告 內容',
-  '・看目前的公告：全全 網站公告',
-  '・撤下：全全 撤下網站公告',
-  '',
   '📊 查詢（只有數字，沒有個資）',
+  '・全全 網站公告：看網站目前的公告',
   '・全全 報名人數：各活動報名人數、剩餘名額、未繳費筆數',
   '・全全 評審進度：變裝大賽評審綁定與評分進度',
   '',
   '💡 長按某則公告或推薦按「回覆」，再打「全全 特約新增」或「全全 生活資訊新增」，就會用那一則。',
   '',
-  '只有里長能用（會用訊息額度或有個資）：公告特約（發給所有好友）、通知評審、快速報修開放、查個人報名資料、備份。',
+  '只有里長能用：網站公告（發布、撤下）、公告特約（發給所有好友）、通知評審、快速報修開放、查個人報名資料、備份。',
 ].join('\n');
 
 /** 下載群組裡的照片（LINE 只保留一段時間）；太大或失敗回傳 null。 */
@@ -3029,6 +3053,10 @@ const SCHEDULED_BROADCASTS = [
     ].join('\n'),
     button: { text: '免費律師諮詢，選時段預約 👇', label: '立即預約', page: 'booking' } },
 ];
+// 里長 10/13：「功能都確定了，在群組發布一下你能做什麼、怎麼做」→ 發到管理群（內容就是「全全 網站功能」的說明）
+SCHEDULED_BROADCASTS.push({ id: 'mgmt-help-1013', at: '2026-10-13T21:55:00+08:00', title: '管理群網站功能說明', kind: 'mgmtGroup',
+  text: ['各位夥伴好 🙌', '官方帳號「全全」現在可以幫大家直接管理活動網站，群組裡每個人都可以用！', '指令前面加「全全」或 @官方帳號 👇'].concat(MGMT_HELP_TEXT.split('\n').slice(2))
+    .concat(['', '不會用就在群組打「全全 網站功能」，隨時叫出這份說明 😊', '', '里長參選人莊晴全 敬上']).join('\n') });
 SCHEDULED_BROADCASTS.push(
   { id: 'cosplay-ok-1008-2020', at: '2026-10-09T00:50:00+08:00', title: '變裝大賽報名成功通知', silent: true,
     to: { confirmAt: '2026-10-08 20:20', activity: '🎭 變裝大賽' } });
@@ -3751,6 +3779,20 @@ function runScheduledBroadcasts() {
           `目前未繳費共 ${r.total} 筆。` + (r.late ? `（其中 ${r.late} 筆是 10/16 起報名、活動當天報到時繳，不算逾期）` : '')]
           .concat(n ? ['', `另有 ${n} 筆的報名者沒在官方 LINE 傳過「報名確認」，沒辦法用 LINE 通知：`]
           .concat(missed.map(k => `・${k}：${r.missed[k]} 筆`), '名單（含電話）可在試算表「活動報名名單」篩選「未繳」查看（狀態是「候補」的不用繳）。') : []).join('\n'));
+        return;
+      }
+      if (b.kind === 'mgmtGroup') {
+        // 發到管理群（群組 ID 從「群組紀錄」找，程式裡不放）
+        const g = mgmtGroup_();
+        if (!g) {
+          props.setProperty(key, 'skipped ' + now_() + ' 找不到管理群');
+          notifyOwner_(`⚠️「${b.title}」沒有發出：找不到官方帳號所在的管理群。`);
+          return;
+        }
+        const res = lineApi_('message/push', { to: g.groupId, messages: [text_(b.text)] });
+        if (!res.ok) throw new Error(res.body);
+        props.setProperty(key, 'sent ' + now_());
+        notifyOwner_(`✅ 已在「${g.groupName}」發布「${b.title}」`);
         return;
       }
       if (b.to) {
