@@ -49,6 +49,9 @@ const SHEETS = {
   活動報名名單: ['活動', '場次梯次', '編號', '姓名', '同行者', '電話', '繳費', '狀態', '報名時間', '同步時間'],
   律師時段: ['slotId', 'date', 'start', 'end', 'lawyer', 'capacity', 'note'],
   諮詢預約: ['id', 'createdAt', 'slotId', 'userId', 'name', 'phone', 'topic', 'detail', 'status', 'reminded'],
+  報修: ['id', 'createdAt', 'userId', 'name', 'phone', 'category', 'content', 'location', 'gps', 'photoUrl', 'photoId',
+    'status', 'rep', 'assignedAt', 'repNote', 'doneAt', 'updatedAt'],
+  報修窗口: ['repKey', 'repName', 'userId', 'displayName', 'boundAt', 'status'],
 };
 
 // ───────────────────────── 初始化 ─────────────────────────
@@ -119,7 +122,11 @@ function authorizeGmail() {
   return quota;
 }
 
-function doGet() {
+function doGet(e) {
+  const p = (e && e.parameter) || {};
+  // 報修照片（帶簽章的連結，給里長和服務處窗口看）；活動網站 /repair/ 的公開進度
+  if (p.photo) return repairPhotoPage_(String(p.photo), p.t);
+  if (p.action === 'repairs') return json_({ ok: true, data: publicRepairs_() });
   // 部署完成時 GitHub Actions 會打一次這個網址，讓已到時間的預約推播馬上發出
   checkBroadcasts_();
   return json_({ ok: true, service: 'line-bot' });
@@ -174,6 +181,7 @@ const HELP_TEXT = [
   '・查詢報名：查看自己的活動報名與繳費狀態',
   '・我的預約：活動報名＋法律諮詢預約',
   '・律師諮詢：免費律師諮詢介紹與預約',
+  '・快速報修：路燈、剪草、修樹、道路坑洞…拍照通報',
   '・公告：萬聖節活動與最新消息',
   '',
   '🎃 北屯鬧起來萬聖節活動：https://ccs2024taiwan.pages.dev',
@@ -250,6 +258,9 @@ function handleEvent_(ev) {
     reply_(ev.replyToken, [text_(beyCounterText_(confirmReplyText_(confirmKey, t), t))]);
     return;
   }
+
+  // 快速報修：報修表單、我的報修、服務處窗口綁定、里長分派、窗口回報完成
+  if (handleRepairText_(ev, uid, t)) return;
 
   // 報名者查詢自己的報名與繳費狀態（只會看到自己的資料）
   const lookup = t.match(/^(查詢報名|報名查詢|我的報名|查報名)\s*([\s\S]*)$/) || lookupLike_(t);
@@ -333,10 +344,6 @@ function handleEvent_(ev) {
     case '里民生活資訊':
       reply_(ev.replyToken, [linkButton_('🏘 里民生活資訊：里民推薦的美食、生活好店與實用資訊 👇', '看里民生活資訊', 'https://ccs2024taiwan.pages.dev/neighbors/')]);
       return;
-    case '快速報修':
-    case '報修':
-      reply_(ev.replyToken, [text_(REPAIR_GUIDE_TEXT)]);
-      return;
     case '集章':
     case '集章卡':
     case '集章圖紙':
@@ -398,14 +405,456 @@ function logUnanswered_(uid, text) {
   }
 }
 
-// 快速報修：里長指示「建置中尚未開放」
-const REPAIR_GUIDE_TEXT = '🔧 快速報修功能建置中，尚未開放，敬請期待！';
+// ───────────────────────── 快速報修 ─────────────────────────
+//
+// 里長 10/13 指示：里民報修（修路燈、剪草、修樹…）→ 官方 LINE 通知里長 → 里長點選要交給哪一位民意代表服務處 →
+// 系統用 LINE 直接傳給那個服務處綁定的窗口 → 窗口處理完點「已完成」→ 通知報修的里民和里長。
+// 活動網站 /repair/ 公開進度：類別、地點、處理單位、進度（不含報修人姓名電話、照片、狀況說明）。
+// 服務處窗口：里長私訊「報修窗口」拿綁定碼，服務處人員加官方 LINE 好友後傳「報修綁定 綁定碼」。
+const REPAIR_CATEGORIES = ['路燈故障', '剪草', '修剪樹木', '道路坑洞', '水溝清理', '環境清潔', '其他'];
+const REPAIR_STATUSES = ['待分派', '處理中', '已完成', '不處理'];
+const REPAIR_REPS = [
+  { key: 'H', name: '黃健豪立委服務處', short: '黃健豪立委', re: /黃健豪|黃立委/ },
+  { key: 'Z', name: '曾朝榮議員服務處', short: '曾朝榮議員', re: /曾朝榮|曾議員/ },
+  { key: 'L', name: '賴順仁議員服務處', short: '賴順仁議員', re: /賴順仁|賴議員/ },
+];
+// 不交給民意代表、自己的團隊處理（例如志工剪草）
+const REPAIR_SELF = { key: 'S', name: '莊晴全服務團隊', short: '莊晴全團隊', re: /莊晴全|自己|團隊/ };
+const REPAIR_PAGE_URL = 'https://ccs2024taiwan.pages.dev/repair/';
+const REPAIR_DAILY_LIMIT = 5;
+const REPAIR_CMD_RE = /^報修(分派|交給|完成|進度|不處理)\s*([Ff]?\s*\d{1,4})\s*([\s\S]*)$/;
+const REPAIR_LIST_RE = /^(我的報修|報修進度|查詢報修|報修查詢|報修清單|報修案件)$/;
+
+function repairId_(text) {
+  const m = String(text || '').trim().match(/^[Ff]?\s*0*(\d{1,4})$/);
+  return m ? 'F' + ('000' + m[1]).slice(-4) : '';
+}
+
+function findRepair_(text) {
+  const id = repairId_(text);
+  return id ? readAll_('報修').find(r => r.id === id) || null : null;
+}
+
+function repairRep_(text) {
+  const s = String(text || '').trim();
+  return REPAIR_REPS.concat([REPAIR_SELF]).find(r => r.re.test(s) || s === r.name || s === r.short || s.toUpperCase() === r.key) || null;
+}
+
+function repairWindows_(key) {
+  return readAll_('報修窗口').filter(w => w.repKey === key && w.status !== 'disabled');
+}
+
+function repairWindowOf_(uid) {
+  return readAll_('報修窗口').find(w => w.userId === uid && w.status !== 'disabled') || null;
+}
+
+/** 三個服務處的綁定碼（第一次用到時產生，存在指令碼屬性 REPAIR_BIND_CODES）。 */
+function repairBindCodes_(renewKey) {
+  let codes = {};
+  try { codes = JSON.parse(prop_('REPAIR_BIND_CODES') || '{}') || {}; } catch (_) { codes = {}; }
+  let changed = false;
+  REPAIR_REPS.forEach(r => {
+    if (codes[r.key] && r.key !== renewKey) return;
+    let s = '';
+    for (let i = 0; i < 5; i++) s += 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)];
+    codes[r.key] = r.key + '-' + s;
+    changed = true;
+  });
+  if (changed) PropertiesService.getScriptProperties().setProperty('REPAIR_BIND_CODES', JSON.stringify(codes));
+  return codes;
+}
+
+/** 「快速報修」：開報修表單、看處理進度（回覆訊息，不計推播則數）。 */
+function repairGuideMessage_() {
+  const text = '🔧 快速報修：路燈不亮、雜草太高、樹木要修剪、道路坑洞、水溝堵塞…拍張照、填地點就能通報，處理進度在網站公開 👇';
+  return {
+    type: 'template',
+    altText: text,
+    template: {
+      type: 'buttons', text: text.slice(0, 160), actions: [
+        { type: 'uri', label: '填寫報修單', uri: liffUrl_('repair') },
+        { type: 'uri', label: '看處理進度', uri: REPAIR_PAGE_URL },
+      ],
+    },
+  };
+}
+
+/** LIFF 送出報修：寫入「報修」，通知里長分派。 */
+function submitRepair_(user, req) {
+  const category = REPAIR_CATEGORIES.indexOf(req.category) >= 0 ? req.category : '其他';
+  const location = requireText_(req.location, '地點', 200);
+  const content = requireText_(req.content, '狀況說明', 1000);
+  const name = requireText_(req.name, '姓名', 30);
+  const phone = clean_(req.phone, 20);
+  const gps = /^-?\d{1,3}\.\d{3,8},-?\d{1,3}\.\d{3,8}$/.test(clean_(req.gps, 40)) ? clean_(req.gps, 40) : '';
+  const all = readAll_('報修');
+  const today = now_().slice(0, 10);
+  const mineToday = all.filter(r => r.userId === user.userId && String(r.createdAt).slice(0, 10) === today).length;
+  if (mineToday >= REPAIR_DAILY_LIMIT) throw new Error(`今天已經報修 ${mineToday} 件了，其他的請明天再報，或在聊天室留言給我們`);
+  const id = 'F' + ('000' + (all.reduce((mx, r) => Math.max(mx, parseInt(String(r.id).slice(1), 10) || 0), 0) + 1)).slice(-4);
+  let photoUrl = '', photoId = '', photoError = '';
+  if (req.photo) {
+    const blob = decodePhoto_(id, req.photo);
+    // 雲端硬碟出問題時照片存不了，但報修仍要寫入，避免整筆遺失。
+    try {
+      const file = storePhotoFile_('報修_' + category, blob);
+      photoUrl = file.getUrl();
+      photoId = typeof file.getId === 'function' ? file.getId() : '';
+    } catch (err) {
+      photoError = String(err.message || err);
+      console.error('報修照片儲存失敗：' + photoError);
+    }
+  }
+  const r = {
+    id, createdAt: now_(), userId: user.userId, name, phone, category, content, location, gps, photoUrl, photoId,
+    status: '待分派', rep: '', assignedAt: '', repNote: '', doneAt: '', updatedAt: now_(),
+  };
+  append_('報修', r);
+  clearRepairCache_();
+  notifyRepairOwner_(r, photoError ? '（照片儲存失敗：' + photoError + '）' : '');
+  return { id, photoSaved: !req.photo || !!photoUrl, page: REPAIR_PAGE_URL };
+}
+
+/** 案件內容（里長、服務處看得到報修人姓名電話；公開網站沒有）。 */
+function repairLines_(r, withReporter) {
+  return [
+    `📂 ${r.category}`,
+    `📍 ${r.location}`,
+    `📝 ${String(r.content).slice(0, 500)}`,
+  ].concat(withReporter ? [`👤 ${r.name}${r.phone ? '（' + r.phone + '）' : ''}`] : [])
+    .concat([`🕒 ${r.createdAt} 報修`]);
+}
+
+function repairMapUrl_(r) {
+  return r.gps ? 'https://www.google.com/maps?q=' + r.gps
+    // LINE 按鈕網址最多 1000 字，地點太長只取前 60 字搜尋
+    : 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(('台中市北屯區 ' + r.location).slice(0, 60));
+}
+
+function repairPhotoToken_(id) {
+  let key = prop_('REPAIR_PHOTO_KEY');
+  if (!key) {
+    key = randomToken_(24);
+    PropertiesService.getScriptProperties().setProperty('REPAIR_PHOTO_KEY', key);
+  }
+  return Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, key + ':' + id)).slice(0, 22);
+}
+
+/** 照片放在私人雲端硬碟，服務處打不開；改用這個網頁應用程式的網址顯示（帶簽章，只有拿到連結的人看得到）。 */
+function repairPhotoUrl_(r) {
+  if (!r.photoId) return '';
+  let base = prop_('WEBAPP_URL');
+  if (!base) { try { base = ScriptApp.getService().getUrl(); } catch (_) { base = ''; } }
+  return base ? base + '?photo=' + encodeURIComponent(r.id) + '&t=' + repairPhotoToken_(r.id) : '';
+}
+
+function repairPhotoPage_(id, token) {
+  const r = readAll_('報修').find(x => x.id === id);
+  const page = body => HtmlService.createHtmlOutput(body).setTitle('報修照片 ' + id)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  if (!r || !r.photoId || String(token || '') !== repairPhotoToken_(id)) return page('<p style="font-family:sans-serif">找不到照片，或連結已失效。</p>');
+  let blob;
+  try {
+    blob = DriveApp.getFileById(r.photoId).getBlob();
+  } catch (err) {
+    return page('<p style="font-family:sans-serif">照片檔案打不開（可能已被刪除）。</p>');
+  }
+  return page(`<div style="font-family:sans-serif;margin:8px 0">報修 ${r.id}｜${r.category}</div>` +
+    `<img alt="報修照片" style="max-width:100%;height:auto" src="data:${blob.getContentType()};base64,${Utilities.base64Encode(blob.getBytes())}">`);
+}
+
+/** 報修的 Flex 卡片：內容＋看照片／地圖，footer 放動作按鈕（message 動作：點了等於傳那段文字）。 */
+function repairFlex_(r, title, buttons, withReporter) {
+  const links = [{ label: '📍 看地圖', uri: repairMapUrl_(r) }];
+  const photo = repairPhotoUrl_(r);
+  if (photo) links.unshift({ label: '📷 看照片', uri: photo });
+  const btn = (action, style) => ({ type: 'button', style, height: 'sm', action });
+  return {
+    type: 'flex',
+    altText: `${title}｜${r.id} ${r.category} ${r.location}`.slice(0, 400),
+    contents: {
+      type: 'bubble',
+      body: {
+        type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+          { type: 'text', text: `${title}｜${r.id}`, weight: 'bold', size: 'md', wrap: true },
+        ].concat(repairLines_(r, withReporter).map(s => ({ type: 'text', text: s, size: 'sm', wrap: true }))),
+      },
+      footer: {
+        type: 'box', layout: 'vertical', spacing: 'sm', contents:
+          links.map(l => btn({ type: 'uri', label: l.label, uri: l.uri }, 'secondary'))
+            .concat(buttons.map(b => btn({ type: 'message', label: b.label.slice(0, 40), text: b.text }, 'primary'))),
+      },
+    },
+  };
+}
+
+function repairAssignButtons_(r) {
+  return REPAIR_REPS.concat([REPAIR_SELF]).map(rep => ({
+    label: (rep === REPAIR_SELF ? '' : '交給 ') + rep.short + (rep === REPAIR_SELF ? '處理' : ''),
+    text: `報修分派 ${r.id} ${rep.short}`,
+  }));
+}
+
+/** 純文字版（Flex 發不出去時、或服務處還沒綁定時給里長轉傳）。 */
+function repairText_(r, title, withReporter) {
+  const photo = repairPhotoUrl_(r);
+  return [`${title}｜${r.id}`].concat(repairLines_(r, withReporter))
+    .concat(['🗺 ' + repairMapUrl_(r)]).concat(photo ? ['📷 ' + photo] : []).join('\n');
+}
+
+function ownerIds_() {
+  const active = readAll_('成員').filter(isActiveMember_);
+  const ids = active.filter(m => ADMIN_ROLES.indexOf(m.role) >= 0).map(m => m.userId);
+  if (ids.length || !active.length) return ids;
+  return [active.slice().sort((a, b) => String(a.joinedAt).localeCompare(String(b.joinedAt)))[0].userId];
+}
+
+/** 推播；Flex 被 LINE 拒收時改傳純文字。回傳成功送達的人數。 */
+function pushRepair_(ids, flex, fallback) {
+  if (!ids.length) return 0;
+  try {
+    multicast_(ids, [flex]);
+  } catch (err) {
+    console.error('報修 Flex 推播失敗，改傳文字：' + err.message);
+    try { multicast_(ids, [text_(fallback)]); } catch (err2) { console.error('報修推播失敗：' + err2.message); return 0; }
+  }
+  return ids.length;
+}
+
+function notifyRepairOwner_(r, extra) {
+  try {
+    const title = '🔧 新報修';
+    pushRepair_(ownerIds_(), repairFlex_(r, title + (extra ? extra : ''), repairAssignButtons_(r), true),
+      repairText_(r, title, true) + (extra ? '\n' + extra : '') + `\n\n分派：輸入「報修分派 ${r.id} 曾朝榮議員」（或黃健豪立委、賴順仁議員、莊晴全團隊）`);
+  } catch (err) {
+    console.error('通知里長報修失敗：' + err.message);
+  }
+}
+
+/** 里長分派：改成處理中、記下處理單位，傳給該服務處的窗口。回傳要回覆給里長的訊息。 */
+function assignRepair_(r, rep) {
+  update_('報修', r._row, { status: '處理中', rep: rep.name, assignedAt: now_(), updatedAt: now_() });
+  clearRepairCache_();
+  const nr = Object.assign({}, r, { status: '處理中', rep: rep.name });
+  const head = `✅ ${r.id} 已交給 ${rep.name}，網站進度顯示「處理中｜${rep.name}」。`;
+  if (rep === REPAIR_SELF) return [text_(head + `\n處理完請輸入：報修完成 ${r.id} 處理說明`)];
+  const ws = repairWindows_(rep.key);
+  const title = `🔧 ${rep.short}您好，莊晴全轉交報修`;
+  const sent = pushRepair_(ws.map(w => w.userId),
+    repairFlex_(nr, title, [{ label: '✅ 已處理完成', text: `報修完成 ${r.id}` }], true),
+    repairText_(nr, title, true) + `\n\n處理完請輸入：報修完成 ${r.id} 處理說明`);
+  if (sent) return [text_(head + `\n已用 LINE 通知 ${sent} 位窗口，處理完他們點「已處理完成」，系統會通知您和報修的里民。`)];
+  return [
+    text_(head + (ws.length ? '\n⚠️ LINE 通知沒送出去，' : `\n⚠️ ${rep.name}還沒有人綁定報修窗口，`) + '請把下一則訊息轉傳給他們。' +
+      `\n之後請服務處人員加官方 LINE 好友、傳「報修綁定 ${repairBindCodes_()[rep.key]}」，案件就會直接傳過去。`),
+    text_(repairText_(nr, `🔧 莊晴全轉交報修（${rep.name}）`, true) + '\n\n處理完請回覆莊晴全，謝謝！'),
+  ];
+}
+
+/** 標記完成：通知報修的里民；不是里長本人按的也通知里長。 */
+function completeRepair_(r, note, actorUid, quietOwner) {
+  const patch = { status: '已完成', doneAt: now_(), updatedAt: now_() };
+  if (note) patch.repNote = note.slice(0, 300);
+  if (!r.rep) patch.rep = REPAIR_SELF.name;   // 沒分派就直接完成：算莊晴全團隊處理，網站才有處理單位
+  update_('報修', r._row, patch);
+  clearRepairCache_();
+  const rep = r.rep || REPAIR_SELF.name;
+  const repNote = patch.repNote || r.repNote;
+  try {
+    push_(r.userId, [text_([`✅ 您報修的案件已處理完成`, `${r.id}｜${r.category}`, `📍 ${r.location}`, `處理單位：${rep}`]
+      .concat(repNote ? ['說明：' + repNote] : [])
+      .concat(['', '謝謝您的通報！還有需要報修，點選單「快速報修」。']).join('\n'))]);
+  } catch (err) {
+    console.error('通知報修人失敗：' + err.message);
+  }
+  const owners = ownerIds_();
+  if (!quietOwner && owners.indexOf(actorUid) < 0) {
+    const w = repairWindowOf_(actorUid);
+    try {
+      multicast_(owners, [text_(`✅ 報修 ${r.id} 已完成（${rep}${w && w.displayName ? ' ' + w.displayName : ''}）\n${r.category}｜${r.location}` +
+        (repNote ? '\n說明：' + repNote : ''))]);
+    } catch (err) {
+      console.error('通知里長報修完成失敗：' + err.message);
+    }
+  }
+}
+
+/** 「我的報修」：里長看全部未完成；服務處窗口看交給他們的；里民看自己的。 */
+function repairListText_(uid) {
+  const all = readAll_('報修');
+  const line = r => `・${r.id} ${r.category}｜${r.location}` + (r.rep ? `｜${r.rep}` : '') + `（${String(r.createdAt).slice(5, 10).replace('-', '/')}）`;
+  if (isOwnerUser_(uid)) {
+    const wait = all.filter(r => r.status === '待分派'), doing = all.filter(r => r.status === '處理中');
+    if (!wait.length && !doing.length) return '目前沒有待處理的報修 👍\n網站進度：' + REPAIR_PAGE_URL;
+    return [`🔧 報修案件（待分派 ${wait.length}｜處理中 ${doing.length}）`]
+      .concat(wait.length ? ['', '【待分派】'].concat(wait.map(line)) : [])
+      .concat(doing.length ? ['', '【處理中】'].concat(doing.map(line)) : [])
+      .concat(['', '分派：輸入「報修分派 編號」會出現選擇按鈕', '完成：輸入「報修完成 編號 處理說明」', '網站進度：' + REPAIR_PAGE_URL]).join('\n').slice(0, 4900);
+  }
+  const w = repairWindowOf_(uid);
+  if (w) {
+    const mine = all.filter(r => r.status === '處理中' && r.rep === w.repName);
+    if (!mine.length) return `${w.repName}目前沒有處理中的報修案件 👍`;
+    return [`🔧 交給${w.repName}的報修（${mine.length} 件處理中）`, '']
+      .concat(mine.map(r => repairLines_(r, true).concat([`🗺 ${repairMapUrl_(r)}`]).join('\n') + `\n→ 處理完輸入：報修完成 ${r.id} 處理說明`).join('\n\n'))
+      .join('\n').slice(0, 4900);
+  }
+  const mine = all.filter(r => r.userId === uid).slice(-10).reverse();
+  if (!mine.length) return '您還沒有報修紀錄。\n要報修請點選單「快速報修」，或輸入「報修」。';
+  return ['🔧 您的報修（最近 10 件）'].concat(mine.map(r => `・${r.id} ${r.category}｜${r.location}\n　${r.status}` +
+    (r.rep && r.status !== '待分派' ? `｜${r.rep}` : '') + (r.repNote ? `\n　說明：${r.repNote}` : '')))
+    .concat(['', '網站進度：' + REPAIR_PAGE_URL]).join('\n');
+}
+
+/** 里長私訊「報修窗口」：三個服務處的綁定碼與目前綁定的人。 */
+function repairWindowsText_() {
+  const codes = repairBindCodes_();
+  const all = readAll_('報修窗口').filter(w => w.status !== 'disabled');
+  return ['🔧 快速報修・民意代表服務處窗口', '請服務處人員加官方 LINE 好友（https://line.me/R/ti/p/@401mmxpw），在聊天室傳下面的綁定文字：', '']
+    .concat(REPAIR_REPS.map(rep => {
+      const ws = all.filter(w => w.repKey === rep.key);
+      return `・${rep.name}\n　傳：報修綁定 ${codes[rep.key]}\n　${ws.length ? '已綁定：' + ws.map(w => w.displayName || 'LINE 用戶').join('、') : '還沒有人綁定'}`;
+    }))
+    .concat(['', '綁定後，您點「交給 ○○」，案件就會直接用 LINE 傳給他們（每位窗口算 1 則訊息）。',
+      '要換人：輸入「報修窗口 解除 曾朝榮」，原本的窗口會解除、換一個新的綁定碼。']).join('\n');
+}
+
+/** 私訊裡跟報修有關的文字；有處理就回傳 true。 */
+function handleRepairText_(ev, uid, t) {
+  let m;
+  if (t === '快速報修' || t === '報修' || t === '我要報修') {
+    reply_(ev.replyToken, [repairGuideMessage_()]);
+    return true;
+  }
+  if (REPAIR_LIST_RE.test(t)) {
+    reply_(ev.replyToken, [text_(repairListText_(uid))]);
+    return true;
+  }
+  if (t === '報修窗口' || (m = t.match(/^報修窗口\s*解除\s*(.+)$/))) {
+    if (!isOwnerUser_(uid)) return false;
+    if (m) {
+      const rep = repairRep_(m[1]);
+      if (!rep || rep === REPAIR_SELF) {
+        reply_(ev.replyToken, [text_('要解除哪一個服務處？例如：報修窗口 解除 曾朝榮')]);
+        return true;
+      }
+      readAll_('報修窗口').filter(w => w.repKey === rep.key && w.status !== 'disabled')
+        .forEach(w => update_('報修窗口', w._row, { status: 'disabled' }));
+      repairBindCodes_(rep.key);
+    }
+    reply_(ev.replyToken, [text_((m ? '✅ 已解除原本的窗口並換新綁定碼。\n\n' : '') + repairWindowsText_())]);
+    return true;
+  }
+  if ((m = t.match(/^報修綁定\s*(\S*)$/))) {
+    const code = m[1].toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const codes = repairBindCodes_();
+    const rep = REPAIR_REPS.find(r => code && String(codes[r.key]).replace(/[^A-Z0-9]/g, '') === code);
+    if (!rep) {
+      reply_(ev.replyToken, [text_('綁定碼不正確，請向莊晴全服務團隊確認。')]);
+      return true;
+    }
+    if (repairWindows_(rep.key).some(w => w.userId === uid)) {
+      reply_(ev.replyToken, [text_(`您已經是${rep.name}的報修窗口了 👍\n輸入「報修案件」可以看目前交給您們的案件。`)]);
+      return true;
+    }
+    // 先回覆成功才寫入：reply token 只有 LINE 平台會發，偽造的 webhook 會回覆失敗而不會寫入資料。
+    if (reply_(ev.replyToken, [text_([`✅ 綁定完成！您是「${rep.name}」的報修窗口。`, '',
+      '之後莊晴全交辦的報修案件會直接傳到這裡（有照片、地圖和報修人聯絡方式）。',
+      '處理完請點案件下方的「已處理完成」，或輸入：報修完成 編號 處理說明',
+      '（例：報修完成 F0001 已更換燈泡）', '',
+      '要補充進度：報修進度 編號 說明（例：報修進度 F0001 已通報路燈管理處）',
+      '看目前交給您們的案件：報修案件'].join('\n'))])) {
+      const displayName = lineDisplayName_(uid);
+      append_('報修窗口', { repKey: rep.key, repName: rep.name, userId: uid, displayName, boundAt: now_(), status: 'active' });
+      notifyOwner_(`🔧 ${rep.name}的報修窗口已綁定：${displayName || 'LINE 用戶'}`);
+    }
+    return true;
+  }
+  if (!(m = t.match(REPAIR_CMD_RE))) return false;
+  const cmd = m[1], rest = m[3].trim();
+  const r = findRepair_(m[2]);
+  const owner = isOwnerUser_(uid);
+  const w = owner ? null : repairWindowOf_(uid);
+  if (!owner && !(w && (cmd === '完成' || cmd === '進度'))) {
+    reply_(ev.replyToken, [text_('這個指令只有莊晴全服務團隊和負責的服務處窗口可以使用。')]);
+    return true;
+  }
+  if (!r) {
+    reply_(ev.replyToken, [text_(`找不到報修 ${repairId_(m[2]) || m[2]}，請確認編號。`)]);
+    return true;
+  }
+  if (w && r.rep !== w.repName) {
+    reply_(ev.replyToken, [text_(`${r.id} 不是交給${w.repName}的案件喔。輸入「報修案件」可以看交給您們的案件。`)]);
+    return true;
+  }
+  if (cmd === '分派' || cmd === '交給') {
+    const rep = repairRep_(rest);
+    if (r.status === '已完成') {
+      reply_(ev.replyToken, [text_(`${r.id} 已經處理完成了（${r.rep || REPAIR_SELF.name}）。`)]);
+    } else if (!rep) {
+      reply_(ev.replyToken, [repairFlex_(r, '要交給哪一位？', repairAssignButtons_(r), true)]);
+    } else if (r.status === '處理中' && r.rep === rep.name) {
+      reply_(ev.replyToken, [text_(`${r.id} 已經交給 ${rep.name} 了。`)]);
+    } else {
+      reply_(ev.replyToken, assignRepair_(r, rep));
+    }
+    return true;
+  }
+  if (cmd === '完成') {
+    if (r.status === '已完成') {
+      reply_(ev.replyToken, [text_(`${r.id} 已經標記完成了，謝謝！`)]);
+      return true;
+    }
+    completeRepair_(r, rest, uid);
+    reply_(ev.replyToken, [text_(`✅ ${r.id} 已標記完成，已通知報修的里民，網站進度會顯示「已完成」。謝謝您！` +
+      (rest ? '' : `\n要補充處理說明：報修進度 ${r.id} 說明`))]);
+    return true;
+  }
+  if (cmd === '進度') {
+    if (!rest) {
+      reply_(ev.replyToken, [text_(`請在編號後面寫進度說明，例如：報修進度 ${r.id} 已通報路燈管理處，預計週五修復`)]);
+      return true;
+    }
+    update_('報修', r._row, { repNote: rest.slice(0, 300), updatedAt: now_() });
+    clearRepairCache_();
+    reply_(ev.replyToken, [text_(`✅ 已更新 ${r.id} 的進度說明（網站公開）：${rest.slice(0, 300)}`)]);
+    return true;
+  }
+  // 不處理（重複通報、不是里內的事…）：網站不顯示，里民在「我的報修」看得到
+  update_('報修', r._row, Object.assign({ status: '不處理', updatedAt: now_() }, rest ? { repNote: rest.slice(0, 300) } : {}));
+  clearRepairCache_();
+  reply_(ev.replyToken, [text_(`已把 ${r.id} 設為不處理，網站進度不會顯示。`)]);
+  return true;
+}
+
+/** 活動網站 /repair/ 用的公開資料：不含報修人姓名、電話、LINE、狀況說明、照片、定位。 */
+function publicRepairs_() {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('repairs_public');
+  if (hit) return JSON.parse(hit);
+  const from = ymdAfter_(-120);
+  const list = readAll_('報修').filter(r => r.status !== '不處理' && String(r.createdAt).slice(0, 10) >= from)
+    .reverse().slice(0, 300)
+    .map(r => ({
+      id: r.id, createdAt: r.createdAt, category: r.category, location: r.location, status: r.status,
+      rep: r.status === '待分派' ? '' : r.rep, note: r.repNote, doneAt: r.doneAt,
+    }));
+  const data = { updatedAt: now_(), reps: REPAIR_REPS.map(x => x.name).concat([REPAIR_SELF.name]), list };
+  // 快取一筆最多 100KB，太大存不進去就不快取（不影響回傳）
+  try { cache.put('repairs_public', JSON.stringify(data), 60); } catch (err) { console.warn('報修進度快取失敗：' + err.message); }
+  return data;
+}
+
+function clearRepairCache_() {
+  try { CacheService.getScriptCache().remove('repairs_public'); } catch (_) { /* 快取 60 秒後自己過期 */ }
+}
 
 const PRIVATE_CANNED_DEFAULT = [
   '您好，感謝您的訊息！🙏',
   '您的留言我們都會看到，將由專人盡快回覆您。',
   '',
   '📋 查詢自己的報名與繳費狀態：輸入「查詢報名」',
+  '🔧 路燈、剪草、修樹、道路坑洞要報修：輸入「報修」',
   '北屯鬧起來活動資訊：https://ccs2024taiwan.pages.dev',
   '',
   '里長參選人莊晴全 敬上',
@@ -1473,6 +1922,7 @@ function knowledgeText_() {
 }
 
 const KNOWLEDGE_EXTRA = [
+  ['快速報修（最新，以此為準）', '快速報修 10/13 起開放：路燈故障、剪草、修剪樹木、道路坑洞、水溝清理、環境清潔等，在官方 LINE 點選單「快速報修」或輸入「報修」，填類別、地點、狀況說明，可以附照片和定位。送出後由莊晴全分派給黃健豪立委服務處、曾朝榮議員服務處、賴順仁議員服務處或莊晴全服務團隊處理，處理完成會用 LINE 通知報修人。處理進度公開在 https://ccs2024taiwan.pages.dev/repair/ （只顯示類別、地點、處理單位和進度，不顯示報修人姓名電話）。輸入「我的報修」可以看自己報修的進度。'],
   ['集章兌換規則（最新，以此為準）', '集印章活動：集滿 5 顆印章、集滿 10 顆印章，各可以換一次獎品（兩種都集到就能換兩次），兌換地點惠宇開朗，10/18(日) 14:00–16:00，換完為止。集滿 15 顆印章可以換抽獎券：先在惠宇開朗換抽獎券，再拿抽獎券到裕國豐展抽獎。'],
   ['集章地圖卡發放位置（最新，以此為準）', '紙本「集章地圖卡」（集章圖紙）10/12（一）起開始發放，限量 500 份，發完為止；共 15 處發放，任一處都可以拿：裕國豐展、惠宇開朗、總太聚作、總太2020、總太悅來、總太共好、總太美樂地、八月小確幸、敬甜點、簇新美學、全家太順店、臥野、御脊傳統整復推拿、中醫大市立醫院、全聯建和店。在官方 LINE 輸入「集章」也查得到。集章點與路線：https://ccs2024taiwan.pages.dev/map/'],
   ['查詢報名（最新，以此為準）', '想知道有沒有報名成功、繳費了沒：① 活動網站查詢報名頁 https://ccs2024taiwan.pages.dev/signup/check/ ，填報名時的姓名和電話，四個活動一次查；② 在官方 LINE 私訊輸入「查詢報名 姓名 電話」，綁定後繳費提醒和報名完成通知都會用 LINE 發送。'],
@@ -2864,6 +3314,7 @@ function liffApi_(action, req, user) {
         displayName: user.name,
         member: isActiveMember_(member) ? pick_(member, ['name', 'role', 'group']) : null,
         categories: REPORT_CATEGORIES,
+        repairCategories: REPAIR_CATEGORIES,
       };
 
     case 'register': {
@@ -2900,6 +3351,14 @@ function liffApi_(action, req, user) {
     case 'myReports':
       return readAll_('回報').filter(r => r.userId === user.userId).slice(-20).reverse()
         .map(r => pick_(r, ['id', 'createdAt', 'category', 'content', 'status', 'note']));
+
+    case 'submitRepair':
+      return submitRepair_(user, req);
+
+    case 'myRepairs':
+      return readAll_('報修').filter(r => r.userId === user.userId).slice(-20).reverse()
+        .map(r => Object.assign(pick_(r, ['id', 'createdAt', 'category', 'content', 'location', 'status', 'repNote', 'doneAt']),
+          { rep: r.status === '待分派' ? '' : r.rep }));
 
     case 'listSlots':
       if (!lawyerOpen_()) throw new Error(LAWYER_CLOSED_TEXT);
@@ -2974,6 +3433,7 @@ function adminApi_(action, req) {
         members: readAll_('成員').filter(isActiveMember_).length,
         pendingReports: reports.filter(r => r.status === '待處理').length,
         inProgressReports: reports.filter(r => r.status === '處理中').length,
+        pendingRepairs: readAll_('報修').filter(r => r.status === '待分派').length,
         upcomingBookings: readAll_('諮詢預約').filter(b => b.status === '已預約').length,
         openSlots: openSlots_().length,
         today,
@@ -2985,7 +3445,11 @@ function adminApi_(action, req) {
     }
 
     case 'options':
-      return { reportCategories: REPORT_CATEGORIES, reportStatuses: REPORT_STATUSES, bookingStatuses: BOOKING_STATUSES, adminRoles: ADMIN_ROLES };
+      return {
+        reportCategories: REPORT_CATEGORIES, reportStatuses: REPORT_STATUSES, bookingStatuses: BOOKING_STATUSES, adminRoles: ADMIN_ROLES,
+        repairCategories: REPAIR_CATEGORIES, repairStatuses: REPAIR_STATUSES,
+        repairReps: REPAIR_REPS.concat([REPAIR_SELF]).map(r => ({ key: r.key, name: r.name })), repairPage: REPAIR_PAGE_URL,
+      };
 
     case 'reports':
       return readAll_('回報').reverse().map(stripRow_);
@@ -3002,6 +3466,40 @@ function adminApi_(action, req) {
         push_(r.userId, [text_(`您的回報（${r.id}）狀態更新為「${patch.status || r.status}」${patch.note ? '\n' + patch.note : ''}`)]);
       }
       return { ok: true };
+    }
+
+    case 'repairs':
+      return readAll_('報修').reverse().map(r => Object.assign(stripRow_(r), { photoLink: repairPhotoUrl_(r), mapLink: repairMapUrl_(r) }));
+
+    case 'repairWindows': {
+      const codes = repairBindCodes_();
+      const ws = readAll_('報修窗口').filter(w => w.status !== 'disabled');
+      return REPAIR_REPS.map(rep => ({ key: rep.key, name: rep.name, code: codes[rep.key],
+        windows: ws.filter(w => w.repKey === rep.key).map(w => ({ displayName: w.displayName, boundAt: w.boundAt })) }));
+    }
+
+    case 'updateRepair': {
+      // 後台改處理單位：跟在 LINE 點「交給 ○○」一樣會傳給服務處窗口；改成已完成：通知報修的里民
+      const r = readAll_('報修').find(x => x.id === req.id);
+      if (!r) throw new Error('找不到報修 ' + req.id);
+      const note = req.note === undefined ? undefined : clean_(req.note, 300);
+      if (note !== undefined && note !== r.repNote) update_('報修', r._row, { repNote: note, updatedAt: now_() });
+      const cur = Object.assign({}, r, note !== undefined ? { repNote: note } : {});
+      let messages = [];
+      const rep = REPAIR_REPS.concat([REPAIR_SELF]).find(x => x.key === req.repKey);
+      if (req.status === '處理中' && !rep && !r.rep) throw new Error('改成處理中，請先選處理單位');
+      if (rep && rep.name !== r.rep && r.status !== '已完成' && req.status !== '已完成' && req.status !== '不處理') {
+        messages = assignRepair_(cur, rep).map(m => m.text);
+        Object.assign(cur, { status: '處理中', rep: rep.name });
+      }
+      if (req.status === '已完成' && cur.status !== '已完成') {
+        if (rep && !cur.rep) update_('報修', r._row, { rep: rep.name });
+        completeRepair_(Object.assign(cur, rep && !cur.rep ? { rep: rep.name } : {}), '', '', true);
+      } else if ((req.status === '不處理' || req.status === '待分派') && req.status !== cur.status) {
+        update_('報修', r._row, Object.assign({ status: req.status, updatedAt: now_() }, req.status === '待分派' ? { rep: '' } : {}));
+      }
+      clearRepairCache_();
+      return { ok: true, messages };
     }
 
     case 'members':
@@ -3167,15 +3665,20 @@ function decodePhoto_(id, photo) {
  * 照片不另外開放分享，權限跟著所在資料夾。回傳檔案網址。
  */
 function savePhotoFile_(category, blob) {
+  return storePhotoFile_(category, blob).getUrl();
+}
+
+/** 同上，回傳檔案（報修要記檔案 ID，才能用帶簽章的網址給服務處看照片）。 */
+function storePhotoFile_(category, blob) {
   const path = [safeName_(category), Utilities.formatDate(new Date(), TZ, 'yyyy-MM')];
   if (prop_('BACKUP_FOLDER_ID')) {
     try {
-      return folderPath_(backupRoot_(), ['回報照片'].concat(path)).createFile(blob).getUrl();
+      return folderPath_(backupRoot_(), ['回報照片'].concat(path)).createFile(blob);
     } catch (err) {
       console.error('照片改存到私人資料夾：' + err.message);
     }
   }
-  return folderPath_(privatePhotoRoot_(), path).createFile(blob).getUrl();
+  return folderPath_(privatePhotoRoot_(), path).createFile(blob);
 }
 
 function privatePhotoRoot_() {

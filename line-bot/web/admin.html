@@ -31,6 +31,7 @@
     </div>
     <div class="tabs">
       <button data-tab="summary" class="active">總覽</button>
+      <button data-tab="repairs">快速報修</button>
       <button data-tab="reports">回報</button>
       <button data-tab="broadcast">推播宣達</button>
       <button data-tab="lawyer">律師諮詢</button>
@@ -42,6 +43,28 @@
       <div class="stats" id="stats"></div>
       <div class="card" id="backup-info"></div>
       <div class="card" id="setup-info"></div>
+    </section>
+
+    <!-- 快速報修 -->
+    <section id="tab-repairs" class="hidden">
+      <div class="card">
+        <p class="muted">里民在 LINE 點「快速報修」送出 → 您的 LINE 收到通知，點「交給 ○○」分派 → 服務處窗口處理完點「已處理完成」→ 系統通知報修的里民。
+          公開進度：<a id="repair-page" target="_blank" rel="noopener"></a>（只顯示類別、地點、處理單位、進度）。</p>
+        <div class="filters">
+          <select id="repair-status"><option value="">全部狀態</option></select>
+          <select id="repair-rep"><option value="">全部處理單位</option></select>
+          <input id="repair-search" placeholder="搜尋編號、地點、內容、報修人">
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>編號／時間</th><th>報修人</th><th>類別</th><th>地點／內容</th><th>照片</th><th>狀態</th><th>處理單位／說明</th><th></th></tr></thead>
+          <tbody id="repair-rows"></tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h2>民意代表服務處窗口</h2>
+        <p class="muted">請服務處人員加官方 LINE 好友，在聊天室傳下面的綁定文字；綁定後，分派的案件會直接用 LINE 傳給他們（每位窗口算 1 則訊息）。要換人：在 LINE 私訊官方帳號「報修窗口 解除 曾朝榮」。</p>
+        <ul class="list" id="repair-windows"></ul>
+      </div>
     </section>
 
     <!-- 回報 -->
@@ -147,6 +170,24 @@
   </form>
 </dialog>
 
+<!-- 報修處理 -->
+<dialog id="dlg-repair">
+  <form method="dialog" id="form-repair">
+    <h2 id="dlg-repair-title"></h2>
+    <p class="muted" id="dlg-repair-content" style="white-space:pre-wrap"></p>
+    <label>處理單位 <span class="hint">（改了會用 LINE 傳給該服務處的窗口）</span></label>
+    <select name="repKey" id="dlg-repair-rep"></select>
+    <label>狀態 <span class="hint">（改成已完成會用 LINE 通知報修的里民）</span></label>
+    <select name="status" id="dlg-repair-status"></select>
+    <label>進度說明 <span class="hint">（會公開在網站）</span></label>
+    <textarea name="note" maxlength="300"></textarea>
+    <div class="row" style="margin-top:16px">
+      <button type="button" class="ghost" onclick="this.closest('dialog').close()">取消</button>
+      <button type="submit">儲存</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- 成員編輯 -->
 <dialog id="dlg-member">
   <form method="dialog" id="form-member">
@@ -172,7 +213,7 @@ let adminToken = '';
 try { adminToken = sessionStorage.getItem('adminToken') || ''; } catch (_) {}
 
 const admin = (action, data) => api('admin.' + action, Object.assign({ adminToken }, data));
-const state = { options: null, reports: [], members: [] };
+const state = { options: null, reports: [], repairs: [], members: [] };
 
 function options(list, selected) {
   return list.map(v => `<option${v === selected ? ' selected' : ''}>${esc(v)}</option>`).join('');
@@ -190,6 +231,10 @@ async function start() {
   $('#app').classList.remove('hidden');
   $('#report-status').innerHTML += options(state.options.reportStatuses);
   $('#report-category').innerHTML += options(state.options.reportCategories);
+  $('#repair-status').innerHTML += options(state.options.repairStatuses || []);
+  $('#repair-rep').innerHTML += options((state.options.repairReps || []).map(r => r.name));
+  $('#repair-page').href = state.options.repairPage || '#';
+  $('#repair-page').textContent = state.options.repairPage || '';
   showTab('summary');
 }
 
@@ -223,7 +268,7 @@ document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click
 function showTab(tab) {
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('section[id^=tab-]').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-' + tab));
-  ({ summary: loadSummary, reports: loadReports, broadcast: loadBroadcast, lawyer: loadLawyer, members: loadMembers })[tab]()
+  ({ summary: loadSummary, repairs: loadRepairs, reports: loadReports, broadcast: loadBroadcast, lawyer: loadLawyer, members: loadMembers })[tab]()
     .catch(err => toast(err.message, true));
 }
 
@@ -234,6 +279,7 @@ async function loadSummary() {
     ? (s.quota.type === 'limited' ? `${s.quota.used} / ${s.quota.limit}` : `${s.quota.used}（無上限）`)
     : '無法取得';
   $('#stats').innerHTML = [
+    ['待分派報修', s.pendingRepairs],
     ['待處理回報', s.pendingReports],
     ['處理中回報', s.inProgressReports],
     ['已預約諮詢', s.upcomingBookings],
@@ -330,6 +376,72 @@ $('#form-report').addEventListener('submit', e => {
     $('#dlg-report').close();
     toast('已更新');
     loadReports();
+  });
+});
+
+// 快速報修
+async function loadRepairs() {
+  const [list, windows] = await Promise.all([admin('repairs'), admin('repairWindows')]);
+  state.repairs = list;
+  renderRepairs();
+  $('#repair-windows').innerHTML = windows.map(w => `
+    <li>
+      <b>${esc(w.name)}</b>
+      <div>傳：<code>報修綁定 ${esc(w.code)}</code></div>
+      <div class="muted">${w.windows.length ? '已綁定：' + w.windows.map(x => esc(x.displayName || 'LINE 用戶') + '（' + esc(x.boundAt) + '）').join('、') : '還沒有人綁定'}</div>
+    </li>`).join('');
+}
+
+['#repair-status', '#repair-rep', '#repair-search'].forEach(sel => $(sel).addEventListener('input', renderRepairs));
+
+function renderRepairs() {
+  const status = $('#repair-status').value;
+  const rep = $('#repair-rep').value;
+  const q = $('#repair-search').value.trim();
+  const rows = state.repairs.filter(r =>
+    (!status || r.status === status) && (!rep || r.rep === rep) &&
+    (!q || (r.id + r.location + r.content + r.name + r.phone).indexOf(q) >= 0));
+  $('#repair-rows').innerHTML = rows.length ? rows.map(r => `
+    <tr>
+      <td><b>${esc(r.id)}</b><div class="muted">${esc(r.createdAt)}</div></td>
+      <td>${esc(r.name)}<div class="muted">${esc(r.phone)}</div></td>
+      <td>${esc(r.category)}</td>
+      <td class="pre">📍 ${esc(r.location)} <a href="${esc(r.mapLink)}" target="_blank" rel="noopener">地圖</a><div>${esc(r.content)}</div></td>
+      <td>${r.photoUrl ? `<a href="${esc(r.photoLink || r.photoUrl)}" target="_blank" rel="noopener">查看</a>` : ''}</td>
+      <td><span class="badge ${esc(r.status)}">${esc(r.status)}</span>${r.doneAt ? `<div class="muted">${esc(r.doneAt)}</div>` : ''}</td>
+      <td>${esc(r.rep)}<div class="muted">${esc(r.repNote)}</div></td>
+      <td><button class="small" data-repair="${esc(r.id)}">處理</button></td>
+    </tr>`).join('') : '<tr><td colspan="8" class="muted">沒有資料</td></tr>';
+  document.querySelectorAll('[data-repair]').forEach(b => b.addEventListener('click', () => openRepair(b.dataset.repair)));
+}
+
+function openRepair(id) {
+  const r = state.repairs.find(x => x.id === id);
+  const f = $('#form-repair');
+  f.dataset.id = id;
+  $('#dlg-repair-title').textContent = `${r.id}｜${r.category}`;
+  $('#dlg-repair-content').textContent = `📍 ${r.location}\n${r.content}\n👤 ${r.name}${r.phone ? '（' + r.phone + '）' : ''}`;
+  const reps = state.options.repairReps || [];
+  const cur = reps.find(x => x.name === r.rep);
+  $('#dlg-repair-rep').innerHTML = '<option value="">（還沒分派）</option>' +
+    reps.map(x => `<option value="${esc(x.key)}"${cur && cur.key === x.key ? ' selected' : ''}>${esc(x.name)}</option>`).join('');
+  $('#dlg-repair-status').innerHTML = options(state.options.repairStatuses, r.status);
+  f.note.value = r.repNote || '';
+  $('#dlg-repair').showModal();
+}
+
+$('#form-repair').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = e.target;
+  withBusy(e.submitter, async () => {
+    const r = await admin('updateRepair', { id: f.dataset.id, repKey: f.repKey.value, status: f.status.value, note: f.note.value });
+    $('#dlg-repair').close();
+    if (r.messages && r.messages.length > 1) {
+      alert(r.messages[0] + '\n\n請轉傳這段給服務處：\n\n' + r.messages[1]);
+    } else {
+      toast(r.messages && r.messages[0] ? r.messages[0] : '已更新');
+    }
+    loadRepairs();
   });
 });
 

@@ -19,6 +19,7 @@
     <h1>里辦公處服務</h1>
     <p class="muted" id="hello"></p>
     <div class="menu">
+      <a href="#repair"><span>🔧</span>快速報修</a>
       <a href="#report"><span>📝</span>回報</a>
       <a href="#booking"><span>⚖️</span>律師諮詢</a>
       <a href="#news"><span>📢</span>公告</a>
@@ -62,6 +63,40 @@
     <div class="card">
       <h2>我的回報</h2>
       <ul class="list" id="my-reports"></ul>
+    </div>
+  </section>
+
+  <!-- 快速報修（里民） -->
+  <section id="view-repair" class="hidden">
+    <h1>快速報修</h1>
+    <form id="form-repair" class="card">
+      <p class="muted">路燈不亮、雜草太高、樹木要修剪、道路坑洞、水溝堵塞…送出後由莊晴全交給民意代表服務處處理，完成會用 LINE 通知您。</p>
+      <label>類別</label>
+      <select name="category" id="repair-category"></select>
+      <label>地點</label>
+      <input name="location" id="repair-location" required maxlength="200" placeholder="例：東山路一段156巷口、第3支路燈">
+      <p class="hint">請寫路名、巷口或地標（不用寫門牌樓層）。地點會公開在網站的處理進度。</p>
+      <div class="row">
+        <button type="button" class="ghost" id="btn-repair-gps" style="flex:0 0 auto">📍 附上目前位置</button>
+        <span class="muted" id="repair-gps-state"></span>
+      </div>
+      <input type="hidden" name="gps" id="repair-gps">
+      <label>狀況說明</label>
+      <textarea name="content" required maxlength="1000" placeholder="例：路燈晚上不亮已經三天"></textarea>
+      <label>照片 <span class="hint">（選填，一張）</span></label>
+      <input type="file" accept="image/*" id="repair-photo">
+      <img id="repair-photo-preview" class="preview hidden" alt="照片預覽">
+      <label>姓名</label>
+      <input name="name" id="repair-name" required maxlength="30">
+      <label>聯絡電話 <span class="hint">（選填，方便服務處聯絡您）</span></label>
+      <input name="phone" type="tel" maxlength="20">
+      <p class="muted">🔒 姓名、電話只提供給負責處理的服務處聯絡用；網站進度只顯示類別、地點、處理單位和進度。</p>
+      <button class="block" type="submit">送出報修</button>
+    </form>
+    <div class="card">
+      <h2>我的報修</h2>
+      <p class="muted">所有報修的處理進度：<a href="https://ccs2024taiwan.pages.dev/repair/" target="_blank" rel="noopener">網站報修進度</a></p>
+      <ul class="list" id="my-repairs"></ul>
     </div>
   </section>
 
@@ -133,6 +168,8 @@ async function init() {
   $('#loading').classList.add('hidden');
   $('#hello').textContent = me.member ? `${me.member.name} 您好（${me.member.role}）` : `${me.displayName} 您好`;
   $('#category').innerHTML = me.categories.map(c => `<option>${esc(c)}</option>`).join('');
+  $('#repair-category').innerHTML = (me.repairCategories || []).map(c => `<option>${esc(c)}</option>`).join('');
+  $('#repair-name').value = me.member ? me.member.name : (me.displayName || '');
 
   const page = new URLSearchParams(location.search).get('page');
   if (page && !location.hash) location.hash = page;
@@ -150,6 +187,7 @@ function route() {
   $('#back-home').classList.toggle('hidden', section.id === 'view-home');
   $('#menu-register').classList.toggle('hidden', !!me.member);
   if (view === 'report') loadReports();
+  if (view === 'repair') loadRepairs();
   if (view === 'booking') loadBooking();
   if (view === 'news') loadNews();
 }
@@ -222,6 +260,75 @@ async function loadReports() {
         ${r.note ? `<div class="muted">里辦回覆：${esc(r.note)}</div>` : ''}
         <div class="muted">${esc(r.createdAt)}｜${esc(r.id)}</div>
       </li>`).join('') : '<li class="muted">尚無回報</li>';
+  } catch (err) {
+    ul.innerHTML = `<li class="muted">${esc(err.message)}</li>`;
+  }
+}
+
+// 快速報修
+let repairPhoto = '';
+$('#repair-photo').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  repairPhoto = '';
+  $('#repair-photo-preview').classList.add('hidden');
+  if (!file) return;
+  try {
+    repairPhoto = await resizeImage(file, 1280);
+    $('#repair-photo-preview').src = repairPhoto;
+    $('#repair-photo-preview').classList.remove('hidden');
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+$('#btn-repair-gps').addEventListener('click', () => {
+  if (!navigator.geolocation) return toast('此裝置不支援定位', true);
+  $('#repair-gps-state').textContent = '定位中…';
+  navigator.geolocation.getCurrentPosition(
+    p => {
+      $('#repair-gps').value = p.coords.latitude.toFixed(6) + ',' + p.coords.longitude.toFixed(6);
+      $('#repair-gps-state').textContent = '✅ 已附上位置（不會公開）';
+    },
+    () => {
+      $('#repair-gps-state').textContent = '';
+      toast('無法取得位置，請確認已允許定位', true);
+    },
+    { enableHighAccuracy: true, timeout: 10000 },
+  );
+});
+
+$('#form-repair').addEventListener('submit', e => {
+  e.preventDefault();
+  withBusy(e.submitter, async () => {
+    const r = await call('submitRepair', Object.assign(formData(e.target), { photo: repairPhoto }));
+    const name = e.target.name.value;
+    e.target.reset();
+    e.target.name.value = name;
+    repairPhoto = '';
+    $('#repair-gps').value = '';
+    $('#repair-gps-state').textContent = '';
+    $('#repair-photo-preview').classList.add('hidden');
+    toast(r.photoSaved === false ? `已送出（編號 ${r.id}），但照片沒存成功，請改用聊天室傳照片` : `已送出報修，編號 ${r.id}，謝謝您！`, r.photoSaved === false);
+    loadRepairs();
+  });
+});
+
+async function loadRepairs() {
+  const ul = $('#my-repairs');
+  ul.innerHTML = '<li class="muted">載入中…</li>';
+  try {
+    const list = await call('myRepairs');
+    ul.innerHTML = list.length ? list.map(r => `
+      <li>
+        <div class="row" style="justify-content:space-between">
+          <b style="flex:0 1 auto">${esc(r.id)}｜${esc(r.category)}</b>
+          <span class="badge ${esc(r.status)}" style="flex:0 0 auto">${esc(r.status)}</span>
+        </div>
+        <div>📍 ${esc(r.location)}</div>
+        ${r.rep ? `<div class="muted">處理單位：${esc(r.rep)}</div>` : ''}
+        ${r.repNote ? `<div class="muted">說明：${esc(r.repNote)}</div>` : ''}
+        <div class="muted">${esc(r.createdAt)} 報修${r.doneAt ? '｜' + esc(r.doneAt) + ' 完成' : ''}</div>
+      </li>`).join('') : '<li class="muted">還沒有報修紀錄</li>';
   } catch (err) {
     ul.innerHTML = `<li class="muted">${esc(err.message)}</li>`;
   }

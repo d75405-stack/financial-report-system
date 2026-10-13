@@ -33,6 +33,7 @@ h2 { font-size: 17px; margin: 0 0 12px; }
 }
 label { display: block; font-weight: 500; margin: 12px 0 4px; }
 label .hint { font-weight: 400; color: var(--muted); font-size: 13px; }
+p.hint { color: var(--muted); font-size: 13px; margin: 4px 0 8px; }
 input, select, textarea {
   width: 100%;
   padding: 10px 12px;
@@ -78,7 +79,7 @@ button.small { padding: 4px 10px; font-size: 13px; }
   display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
   background: #e2e8f0; color: #334155; white-space: nowrap;
 }
-.badge.待處理, .badge.已預約 { background: #fef3c7; color: #92400e; }
+.badge.待處理, .badge.待分派, .badge.已預約 { background: #fef3c7; color: #92400e; }
 .badge.處理中 { background: #dbeafe; color: #1e40af; }
 .badge.已完成 { background: #dcfce7; color: #166534; }
 .badge.不處理, .badge.已取消, .badge.未到, .badge.disabled { background: #fee2e2; color: #991b1b; }
