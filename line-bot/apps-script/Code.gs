@@ -52,6 +52,7 @@ const SHEETS = {
   報修: ['id', 'createdAt', 'userId', 'name', 'phone', 'category', 'content', 'location', 'gps', 'photoUrl', 'photoId',
     'status', 'rep', 'assignedAt', 'repNote', 'doneAt', 'updatedAt'],
   報修窗口: ['repKey', 'repName', 'userId', 'displayName', 'boundAt', 'status'],
+  特約上架紀錄: ['at', 'groupName', 'userId', 'displayName', 'command', 'result'],
 };
 
 // ───────────────────────── 初始化 ─────────────────────────
@@ -902,7 +903,9 @@ function clearRepairCache_() {
 const SHOP_POST_TTL = 7200;
 const SHOP_IMG_TTL = 1800;
 const SHOP_ADD_RE = /(新增|上架|加入|更新).{0,4}特約|特約.{0,4}(新增|上架|加入|更新)/;
-const SHOP_REMOVE_RE = /^(?:撤下|下架|刪除|移除)特約(?:商家|商店|店家|商)?\s*[:：]?\s*(.+)$/;
+// 撤下：「撤下特約 店名」「取消特約 店名」「特約撤下 店名」「下架 店名」都可以
+// （「取消、刪除…」一定要帶「特約」，避免「全全 取消報名」這類話被當成撤下）
+const SHOP_REMOVE_RE = /^(?:(?:撤下|下架)(?:特約)?(?:商家|商店|店家|商)?|(?:刪除|移除|取消|撤銷|撤除|拿掉)特約(?:商家|商店|店家|商)?|特約(?:商家|商店|店家|商)?(?:撤下|下架|刪除|移除|取消|撤銷|撤除|拿掉))\s*[:：]?\s*(.+)$/;
 const SHOP_ANNOUNCE_RE = /^(?:公告|推播|發公告)特約(?:商家|商店|店家|商)?\s*[:：]?\s*(.+)$/;
 const SHOP_CAT_NAMES = { food: '美食與飲品', life: '衣・醫・育・生活', car: '行・車輛保養與美容', resident: '里民身分優惠' };
 
@@ -922,7 +925,19 @@ function isShopGroup_(source) {
 
 function looksLikeShopPost_(t) {
   const s = String(t || '');
-  return s.length >= 20 && /特約/.test(s) && /優惠/.test(s) && /[路街道巷號]|maps\.app|goo\.gl|g\.co\//.test(s);
+  // 有寫優惠、有地址或地圖，而且看得出是在介紹店家（特約、@商家、店名…）
+  return s.length >= 15 && /優惠/.test(s) && /[路街道巷號]|maps\.app|goo\.gl|g\.co\//.test(s) && /特約|商家|店家|店名|@/.test(s);
+}
+
+/** 管理群的特約指令與結果記到「特約上架紀錄」（之後查得到誰下了什麼指令、系統回了什麼）。 */
+function logShop_(gid, uid, cmd, result) {
+  try {
+    const g = readAll_('群組紀錄').find(r => r.groupId === gid) || {};
+    append_('特約上架紀錄', { at: now_(), groupName: g.groupName || gid, userId: uid, displayName: lineDisplayName_(uid),
+      command: String(cmd).slice(0, 200), result: String(result).slice(0, 300) });
+  } catch (err) {
+    console.error('記錄特約指令失敗：' + err.message);
+  }
 }
 
 /** 去掉訊息裡的 @標記（LINE 給的位置），回傳剩下的文字。 */
@@ -953,43 +968,28 @@ function handleShopGroup_(ev, uid) {
   const isPost = looksLikeShopPost_(cmd);
   if (isPost) cache.put('shop_post_' + gid, JSON.stringify({ text: cmd.slice(0, 3000), uid, at: Date.now() }), SHOP_POST_TTL);
   if (!called) return false;
+  const done = text => { reply_(ev.replyToken, [text_(text)]); logShop_(gid, uid, cmd, text.split('\n')[0]); return true; };
   let m;
   if ((m = cmd.match(SHOP_REMOVE_RE))) {
     let r;
     try { r = ccsApi_('/api/shops', { action: 'remove', name: m[1].trim() }); } catch (err) {
-      reply_(ev.replyToken, [text_('網站忙線中，請稍後再試一次：' + err.message)]);
-      return true;
+      return done('網站忙線中，請稍後再試一次：' + err.message);
     }
-    reply_(ev.replyToken, [text_(r.ok ? `✅ 已從網站撤下「${r.name}」（特約商家現在 ${r.total} 家）` : '⚠️ ' + r.error)]);
-    return true;
+    return done(r.ok ? `✅ 已從網站撤下「${r.name}」（特約商家現在 ${r.total} 家）\n網站重新整理就看得到。要再上架：重貼公告後「全全 特約新增」。` : '⚠️ ' + r.error);
   }
   if ((m = cmd.match(SHOP_ANNOUNCE_RE))) {
-    if (!isOwnerUser_(uid)) {
-      reply_(ev.replyToken, [text_('發官方 LINE 公告會用到訊息額度，請里長下指令：@官方帳號 公告特約 店名')]);
-      return true;
-    }
-    reply_(ev.replyToken, [text_(announceShop_(m[1].trim()))]);
-    return true;
+    if (!isOwnerUser_(uid)) return done('發官方 LINE 公告會用到訊息額度，請里長下指令：全全 公告特約 店名');
+    return done(announceShop_(m[1].trim()));
   }
   if (!(isPost || (SHOP_ADD_RE.test(cmd) && cmd.length <= 30))) {
     if (!/特約/.test(cmd)) return false;   // 不是特約的事：交給全全（「全全…」）或不處理
-    reply_(ev.replyToken, [text_(SHOP_HELP_TEXT)]);
-    return true;
+    return done(SHOP_HELP_TEXT);
   }
   const post = isPost ? { text: cmd, uid, at: Date.now() } : shopCache_('shop_post_' + gid, null);
-  if (!post) {
-    reply_(ev.replyToken, [text_('找不到要上架的特約公告 🙏\n請先在群組貼公告（店名、地址、優惠內容…，可以接著傳菜單照片），再 @官方帳號 說「特約新增」。')]);
-    return true;
-  }
+  if (!post) return done('找不到要上架的特約公告 🙏\n請先在群組貼公告（店名、地址、優惠內容…，可以接著傳菜單照片），再傳「全全 特約新增」。\n（公告貼出後 2 小時內有效）');
   const shop = parseShopPost_(post.text, uid);
-  if (!shop || shop.notShop) {
-    reply_(ev.replyToken, [text_('⚠️ 看不出這則是特約商家公告，請確認有寫店名和優惠內容。')]);
-    return true;
-  }
-  if (!shop.n || !shop.o) {
-    reply_(ev.replyToken, [text_('⚠️ 公告裡找不到' + (!shop.n ? '店名' : '優惠內容') + '，請補上後重貼，再 @官方帳號 說「特約新增」。')]);
-    return true;
-  }
+  if (!shop || shop.notShop) return done('⚠️ 看不出這則是特約商家公告，請確認有寫店名和優惠內容。');
+  if (!shop.n || !shop.o) return done('⚠️ 公告裡找不到' + (!shop.n ? '店名' : '優惠內容') + '，請補上後重貼，再傳「全全 特約新增」。');
   // 照片：發公告的人在公告前 1 分鐘到之後 30 分鐘內傳的
   const imgs = shopCache_('shop_img_' + gid, []).filter(x => x.uid === post.uid && x.at >= post.at - 60000).slice(0, 4);
   const images = imgs.map(x => lineImageData_(x.id)).filter(Boolean);
@@ -997,32 +997,28 @@ function handleShopGroup_(ev, uid) {
   try {
     r = ccsApi_('/api/shops', { action: 'add', shop, images, by: lineDisplayName_(uid) });
   } catch (err) {
-    reply_(ev.replyToken, [text_('網站忙線中，沒有上架成功，請稍後再 @我 說一次「特約新增」：' + err.message)]);
-    return true;
+    return done('網站忙線中，沒有上架成功，請稍後再傳一次「全全 特約新增」：' + err.message);
   }
-  if (!r.ok) {
-    reply_(ev.replyToken, [text_('⚠️ ' + r.error + (r.url ? '\n' + r.url : ''))]);
-    return true;
-  }
+  if (!r.ok) return done('⚠️ ' + r.error + (r.url ? '\n' + r.url : ''));
+  if (r.restored) return done(`✅ 已恢復網站上的「${r.name}」（現在共 ${r.total} 家）\n👉 ${r.url}`);
   const s = r.shop;
-  reply_(ev.replyToken, [text_([
+  return done([
     (r.updated ? '✅ 已更新網站上的特約商家' : '✅ 已上架到網站特約商家') + `（現在共 ${r.total} 家）`, '',
     `${s.em} ${s.n}`, `🎁 ${s.o}`]
     .concat(s.note ? ['※ ' + s.note] : []).concat(s.a ? ['📍 ' + s.a] : [])
     .concat(s.tel ? ['📞 ' + s.tel] : []).concat(s.line ? ['💬 ' + s.lineLabel] : []).concat(s.g ? ['🗺 有地圖連結'] : [])
     .concat(['📂 分類：' + (SHOP_CAT_NAMES[s.c] || s.c)]).concat(r.images ? [`📷 照片 ${r.images} 張`] : [])
-    .concat(['', '👉 ' + r.url, '', '資料有錯：改好公告重貼，再 @我「特約新增」就會更新', `撤下：@我「撤下特約 ${s.n}」`, `發官方 LINE 公告（里長）：@我「公告特約 ${s.n}」`])
-    .join('\n'))]);
-  return true;
+    .concat(['', '👉 ' + r.url, '', '資料有錯：改好公告重貼，再傳「全全 特約新增」就會更新', `撤下：全全 撤下特約 ${s.n}`, `發官方 LINE 公告（里長）：全全 公告特約 ${s.n}`])
+    .join('\n'));
 }
 
 const SHOP_HELP_TEXT = [
   '🛍 特約商家上架（管理群）',
   '① 貼特約公告：店名、地址、地圖、電話、官方 LINE、專屬優惠內容（可以接著傳菜單照片）',
-  '② @官方帳號 說「特約新增」（或「全全 特約新增」）→ 自動上架到網站特約商家',
+  '② 再傳「全全 特約新增」（或 @官方帳號 特約新增）→ 自動上架到網站特約商家',
   '',
-  '撤下：@我「撤下特約 店名」',
-  '發官方 LINE 公告給所有好友（里長，會用訊息額度）：@我「公告特約 店名」',
+  '撤下（所有特約商家都可以）：全全 撤下特約 店名',
+  '發官方 LINE 公告給所有好友（里長，會用訊息額度）：全全 公告特約 店名',
 ].join('\n');
 
 /** 下載群組裡的照片（LINE 只保留一段時間）；太大或失敗回傳 null。 */
