@@ -2258,9 +2258,16 @@ const STAMP_CARD_SPOTS = ['裕國豐展', '惠宇開朗', '總太聚作', '總�
 const STAMP_RULE_TEXT = '🎁 集章兌換規則\n⏰ 換獎品時間：10/18（日）14:00–16:00\n📍 地點：惠宇開朗\n' +
   '・集滿 5 顆印章：換一種獎品\n・集滿 10 顆印章：再換一種獎品\n　（5、10 顆的獎品換完為止）\n' +
   '・集滿 15 顆印章：換抽獎券（一樣是 10/18 14:00–16:00 在惠宇開朗換）\n🎟 抽獎在 10/18 晚上裕國豐展變裝大賽進行中開獎，抽獎券請保管好！';
+// 各發放點剩餘份數（里長 10/14 轉來的「集章圖紙餘量回報」；沒回報的不寫數字）
+const STAMP_CARD_LEFT = { '八月小確幸': 36, '惠宇開朗': 35, '總太美樂地': 28, '總太共好': 27, '總太悅來': 24, '御脊傳統整復推拿': 20,
+  '敬甜點': 18, '全聯建和店': 18, '簇新美學': 17, '臥野': 16, '全家太順店': 15, '裕國豐展': 0 };
+const STAMP_CARD_LEFT_AT = '10/14';
+const stampCardLeft_ = x => (x in STAMP_CARD_LEFT ? STAMP_CARD_LEFT[x] : -1);
 const STAMP_CARD_TEXT = '🗺 集章地圖卡（集章圖紙）10/12（一）起開始發放，限量 500 份，發完為止！\n' +
-  '發放位置共 ' + STAMP_CARD_SPOTS.length + ' 處，任一處都可以拿：\n' +
-  STAMP_CARD_SPOTS.map(x => '・' + x).join('\n') + '\n\n' + STAMP_RULE_TEXT + '\n\n集章點、路線與玩法：https://ccs2024taiwan.pages.dev/map/';
+  '發放位置共 ' + STAMP_CARD_SPOTS.length + ' 處，還有的地方都可以拿（' + STAMP_CARD_LEFT_AT + ' 回報的剩餘份數，數量隨時會變）：\n' +
+  STAMP_CARD_SPOTS.slice().sort((x, y) => (stampCardLeft_(x) === 0) - (stampCardLeft_(y) === 0) || stampCardLeft_(y) - stampCardLeft_(x))
+    .map(x => '・' + x + (stampCardLeft_(x) > 0 ? `（剩 ${stampCardLeft_(x)} 份）` : stampCardLeft_(x) === 0 ? '（已發完）' : '')).join('\n') +
+  '\n\n' + STAMP_RULE_TEXT + '\n\n集章點、路線與玩法：https://ccs2024taiwan.pages.dev/map/';
 
 const HALLOWEEN_INFO_UNTIL = '2026-10-18';
 const HALLOWEEN_INFO = [
