@@ -212,6 +212,8 @@ function handleEvent_(ev) {
       reply_(ev.replyToken, [text_(lawyerBookingStatusText_(status[2]))]);
       return;
     }
+    // 管理群：特約公告／照片先記著；@官方帳號或「全全」說「特約新增」就上架到網站（見 handleShopGroup_）
+    if (ev.type === 'message' && handleShopGroup_(ev, uid)) return;
     if (ev.type === 'message' && ev.message.type === 'text' && ev.message.text.trim().indexOf(ASSISTANT_NAME) === 0) {
       handleAssistant_(ev, uid, findMember_(uid), ev.message.text.trim(), true);
     }
@@ -887,6 +889,273 @@ function publicRepairs_() {
 
 function clearRepairCache_() {
   try { CacheService.getScriptCache().remove('repairs_public'); } catch (_) { /* 快取 60 秒後自己過期 */ }
+}
+
+// ───────────────────────── 特約商家（管理群）─────────────────────────
+//
+// 里長 10/13：「群組內人員標記你或叫全全時，能夠直接設定網站」。在管理群（群組名稱有「管理群」，或指令碼屬性 SHOP_GROUP_ID 指定）：
+//   有人貼特約公告（店名、地址、優惠…）→ 先記著 2 小時；同一個人接著傳的照片（菜單等）記 30 分鐘
+//   有人 @官方帳號 或「全全」說「特約新增」（或公告本身就 @官方帳號）→ 整理公告 → 上架到網站特約商家（照片一起）→ 群組裡回覆結果
+//     整理：有 Claude API 金鑰時用 Claude 讀（格式不固定也行）；沒有時用固定格式解析。網址、電話、LINE ID 只採用公告裡真的有寫的
+//   「撤下特約 店名」：撤下（只限從 LINE 新增的）；「公告特約 店名」（里長）：發官方 LINE 公告給所有好友
+// 網站資料：活動網站 /api/shops（匯出密碼授權），照片存網站資料庫。
+const SHOP_POST_TTL = 7200;
+const SHOP_IMG_TTL = 1800;
+const SHOP_ADD_RE = /(新增|上架|加入|更新).{0,4}特約|特約.{0,4}(新增|上架|加入|更新)/;
+const SHOP_REMOVE_RE = /^(?:撤下|下架|刪除|移除)特約(?:商家|商店|店家|商)?\s*[:：]?\s*(.+)$/;
+const SHOP_ANNOUNCE_RE = /^(?:公告|推播|發公告)特約(?:商家|商店|店家|商)?\s*[:：]?\s*(.+)$/;
+const SHOP_CAT_NAMES = { food: '美食與飲品', life: '衣・醫・育・生活', car: '行・車輛保養與美容', resident: '里民身分優惠' };
+
+function isShopGroup_(source) {
+  const gid = source && source.groupId;
+  if (!gid) return false;
+  const set = prop_('SHOP_GROUP_ID');
+  if (set) return set === gid;
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('shopgrp_' + gid);
+  if (hit) return hit === '1';
+  const row = readAll_('群組紀錄').find(r => r.groupId === gid);
+  const ok = !!row && /管理群/.test(row.groupName);
+  cache.put('shopgrp_' + gid, ok ? '1' : '0', 21600);
+  return ok;
+}
+
+function looksLikeShopPost_(t) {
+  const s = String(t || '');
+  return s.length >= 20 && /特約/.test(s) && /優惠/.test(s) && /[路街道巷號]|maps\.app|goo\.gl|g\.co\//.test(s);
+}
+
+/** 去掉訊息裡的 @標記（LINE 給的位置），回傳剩下的文字。 */
+function stripMentions_(msg) {
+  let t = String(msg.text || '');
+  ((msg.mention && msg.mention.mentionees) || []).slice().sort((a, b) => b.index - a.index)
+    .forEach(m => { t = t.slice(0, m.index) + t.slice(m.index + m.length); });
+  return t.trim();
+}
+
+function shopCache_(key, fallback) {
+  try { return JSON.parse(CacheService.getScriptCache().get(key) || 'null') || fallback; } catch (_) { return fallback; }
+}
+
+function handleShopGroup_(ev, uid) {
+  if (!isShopGroup_(ev.source)) return false;
+  const gid = ev.source.groupId, msg = ev.message, cache = CacheService.getScriptCache();
+  if (msg.type === 'image') {
+    const list = shopCache_('shop_img_' + gid, []).filter(x => Date.now() - x.at < SHOP_IMG_TTL * 1000).slice(-5);
+    list.push({ id: msg.id, uid, at: Date.now() });
+    cache.put('shop_img_' + gid, JSON.stringify(list), SHOP_IMG_TTL);
+    return false;
+  }
+  if (msg.type !== 'text') return false;
+  const called = (((msg.mention && msg.mention.mentionees) || []).some(m => m.isSelf)) || msg.text.trim().indexOf(ASSISTANT_NAME) === 0;
+  let cmd = stripMentions_(msg);
+  if (cmd.indexOf(ASSISTANT_NAME) === 0) cmd = cmd.slice(ASSISTANT_NAME.length).trim();
+  const isPost = looksLikeShopPost_(cmd);
+  if (isPost) cache.put('shop_post_' + gid, JSON.stringify({ text: cmd.slice(0, 3000), uid, at: Date.now() }), SHOP_POST_TTL);
+  if (!called) return false;
+  let m;
+  if ((m = cmd.match(SHOP_REMOVE_RE))) {
+    let r;
+    try { r = ccsApi_('/api/shops', { action: 'remove', name: m[1].trim() }); } catch (err) {
+      reply_(ev.replyToken, [text_('網站忙線中，請稍後再試一次：' + err.message)]);
+      return true;
+    }
+    reply_(ev.replyToken, [text_(r.ok ? `✅ 已從網站撤下「${r.name}」（特約商家現在 ${r.total} 家）` : '⚠️ ' + r.error)]);
+    return true;
+  }
+  if ((m = cmd.match(SHOP_ANNOUNCE_RE))) {
+    if (!isOwnerUser_(uid)) {
+      reply_(ev.replyToken, [text_('發官方 LINE 公告會用到訊息額度，請里長下指令：@官方帳號 公告特約 店名')]);
+      return true;
+    }
+    reply_(ev.replyToken, [text_(announceShop_(m[1].trim()))]);
+    return true;
+  }
+  if (!(isPost || (SHOP_ADD_RE.test(cmd) && cmd.length <= 30))) {
+    if (!/特約/.test(cmd)) return false;   // 不是特約的事：交給全全（「全全…」）或不處理
+    reply_(ev.replyToken, [text_(SHOP_HELP_TEXT)]);
+    return true;
+  }
+  const post = isPost ? { text: cmd, uid, at: Date.now() } : shopCache_('shop_post_' + gid, null);
+  if (!post) {
+    reply_(ev.replyToken, [text_('找不到要上架的特約公告 🙏\n請先在群組貼公告（店名、地址、優惠內容…，可以接著傳菜單照片），再 @官方帳號 說「特約新增」。')]);
+    return true;
+  }
+  const shop = parseShopPost_(post.text, uid);
+  if (!shop || shop.notShop) {
+    reply_(ev.replyToken, [text_('⚠️ 看不出這則是特約商家公告，請確認有寫店名和優惠內容。')]);
+    return true;
+  }
+  if (!shop.n || !shop.o) {
+    reply_(ev.replyToken, [text_('⚠️ 公告裡找不到' + (!shop.n ? '店名' : '優惠內容') + '，請補上後重貼，再 @官方帳號 說「特約新增」。')]);
+    return true;
+  }
+  // 照片：發公告的人在公告前 1 分鐘到之後 30 分鐘內傳的
+  const imgs = shopCache_('shop_img_' + gid, []).filter(x => x.uid === post.uid && x.at >= post.at - 60000).slice(0, 4);
+  const images = imgs.map(x => lineImageData_(x.id)).filter(Boolean);
+  let r;
+  try {
+    r = ccsApi_('/api/shops', { action: 'add', shop, images, by: lineDisplayName_(uid) });
+  } catch (err) {
+    reply_(ev.replyToken, [text_('網站忙線中，沒有上架成功，請稍後再 @我 說一次「特約新增」：' + err.message)]);
+    return true;
+  }
+  if (!r.ok) {
+    reply_(ev.replyToken, [text_('⚠️ ' + r.error + (r.url ? '\n' + r.url : ''))]);
+    return true;
+  }
+  const s = r.shop;
+  reply_(ev.replyToken, [text_([
+    (r.updated ? '✅ 已更新網站上的特約商家' : '✅ 已上架到網站特約商家') + `（現在共 ${r.total} 家）`, '',
+    `${s.em} ${s.n}`, `🎁 ${s.o}`]
+    .concat(s.note ? ['※ ' + s.note] : []).concat(s.a ? ['📍 ' + s.a] : [])
+    .concat(s.tel ? ['📞 ' + s.tel] : []).concat(s.line ? ['💬 ' + s.lineLabel] : []).concat(s.g ? ['🗺 有地圖連結'] : [])
+    .concat(['📂 分類：' + (SHOP_CAT_NAMES[s.c] || s.c)]).concat(r.images ? [`📷 照片 ${r.images} 張`] : [])
+    .concat(['', '👉 ' + r.url, '', '資料有錯：改好公告重貼，再 @我「特約新增」就會更新', `撤下：@我「撤下特約 ${s.n}」`, `發官方 LINE 公告（里長）：@我「公告特約 ${s.n}」`])
+    .join('\n'))]);
+  return true;
+}
+
+const SHOP_HELP_TEXT = [
+  '🛍 特約商家上架（管理群）',
+  '① 貼特約公告：店名、地址、地圖、電話、官方 LINE、專屬優惠內容（可以接著傳菜單照片）',
+  '② @官方帳號 說「特約新增」（或「全全 特約新增」）→ 自動上架到網站特約商家',
+  '',
+  '撤下：@我「撤下特約 店名」',
+  '發官方 LINE 公告給所有好友（里長，會用訊息額度）：@我「公告特約 店名」',
+].join('\n');
+
+/** 下載群組裡的照片（LINE 只保留一段時間）；太大或失敗回傳 null。 */
+function lineImageData_(id) {
+  try {
+    const res = UrlFetchApp.fetch('https://api-data.line.me/v2/bot/message/' + encodeURIComponent(id) + '/content', {
+      headers: { Authorization: 'Bearer ' + prop_('LINE_CHANNEL_ACCESS_TOKEN') }, muteHttpExceptions: true,
+    });
+    if (res.getResponseCode() !== 200) return null;
+    const blob = res.getBlob();
+    const bytes = blob.getBytes();
+    if (!bytes.length || bytes.length > 1500000) return null;
+    return { mime: blob.getContentType() || 'image/jpeg', data: Utilities.base64Encode(bytes) };
+  } catch (err) {
+    console.error('下載群組照片失敗：' + err.message);
+    return null;
+  }
+}
+
+/** 公告 → 網站特約商家欄位。先用 Claude，失敗或沒設定金鑰就用固定格式解析；網址、電話、LINE ID 只採用公告裡有的。 */
+function parseShopPost_(text, uid) {
+  const s = aiShopParse_(text, uid) || regexShopParse_(text);
+  if (!s || s.notShop) return s;
+  const raw = String(text);
+  const inText = u => !!u && raw.indexOf(u) >= 0;
+  const digits = x => String(x || '').replace(/\D/g, '');
+  if (!inText(s.g)) s.g = '';
+  if (!inText(s.line)) s.line = '';
+  if (!inText(s.ig)) s.ig = '';
+  if (s.lineId && raw.toLowerCase().indexOf(String(s.lineId).replace(/^@/, '').toLowerCase()) < 0) s.lineId = '';
+  if (s.tel && digits(raw).indexOf(digits(s.tel)) < 0) s.tel = '';
+  s.links = (s.links || []).filter(l => l && inText(l[1]) && l[1] !== s.g && l[1] !== s.line && l[1] !== s.ig);
+  return s;
+}
+
+const SHOP_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['is_shop', 'name', 'category', 'emoji', 'offer', 'note', 'address', 'map_url', 'phone', 'line_id', 'line_url', 'ig_url', 'other_links'],
+  properties: {
+    is_shop: { type: 'boolean' }, name: { type: 'string' }, category: { type: 'string', enum: ['food', 'life', 'car', 'resident'] },
+    emoji: { type: 'string' }, offer: { type: 'string' }, note: { type: 'string' }, address: { type: 'string' }, map_url: { type: 'string' },
+    phone: { type: 'string' }, line_id: { type: 'string' }, line_url: { type: 'string' }, ig_url: { type: 'string' },
+    other_links: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['label', 'url'],
+      properties: { label: { type: 'string' }, url: { type: 'string' } } } },
+  },
+};
+
+const SHOP_PARSE_PROMPT = [
+  '你是里辦的資料整理助手。把 LINE 管理群貼的「特約商家公告」整理成網站特約商家名單的欄位。',
+  '- 只用公告裡寫的資訊，不要自己補充或猜測；沒寫的欄位填空字串。網址、電話、LINE ID 要和公告一字不差。',
+  '- name：店名（含分店，例如「MORNI早午餐｜和順店」），去掉「@商家｜」這類前綴。',
+  '- offer：專屬優惠內容，照公告整理成一句話（可以補標點，不要改內容、不要加條件）。',
+  '- note：使用限制、營業時間、適用期限等補充；沒有就空字串。',
+  '- address：完整地址。map_url：Google 地圖網址。phone：電話。line_id：官方 LINE ID（例如 @795onzxq）。line_url：LINE 加好友網址（line.me 或 lin.ee）。ig_url：Instagram 網址。other_links：其他網址（官網、菜單等），label 用 2–6 個字。',
+  '- category：food＝餐飲、飲料、烘焙、小吃；car＝汽機車、交通、接送；resident＝出示里民證件才有的優惠（例如醫院、溫泉）；其他都是 life（醫療、美容、教育、居家、寵物、洗衣…）。',
+  '- emoji：一個代表這家店的 emoji。',
+  '- is_shop：這則訊息是不是在公告特約商家；不是就 false。',
+].join('\n');
+
+function aiShopParse_(text, uid) {
+  const key = prop_('ANTHROPIC_API_KEY');
+  if (!key) return null;
+  try {
+    const res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'server-side-fallback-2026-07-01' },
+      payload: JSON.stringify({
+        model: prop_('AI_MODEL') || AI_DEFAULT_MODEL,
+        max_tokens: 8000,
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: SHOP_SCHEMA } },
+        fallbacks: 'default',
+        system: SHOP_PARSE_PROMPT,
+        messages: [{ role: 'user', content: String(text).slice(0, 3000) }],
+      }),
+      muteHttpExceptions: true,
+    });
+    if (res.getResponseCode() !== 200) {
+      console.error('Claude API（特約整理）' + res.getResponseCode() + '：' + res.getContentText().slice(0, 300));
+      return null;
+    }
+    const data = JSON.parse(res.getContentText());
+    if (data.stop_reason !== 'end_turn') return null;   // refusal / max_tokens：改用固定格式解析
+    const j = JSON.parse((data.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
+    logAi_(uid, '特約整理', String(text).slice(0, 200), j.name + '｜' + j.offer, data.usage);
+    if (!j.is_shop) return { notShop: true };
+    return { c: j.category, em: j.emoji, n: j.name, o: j.offer, note: j.note, a: j.address, g: j.map_url, tel: j.phone,
+      lineId: j.line_id, line: j.line_url, ig: j.ig_url, links: (j.other_links || []).map(l => [l.label, l.url]) };
+  } catch (err) {
+    console.error('Claude 整理特約失敗：' + err.message);
+    return null;
+  }
+}
+
+/** 固定格式（社群新增特約商公告）的解析，沒有 Claude 金鑰或 Claude 失敗時用。 */
+function regexShopParse_(text) {
+  const raw = String(text);
+  const lines = raw.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  const url = re => (raw.match(re) || [''])[0];
+  const after = re => { const m = raw.match(re); return m ? m[1].trim() : ''; };
+  let n = after(/@?商家\s*[｜|:：]\s*([^\n]+)/);
+  if (!n) n = (lines.find(l => !/特約|https?:|優惠|[:：]/.test(l) && !/(市|區).+[路街道].*\d+號/.test(l)) || '');
+  const a = (lines.find(l => /(縣|市|區).*[路街道巷].*\d+.*號/.test(l) && !/https?:/.test(l)) || '').replace(/^(地址|店址)\s*[:：]\s*/, '');
+  const offerM = raw.match(/(?:專屬)?優惠(?:內容)?\s*[:：]\s*([\s\S]+)$/);
+  const o = offerM ? offerM[1].split(/\r?\n/).map(x => x.trim()).filter(Boolean).join(' ') : '';
+  const tel = after(/(?:聯絡方式|聯絡電話|電話|TEL)\s*[:：]\s*([0-9()\-#\s]{6,20})/i).trim();
+  const lineId = after(/line\s*(?:帳號|ID|id)?\s*[:：]\s*(@?[\w.\-]{3,30})/i);
+  const all = n + ' ' + o;
+  const c = /車|汽|機車|接送|輪胎|洗車|駕訓/.test(all) ? 'car' : /餐|食|飲|茶|咖啡|麵|飯|鍋|烘焙|麵包|甜點|小吃|肉|壽司|料理|酒|冰|早午/.test(all) ? 'food' : 'life';
+  const em = c === 'car' ? '🚗' : c === 'life' ? '🏪' : /早午|早餐|吐司/.test(all) ? '🥪' : /咖啡/.test(all) ? '☕' : /茶|飲/.test(all) ? '🧋' :
+    /鍋/.test(all) ? '🍲' : /麵/.test(all) ? '🍜' : /烘焙|麵包/.test(all) ? '🥐' : /甜點|蛋糕/.test(all) ? '🍰' : '🍽️';
+  return { c, em, n: n.replace(/^@/, '').trim(), o, note: '', a, g: url(/https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl\/maps|g\.co\/kgs|(?:www\.)?google\.com\/maps)[^\s]*/),
+    tel, lineId, line: url(/https?:\/\/(?:line\.me|lin\.ee)\/[^\s]+/), ig: url(/https?:\/\/(?:www\.)?instagram\.com\/[^\s]+/), links: [] };
+}
+
+/** 里長「公告特約 店名」：發官方 LINE 公告給所有好友（文字＋看特約商家按鈕），記到「公告」。 */
+function announceShop_(name) {
+  let r;
+  try { r = ccsApi_('/api/shops', { action: 'get', name }); } catch (err) { return '網站忙線中，請稍後再試：' + err.message; }
+  if (!r.ok) return '⚠️ ' + r.error;
+  const s = r.shop, title = '新增特約商家｜' + s.n;
+  const body = ['🛍 廍子里大小事｜新增特約商家', '', `${s.em} ${s.n}`, `🎁 ${s.o}`]
+    .concat(s.note ? ['※ ' + s.note] : []).concat(s.a ? ['📍 ' + s.a] : []).concat(s.g ? [s.g] : [])
+    .concat(s.tel ? ['📞 ' + s.tel] : []).concat(s.line ? ['💬 ' + (s.lineLabel || 'LINE') + (/^https:\/\/line\.me\/R\/ti\/p\//.test(s.line) ? '' : '：' + s.line)] : [])
+    .concat(['', '更多特約商家優惠，點下方按鈕看 👇']).join('\n');
+  try {
+    broadcastAll_([text_(body), linkButton_('特約商家優惠一次看 👇', '看特約商家', r.url)]);
+  } catch (err) {
+    return '❌ 公告沒有發出去：' + err.message;
+  }
+  append_('公告', { id: newId_('A'), createdAt: now_(), target: 'all', title, content: body, recipients: '所有好友' });
+  const q = messageQuota_();
+  return `✅ 已發官方 LINE 公告「${title}」給所有好友` + (q && q.limit ? `\n本月訊息已用 ${q.used}/${q.limit} 則` : '');
 }
 
 // ───────────────────────── 變裝大賽評審 ─────────────────────────
