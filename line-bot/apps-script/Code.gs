@@ -2587,6 +2587,22 @@ SCHEDULED_BROADCASTS.push({ id: 'open-spots-1011', at: '2026-10-11T15:00:00+08:0
   button: { text: '🌀 戰鬥陀螺賽還有名額，馬上報名 👇', label: '立即報名', uri: CCS_BASE + '/signup/beyblade/' } });
 // 10/11 律師諮詢隱密性改版：預約資料改私訊給律師，先查三位律師加官方 LINE 好友了沒（只通知里長）
 SCHEDULED_BROADCASTS.push({ id: 'lawyer-friend-check-1011', at: '2026-10-11T15:40:00+08:00', title: '律師好友檢查', kind: 'lawyerFriends' });
+// 10/13 里長指示：社群新增特約商家 MORNI早午餐｜和順店，發官方 LINE 公告（部署時就發出）
+SCHEDULED_BROADCASTS.push({ id: 'shop-morni-1013', at: '2026-10-13T20:25:00+08:00', title: '新增特約商家｜MORNI早午餐 和順店',
+  text: [
+    '🛍 廍子里大小事｜新增特約商家',
+    '',
+    '🥪 MORNI早午餐｜和順店',
+    '🎁 出示社群畫面，內用或外帶滿 200 元享 95 折',
+    '⏰ 營業時間 06:00–14:00',
+    '📍 臺中市北屯區和順路497號',
+    'https://maps.app.goo.gl/RM9waXebB8KoGshG6',
+    '📞 04-22399709',
+    '💬 店家官方 LINE：@795onzxq',
+    '',
+    '菜單和全部 43 家特約商家優惠，點下方按鈕看 👇',
+  ].join('\n'),
+  button: { text: 'MORNI 菜單＋43 家特約商家優惠 👇', label: '看特約商家', uri: CCS_BASE + '/shops/?q=MORNI' } });
 const BROADCAST_WINDOW_MS = 3 * 3600e3;
 
 /** 每位上架律師能不能收到官方 LINE 私訊（有加好友才查得到個人資料）。 */
