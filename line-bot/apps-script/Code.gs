@@ -3132,6 +3132,11 @@ const SCHEDULED_BROADCASTS = [
 SCHEDULED_BROADCASTS.push({ id: 'mgmt-help-1013', at: '2026-10-13T21:55:00+08:00', title: '管理群網站功能說明', kind: 'mgmtGroup',
   text: ['各位夥伴好 🙌', '官方帳號「全全」現在可以幫大家直接管理活動網站，群組裡每個人都可以用！', '指令前面加「全全」或 @官方帳號 👇'].concat(MGMT_HELP_TEXT.split('\n').slice(2))
     .concat(['', '不會用就在群組打「全全 網站功能」，隨時叫出這份說明 😊', '', '里長參選人莊晴全 敬上']).join('\n') });
+// 里長 10/14：「回報」換成快速報修 → 里辦服務分頁左上「回報」（工作人員專用）改成「快速報修」（萬聖節分頁原本就有）
+SCHEDULED_BROADCASTS.push({ id: 'richmenu-service-v4-1014', at: '2026-10-14T17:00:00+08:00', title: '里辦服務分頁加上快速報修', kind: 'richMenuSwap',
+  swap: { alias: 'lizhang-tab-service', name: '里辦主選單v4-服務分頁(快速報修)',
+    image: 'https://d75405-stack.github.io/financial-report-system/line-bot/web/richmenu-service-v4.jpg',
+    replace: { '回報': { type: 'message', label: '快速報修', text: '快速報修' } } } });
 // 里長 10/14：「LINE 選單也加上快速報修」→ 先匯出現在的兩頁切換選單（設定＋圖片）到雲端硬碟
 SCHEDULED_BROADCASTS.push({ id: 'richmenu-export-1014b', at: '2026-10-14T16:35:00+08:00', title: '匯出圖文選單', kind: 'richMenuExport' });
 // 里長 10/14：「加到網站選單也發公告」→ 快速報修開放公告（發給所有好友）
@@ -4123,6 +4128,16 @@ function runScheduledBroadcasts() {
           `目前未繳費共 ${r.total} 筆。` + (r.late ? `（其中 ${r.late} 筆是 10/16 起報名、活動當天報到時繳，不算逾期）` : '')]
           .concat(n ? ['', `另有 ${n} 筆的報名者沒在官方 LINE 傳過「報名確認」，沒辦法用 LINE 通知：`]
           .concat(missed.map(k => `・${k}：${r.missed[k]} 筆`), '名單（含電話）可在試算表「活動報名名單」篩選「未繳」查看（狀態是「候補」的不用繳）。') : []).join('\n'));
+        return;
+      }
+      if (b.kind === 'richMenuSwap') {
+        // 兩頁切換選單的某一頁換新圖、換掉一格按鈕：建新選單 → 上傳圖片 → 別名指到新選單（舊選單留著，切換過的人下次點分頁就換新的）
+        let r;
+        try { r = swapRichMenuPage_(b.swap); } catch (err) { r = { ok: false, msg: err.message }; }
+        try { append_('系統紀錄', { at: now_(), what: b.title, result: String(r.msg).slice(0, 2000) }); } catch (_) { /* 記錄失敗不影響 */ }
+        if (!r.ok && r.retry) { props.deleteProperty(key); return; }   // 圖片還沒上線：下次檢查再試
+        props.setProperty(key, (r.ok ? 'sent ' : 'failed ') + now_());
+        notifyOwner_(r.ok ? `✅ LINE 選單已更新：${b.title}\n（剛剛已經打開選單的人，點一下上面的分頁就會看到新的）` : `⚠️ LINE 選單沒有更新成功：${r.msg}`);
         return;
       }
       if (b.kind === 'richMenuExport') {
@@ -5453,6 +5468,46 @@ function tabbedRichMenu_() {
   if (!res.ok) return null;
   const list = (JSON.parse(res.body).aliases || []).filter(a => RICH_MENU_ALIASES.indexOf(a.richMenuAliasId) >= 0);
   return list.length ? list : null;
+}
+
+/**
+ * 換掉兩頁切換選單的其中一頁：swap = { alias, name, image（網址）, replace: { 舊按鈕名稱: 新動作 } }。
+ * 用原本那一頁的按鈕位置建新選單、上傳新圖片，再把別名指到新選單；原本是預設選單的話也換成新的。
+ */
+function swapRichMenuPage_(swap) {
+  const al = lineApi_('richmenu/alias/' + swap.alias, null, 'get');
+  if (!al.ok) return { ok: false, msg: '找不到選單分頁 ' + swap.alias };
+  const oldId = JSON.parse(al.body).richMenuId;
+  const meta = lineApi_('richmenu/' + oldId, null, 'get');
+  if (!meta.ok) return { ok: false, msg: '讀不到原本的選單設定' };
+  const m = JSON.parse(meta.body);
+  let changed = 0;
+  const areas = m.areas.map(a => {
+    const nw = swap.replace[a.action.label];
+    if (!nw) return a;
+    changed++;
+    return { bounds: a.bounds, action: nw };
+  });
+  if (!changed) return { ok: false, msg: '原本的選單裡找不到要換的按鈕（' + Object.keys(swap.replace).join('、') + '）' };
+  const img = UrlFetchApp.fetch(swap.image, { muteHttpExceptions: true });
+  if (img.getResponseCode() !== 200) return { ok: false, retry: true, msg: '新圖片還沒上線（HTTP ' + img.getResponseCode() + '），稍後再試' };
+  const created = lineApi_('richmenu', { size: m.size, selected: m.selected, name: swap.name, chatBarText: m.chatBarText, areas });
+  if (!created.ok) return { ok: false, msg: '建立新選單失敗：' + created.body.slice(0, 200) };
+  const newId = JSON.parse(created.body).richMenuId;
+  const up = UrlFetchApp.fetch('https://api-data.line.me/v2/bot/richmenu/' + newId + '/content', {
+    method: 'post', contentType: /\.png$/i.test(swap.image) ? 'image/png' : 'image/jpeg',
+    headers: { Authorization: 'Bearer ' + prop_('LINE_CHANNEL_ACCESS_TOKEN') }, payload: img.getBlob().getBytes(), muteHttpExceptions: true,
+  });
+  if (up.getResponseCode() >= 300) {
+    lineApi_('richmenu/' + newId, null, 'delete');
+    return { ok: false, msg: '上傳選單圖片失敗：' + up.getContentText().slice(0, 200) };
+  }
+  const moved = lineApi_('richmenu/alias/' + swap.alias, { richMenuId: newId });
+  if (!moved.ok) return { ok: false, msg: '選單分頁切換失敗：' + moved.body.slice(0, 200) };
+  const def = lineApi_('user/all/richmenu', null, 'get');
+  const wasDefault = def.ok && JSON.parse(def.body).richMenuId === oldId;
+  if (wasDefault) lineApi_('user/all/richmenu/' + newId, null);
+  return { ok: true, msg: `${swap.alias}：${oldId} → ${newId}${wasDefault ? '（也設為預設選單）' : ''}，換了 ${changed} 格` };
 }
 
 /** 把目前的圖文選單（兩頁切換選單的每一頁＋預設選單）的設定 JSON 和圖片存到雲端硬碟「圖文選單備份」資料夾。 */
