@@ -1647,17 +1647,19 @@ function lawyerOpen_() {
  * bookFrom：開放預約的第一天，有填才會自動開時段（見 ensureLawyerSlots_）。
  */
 const LAWYER_PHOTO_BASE = 'https://d75405-stack.github.io/financial-report-system/line-bot/web/lawyers/';
+// 週三、週四諮詢地點（里長 10/14：裕國豐展 高爾夫球室，太順路60號）
+const LAWYER_YG_MAP = 'https://www.google.com/maps/search/?api=1&query=%E5%8F%B0%E4%B8%AD%E5%B8%82%E5%8C%97%E5%B1%AF%E5%8D%80%E5%A4%AA%E9%A0%86%E8%B7%AF60%E8%99%9F';
 const LAWYER_SEED = [
   { lawyerId: 'L1', name: '李佩珊', title: '律師', firm: '宣品法律事務所',
     specialty: '婚姻、親屬、繼承、土地分割、不動產爭議、刑事詐欺、侵占等',
     experience: '法扶家事專科律師\n國語日報法律專欄作家\n台中監獄法治教育講師\n彰化看守所外部審查委員',
     bio: '', photo: 'L1.jpg', order: 2, status: '上架', schedule: '每週三 18:00–20:00',
-    place: '裕國豐展 高爾夫球室', placeUrl: 'https://www.google.com/maps/search/?api=1&query=%E5%8F%B0%E4%B8%AD%E5%B8%82%E5%8C%97%E5%B1%AF%E5%8D%80%E5%A4%AA%E9%A0%86%E8%B7%AF60%E8%99%9F', bookFrom: '2026-10-21', version: 5 },
+    place: '裕國豐展 高爾夫球室', placeUrl: LAWYER_YG_MAP, bookFrom: '2026-10-21', version: 5 },
   { lawyerId: 'L2', name: '郭乃瑩', title: '律師', firm: '宣品法律事務所',
     specialty: '婚姻、親屬、繼承、財產糾紛、不動產爭議、工程案件、勞資糾紛案件、校園性別事件',
     experience: '法扶勞動專科律師\n台中市校園性別事件調查人才庫\n職場霸凌調查人才庫資格\n教保相關人員違法事件調查人才庫資格',
     bio: '', photo: 'L2.jpg', order: 3, status: '上架', schedule: '每週四 18:00–20:00',
-    place: '裕國豐展 高爾夫球室', placeUrl: 'https://www.google.com/maps/search/?api=1&query=%E5%8F%B0%E4%B8%AD%E5%B8%82%E5%8C%97%E5%B1%AF%E5%8D%80%E5%A4%AA%E9%A0%86%E8%B7%AF60%E8%99%9F', bookFrom: '2026-10-22', version: 5 },
+    place: '裕國豐展 高爾夫球室', placeUrl: LAWYER_YG_MAP, bookFrom: '2026-10-22', version: 5 },
   { lawyerId: 'L3', name: '陳沂裴', title: '律師', firm: '宣品法律事務所',
     specialty: '一般民事、刑事案件、婚姻、親屬、繼承糾紛',
     experience: '法務部矯正署臺中監獄法治教育講師\n法務部矯正署臺中戒治所法治教育講師',
@@ -3154,6 +3156,46 @@ SCHEDULED_BROADCASTS.push({ id: 'richmenu-service-v4-1014', at: '2026-10-14T17:0
   swap: { alias: 'lizhang-tab-service', name: '里辦主選單v4-服務分頁(快速報修)',
     image: 'https://d75405-stack.github.io/financial-report-system/line-bot/web/richmenu-service-v4.jpg',
     replace: { '回報': { type: 'message', label: '快速報修', text: '快速報修' } } } });
+// 里長 10/14：週三、週四律師諮詢地點確定（裕國豐展 高爾夫球室）→「1、2都要」：公告給所有好友＋通知律師群組
+SCHEDULED_BROADCASTS.push({ id: 'lawyer-wedthu-group-1014', at: '2026-10-14T18:20:00+08:00', title: '週三、週四諮詢地點與開放預約', kind: 'lawyerGroup',
+  text: [
+    '各位律師好 🙏',
+    '週三、週四的免費法律諮詢地點確定了，已經開放里民預約：',
+    '',
+    '📍 裕國豐展 高爾夫球室（台中市北屯區太順路60號）',
+    LAWYER_YG_MAP,
+    '🗓 週三 李佩珊 律師：10/21 起，每週三 18:00–20:00',
+    '🗓 週四 郭乃瑩 律師：10/22 起，每週四 18:00–20:00',
+    '每次 30 分鐘、每晚 4 個時段；里民需提前 7 天預約。',
+    '',
+    "週二陳沂裴律師一樣在几乎食間 Jeff's kitchen。",
+    '有人預約時會在這個群組通知；在群組輸入「預約狀況」可以看預約情形，律師私訊官方 LINE 輸入「預約狀況」可看自己的完整名單。',
+    '',
+    '辛苦了，謝謝律師們！',
+    '里長參選人莊晴全 敬上',
+  ].join('\n') });
+SCHEDULED_BROADCASTS.push({ id: 'lawyer-wedthu-open-1014', at: '2026-10-14T18:20:00+08:00', title: '免費律師諮詢｜週三、週四開放預約',
+  text: [
+    '里長參選人莊晴全 × 宣品法律事務所，提供里民免費法律諮詢 ⚖️',
+    '週三、週四的地點確定了，現在開放預約！',
+    '',
+    '🧑‍⚖️ 週三 李佩珊 律師（10/21 起）',
+    '專長：婚姻、親屬、繼承、土地分割、不動產爭議、刑事詐欺、侵占等',
+    '🧑‍⚖️ 週四 郭乃瑩 律師（10/22 起）',
+    '專長：婚姻、親屬、繼承、財產糾紛、不動產爭議、工程案件、勞資糾紛、校園性別事件',
+    '🗓 晚上 6:00–8:00',
+    '📍 裕國豐展 高爾夫球室（太順路60號）',
+    LAWYER_YG_MAP,
+    '',
+    "週二 陳沂裴 律師照常在几乎食間 Jeff's kitchen。",
+    '',
+    '⏱ 每次 30 分鐘，每晚 4 個名額',
+    '🔒 隱密性高：只有您與律師一對一諮詢，無他人介入',
+    '📌 需提前 7 天預約，不開放當天預約（10/21 週三場最晚今天預約、10/22 週四場最晚明天預約）',
+    '',
+    '👉 點下方「立即預約」，或在這裡輸入「律師諮詢」',
+  ].join('\n'),
+  button: { text: '免費律師諮詢，選時段預約 👇', label: '立即預約', page: 'booking' } });
 // 里長 10/14：「LINE 選單也加上快速報修」→ 先匯出現在的兩頁切換選單（設定＋圖片）到雲端硬碟
 SCHEDULED_BROADCASTS.push({ id: 'richmenu-export-1014b', at: '2026-10-14T16:35:00+08:00', title: '匯出圖文選單', kind: 'richMenuExport' });
 // 里長 10/14：「加到網站選單也發公告」→ 快速報修開放公告（發給所有好友）
@@ -4172,6 +4214,17 @@ function runScheduledBroadcasts() {
         const msg = setRepairOpen_(true);
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_('🔧 ' + msg + '\n\n要暫停：私訊輸入「關閉快速報修」。');
+        return;
+      }
+      if (b.kind === 'lawyerGroup') {
+        // 發到律師群組（「全全 設為律師群組」設定的那個群組）
+        if (!notifyLawyerGroup_(b.text)) {
+          props.setProperty(key, 'skipped ' + now_() + ' 沒有律師群組或發送失敗');
+          notifyOwner_(`⚠️「${b.title}」沒有發出：找不到律師群組（請在律師群組輸入「全全 設為律師群組」），或發送失敗。`);
+          return;
+        }
+        props.setProperty(key, 'sent ' + now_());
+        notifyOwner_(`✅ 已在律師群組發布「${b.title}」`);
         return;
       }
       if (b.kind === 'mgmtGroup') {
