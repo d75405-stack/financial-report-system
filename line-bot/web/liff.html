@@ -6,6 +6,9 @@
 <title>里辦公處服務</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<!-- 快速報修的地圖（可以拖曳定位點）：Leaflet＋OpenStreetMap -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script src="config.js"></script>
 <script src="common.js"></script>
@@ -80,14 +83,17 @@
       <p class="hint">請寫路名、巷口或地標（不用寫門牌樓層）。地點會公開在網站的處理進度。</p>
       <div class="row">
         <button type="button" class="ghost" id="btn-repair-gps" style="flex:0 0 auto">📍 附上目前位置</button>
-        <span class="muted" id="repair-gps-state"></span>
+        <button type="button" class="ghost" id="btn-repair-pick" style="flex:0 0 auto">🗺️ 在地圖上選</button>
       </div>
+      <p class="muted" id="repair-gps-state"></p>
+      <div id="repair-map" class="map hidden" aria-label="報修位置地圖"></div>
+      <p class="hint hidden" id="repair-map-hint">👆 位置不準的話，<b>拖曳紅色定位點</b>或<b>點地圖</b>移到正確的地方。<a href="#" id="repair-gps-clear">不附位置</a></p>
       <input type="hidden" name="gps" id="repair-gps">
       <label>狀況說明</label>
       <textarea name="content" required maxlength="1000" placeholder="例：路燈晚上不亮已經三天"></textarea>
-      <label>照片 <span class="hint">（選填，一張）</span></label>
-      <input type="file" accept="image/*" id="repair-photo">
-      <img id="repair-photo-preview" class="preview hidden" alt="照片預覽">
+      <label>照片 <span class="hint">（選填，最多 4 張，可以一次選多張）</span></label>
+      <input type="file" accept="image/*" id="repair-photo" multiple>
+      <div id="repair-photos" class="thumbs"></div>
       <label>姓名</label>
       <input name="name" id="repair-name" required maxlength="30">
       <label>聯絡電話 <span class="hint">（選填，方便服務處聯絡您）</span></label>
@@ -275,49 +281,104 @@ async function loadReports() {
 }
 
 // 快速報修
-let repairPhoto = '';
+// 照片：最多 4 張（里長 10/14），每張縮到 1280 px；可以分幾次選，點 ✕ 拿掉
+const REPAIR_MAX_PHOTOS = 4;
+let repairPhotos = [];
+function renderRepairPhotos() {
+  $('#repair-photos').innerHTML = repairPhotos.map((src, i) =>
+    `<div class="thumb"><img src="${src}" alt="照片 ${i + 1}"><button type="button" class="thumb-x" data-i="${i}" aria-label="拿掉第 ${i + 1} 張">✕</button></div>`).join('') +
+    (repairPhotos.length ? `<p class="hint" style="flex-basis:100%">已選 ${repairPhotos.length} / ${REPAIR_MAX_PHOTOS} 張</p>` : '');
+}
+$('#repair-photos').addEventListener('click', e => {
+  const b = e.target.closest('.thumb-x');
+  if (!b) return;
+  repairPhotos.splice(Number(b.dataset.i), 1);
+  renderRepairPhotos();
+});
 $('#repair-photo').addEventListener('change', async e => {
-  const file = e.target.files[0];
-  repairPhoto = '';
-  $('#repair-photo-preview').classList.add('hidden');
-  if (!file) return;
-  try {
-    repairPhoto = await resizeImage(file, 1280);
-    $('#repair-photo-preview').src = repairPhoto;
-    $('#repair-photo-preview').classList.remove('hidden');
-  } catch (err) {
-    toast(err.message, true);
+  const files = [].slice.call(e.target.files || []);
+  e.target.value = '';   // 同一張可以再選、可以分次加
+  const room = REPAIR_MAX_PHOTOS - repairPhotos.length;
+  if (files.length > room) toast(`照片最多 ${REPAIR_MAX_PHOTOS} 張，${room > 0 ? '只加入前 ' + room + ' 張' : '已經滿了'}`, true);
+  for (const file of files.slice(0, Math.max(0, room))) {
+    try {
+      repairPhotos.push(await resizeImage(file, 1280));
+      renderRepairPhotos();
+    } catch (err) {
+      toast(err.message, true);
+    }
   }
 });
 
+// 位置：GPS 或在地圖上選；定位點可以拖曳、也可以點地圖移過去（里長 10/14：「地圖定位點可以另外移動」）
+const REPAIR_DEFAULT_CENTER = [24.1617, 120.7261];   // 廍子里（惠宇開朗一帶）
+let repairMap = null, repairPin = null;
+function setRepairGps(lat, lng, how) {
+  $('#repair-gps').value = lat.toFixed(6) + ',' + lng.toFixed(6);
+  $('#repair-gps-state').textContent = '✅ 已附上位置' + (how ? '（' + how + '）' : '') + '，不會公開';
+}
+function showRepairMap(lat, lng, zoom) {
+  $('#repair-map').classList.remove('hidden');
+  $('#repair-map-hint').classList.remove('hidden');
+  if (!window.L) {   // 地圖載不到（網路慢）：還是附上 GPS
+    $('#repair-map').classList.add('hidden');
+    $('#repair-map-hint').classList.add('hidden');
+    return;
+  }
+  if (!repairMap) {
+    repairMap = L.map('repair-map', { zoomControl: true, attributionControl: true }).setView([lat, lng], zoom || 18);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(repairMap);
+    const icon = L.divIcon({ className: 'pin', html: '<span></span>', iconSize: [30, 42], iconAnchor: [15, 40] });
+    repairPin = L.marker([lat, lng], { draggable: true, icon, autoPan: true }).addTo(repairMap);
+    repairPin.on('dragend', () => { const p = repairPin.getLatLng(); setRepairGps(p.lat, p.lng, '已手動調整'); });
+    repairMap.on('click', ev => { repairPin.setLatLng(ev.latlng); setRepairGps(ev.latlng.lat, ev.latlng.lng, '已手動調整'); });
+  } else {
+    repairMap.setView([lat, lng], zoom || repairMap.getZoom());
+    repairPin.setLatLng([lat, lng]);
+  }
+  setTimeout(() => repairMap.invalidateSize(), 50);
+}
+function hideRepairMap() {
+  $('#repair-gps').value = '';
+  $('#repair-gps-state').textContent = '';
+  $('#repair-map').classList.add('hidden');
+  $('#repair-map-hint').classList.add('hidden');
+}
 $('#btn-repair-gps').addEventListener('click', () => {
-  if (!navigator.geolocation) return toast('此裝置不支援定位', true);
+  if (!navigator.geolocation) return toast('此裝置不支援定位，可以改用「在地圖上選」', true);
   $('#repair-gps-state').textContent = '定位中…';
   navigator.geolocation.getCurrentPosition(
     p => {
-      $('#repair-gps').value = p.coords.latitude.toFixed(6) + ',' + p.coords.longitude.toFixed(6);
-      $('#repair-gps-state').textContent = '✅ 已附上位置（不會公開）';
+      setRepairGps(p.coords.latitude, p.coords.longitude, '目前位置');
+      showRepairMap(p.coords.latitude, p.coords.longitude, 18);
     },
     () => {
       $('#repair-gps-state').textContent = '';
-      toast('無法取得位置，請確認已允許定位', true);
+      toast('無法取得位置，可以改用「在地圖上選」', true);
     },
     { enableHighAccuracy: true, timeout: 10000 },
   );
 });
+$('#btn-repair-pick').addEventListener('click', () => {
+  const cur = $('#repair-gps').value.split(',').map(Number);
+  const [lat, lng] = cur.length === 2 && !isNaN(cur[0]) ? cur : REPAIR_DEFAULT_CENTER;
+  showRepairMap(lat, lng, cur.length === 2 && !isNaN(cur[0]) ? 18 : 16);
+  if (!$('#repair-gps').value) $('#repair-gps-state').textContent = '👇 點地圖或拖曳紅點，放到要報修的地方';
+});
+$('#repair-gps-clear').addEventListener('click', e => { e.preventDefault(); hideRepairMap(); });
 
 $('#form-repair').addEventListener('submit', e => {
   e.preventDefault();
   withBusy(e.submitter, async () => {
-    const r = await call('submitRepair', Object.assign(formData(e.target), { photo: repairPhoto }));
+    // photo（第一張）給還沒更新的舊版後端用；新版看 photos
+    const r = await call('submitRepair', Object.assign(formData(e.target), { photos: repairPhotos, photo: repairPhotos[0] || '' }));
     const name = e.target.name.value;
     e.target.reset();
     e.target.name.value = name;
-    repairPhoto = '';
-    $('#repair-gps').value = '';
-    $('#repair-gps-state').textContent = '';
-    $('#repair-photo-preview').classList.add('hidden');
-    toast(r.photoSaved === false ? `已送出（編號 ${r.id}），但照片沒存成功，請改用聊天室傳照片` : `已送出報修，編號 ${r.id}，謝謝您！`, r.photoSaved === false);
+    repairPhotos = [];
+    renderRepairPhotos();
+    hideRepairMap();
+    toast(r.photoSaved === false ? `已送出（編號 ${r.id}），但有照片沒存成功，請改用聊天室傳照片` : `已送出報修，編號 ${r.id}，謝謝您！`, r.photoSaved === false);
     loadRepairs();
   });
 });

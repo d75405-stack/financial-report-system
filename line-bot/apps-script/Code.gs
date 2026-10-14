@@ -437,6 +437,9 @@ const REPAIR_REPS = [
 const REPAIR_SELF = { key: 'S', name: '莊晴全服務團隊', short: '莊晴全團隊', re: /莊晴全|自己|團隊/ };
 const REPAIR_PAGE_URL = 'https://ccs2024taiwan.pages.dev/repair/';
 const REPAIR_DAILY_LIMIT = 5;
+// 一件報修最多幾張照片（里長 10/14：「照片可以多張照片上傳」）。照片 ID 用逗號串起來存在 photoId 欄
+const REPAIR_MAX_PHOTOS = 4;
+const repairPhotoIds_ = r => String((r && r.photoId) || '').split(',').map(x => x.trim()).filter(Boolean);
 // 開放前（里長 10/13：「先不要開放，我先串聯好」）：里民輸入「報修」回覆建置中，表單和網站進度也不開放；
 // 里長和已綁定的服務處窗口照常可以用（綁定、測試流程）。里長私訊「開放快速報修」就開放（指令碼屬性 REPAIR_OPEN）。
 const REPAIR_CLOSED_TEXT = '🔧 快速報修功能建置中，尚未開放，敬請期待！';
@@ -523,19 +526,23 @@ function submitRepair_(user, req) {
   const mineToday = all.filter(r => r.userId === user.userId && String(r.createdAt).slice(0, 10) === today).length;
   if (mineToday >= REPAIR_DAILY_LIMIT) throw new Error(`今天已經報修 ${mineToday} 件了，其他的請明天再報，或在聊天室留言給我們`);
   const id = 'F' + ('000' + (all.reduce((mx, r) => Math.max(mx, parseInt(String(r.id).slice(1), 10) || 0), 0) + 1)).slice(-4);
-  let photoUrl = '', photoId = '', photoError = '';
-  if (req.photo) {
-    const blob = decodePhoto_(id, req.photo);
+  const photos = (Array.isArray(req.photos) ? req.photos : req.photo ? [req.photo] : []).filter(Boolean);
+  if (photos.length > REPAIR_MAX_PHOTOS) throw new Error(`照片最多 ${REPAIR_MAX_PHOTOS} 張`);
+  const blobs = photos.map((ph, i) => decodePhoto_(id + (photos.length > 1 ? '-' + (i + 1) : ''), ph));   // 格式不對整筆退回
+  const urls = [], ids = [];
+  let photoError = '';
+  blobs.forEach(blob => {
     // 雲端硬碟出問題時照片存不了，但報修仍要寫入，避免整筆遺失。
     try {
       const file = storePhotoFile_('報修_' + category, blob);
-      photoUrl = file.getUrl();
-      photoId = typeof file.getId === 'function' ? file.getId() : '';
+      urls.push(file.getUrl());
+      if (typeof file.getId === 'function') ids.push(file.getId());
     } catch (err) {
       photoError = String(err.message || err);
       console.error('報修照片儲存失敗：' + photoError);
     }
-  }
+  });
+  const photoUrl = urls[0] || '', photoId = ids.join(',');
   const r = {
     id, createdAt: now_(), userId: user.userId, name, phone, category, content, location, gps, photoUrl, photoId,
     status: '待分派', rep: '', assignedAt: '', repNote: '', doneAt: '', updatedAt: now_(),
@@ -543,7 +550,7 @@ function submitRepair_(user, req) {
   append_('報修', r);
   clearRepairCache_();
   notifyRepairOwner_(r, photoError ? '（照片儲存失敗：' + photoError + '）' : '');
-  return { id, photoSaved: !req.photo || !!photoUrl, page: REPAIR_PAGE_URL };
+  return { id, photoSaved: urls.length === photos.length, photos: urls.length, page: REPAIR_PAGE_URL };
 }
 
 /** 案件內容（里長、服務處看得到報修人姓名電話；公開網站沒有）。 */
@@ -573,7 +580,7 @@ function repairPhotoToken_(id) {
 
 /** 照片放在私人雲端硬碟，服務處打不開；改用這個網頁應用程式的網址顯示（帶簽章，只有拿到連結的人看得到）。 */
 function repairPhotoUrl_(r) {
-  if (!r.photoId) return '';
+  if (!repairPhotoIds_(r).length) return '';
   let base = prop_('WEBAPP_URL');
   if (!base) { try { base = ScriptApp.getService().getUrl(); } catch (_) { base = ''; } }
   return base ? base + '?photo=' + encodeURIComponent(r.id) + '&t=' + repairPhotoToken_(r.id) : '';
@@ -583,22 +590,29 @@ function repairPhotoPage_(id, token) {
   const r = readAll_('報修').find(x => x.id === id);
   const page = body => HtmlService.createHtmlOutput(body).setTitle('報修照片 ' + id)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
-  if (!r || !r.photoId || String(token || '') !== repairPhotoToken_(id)) return page('<p style="font-family:sans-serif">找不到照片，或連結已失效。</p>');
-  let blob;
-  try {
-    blob = DriveApp.getFileById(r.photoId).getBlob();
-  } catch (err) {
-    return page('<p style="font-family:sans-serif">照片檔案打不開（可能已被刪除）。</p>');
-  }
-  return page(`<div style="font-family:sans-serif;margin:8px 0">報修 ${r.id}｜${r.category}</div>` +
-    `<img alt="報修照片" style="max-width:100%;height:auto" src="data:${blob.getContentType()};base64,${Utilities.base64Encode(blob.getBytes())}">`);
+  const ids = repairPhotoIds_(r);
+  if (!r || !ids.length || String(token || '') !== repairPhotoToken_(id)) return page('<p style="font-family:sans-serif">找不到照片，或連結已失效。</p>');
+  const imgs = [];
+  let missing = 0;
+  ids.forEach((fid, i) => {
+    try {
+      const blob = DriveApp.getFileById(fid).getBlob();
+      imgs.push(`<img alt="報修照片 ${i + 1}" style="max-width:100%;height:auto;display:block;margin:0 0 12px" src="data:${blob.getContentType()};base64,${Utilities.base64Encode(blob.getBytes())}">`);
+    } catch (err) {
+      missing++;
+    }
+  });
+  if (!imgs.length) return page('<p style="font-family:sans-serif">照片檔案打不開（可能已被刪除）。</p>');
+  return page(`<div style="font-family:sans-serif;margin:8px 0">報修 ${r.id}｜${r.category}${ids.length > 1 ? `｜照片 ${ids.length} 張` : ''}</div>` + imgs.join('') +
+    (missing ? `<p style="font-family:sans-serif;color:#888">另有 ${missing} 張照片打不開（可能已被刪除）。</p>` : ''));
 }
 
 /** 報修的 Flex 卡片：內容＋看照片／地圖，footer 放動作按鈕（message 動作：點了等於傳那段文字）。 */
 function repairFlex_(r, title, buttons, withReporter) {
   const links = [{ label: '📍 看地圖', uri: repairMapUrl_(r) }];
   const photo = repairPhotoUrl_(r);
-  if (photo) links.unshift({ label: '📷 看照片', uri: photo });
+  const nPhotos = repairPhotoIds_(r).length;
+  if (photo) links.unshift({ label: nPhotos > 1 ? `📷 看照片（${nPhotos} 張）` : '📷 看照片', uri: photo });
   const btn = (action, style) => ({ type: 'button', style, height: 'sm', action });
   return {
     type: 'flex',
