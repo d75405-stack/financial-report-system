@@ -3918,6 +3918,8 @@ SCHEDULED_BROADCASTS.push({ id: 'relink-1012', at: '2026-10-12T12:05:00+08:00', 
 // 繳費截止隔天（10/16）早上 9 點：整理還沒繳費的名單（試算表）並用 LINE 傳連結給里長。（原訂 10/13，繳費延到 10/15 後改期）
 // 10/16 起報名的（晚報名）活動當天繳、不算逾期：名單另列一類，通知裡和逾期未繳分開算（見 makeUnpaidList_）
 SCHEDULED_BROADCASTS.push({ id: 'unpaid-list-1016', at: '2026-10-16T09:00:00+08:00', title: '10/16 未繳費名單', kind: 'unpaidList' });
+// 里長 10/14：「禮拜五中午 12 點通知已繳費名單」→ 名單私訊里長＋LINE 通知已繳費的報名者本人（不發管理群、聯辦群）
+SCHEDULED_BROADCASTS.push({ id: 'paid-list-1016', at: '2026-10-16T12:00:00+08:00', title: '10/16 已繳費名單', kind: 'paidList', notify: true });
 // 10/11 里長指示：推播宣傳還有名額的場次。名額在發送當下向活動網站查（openSpotsText_），只列還有名額的
 SCHEDULED_BROADCASTS.push({ id: 'open-spots-1011', at: '2026-10-11T15:00:00+08:00', title: '還有名額！北屯鬧起來報名中', kind: 'openSpots',
   button: { text: '🌀 戰鬥陀螺賽還有名額，馬上報名 👇', label: '立即報名', uri: CCS_BASE + '/signup/beyblade/' } });
@@ -4197,6 +4199,84 @@ function makeUnpaidList_(title) {
   const of = rule => rows.filter(r => payRule_(r) === rule);
   return { url: ss.getUrl(), total: out.length, byActivity: countBy_(of('deadline'), '活動'), overdue: of('deadline').length,
     late: countBy_(of('late'), '活動'), lateTotal: of('late').length, promoted: of('promoted').length };
+}
+
+// ───────────────────────── 已繳費名單（10/16 中午） ─────────────────────────
+// 里長 10/14：「禮拜五中午 12 點通知已繳費名單」→ 名單傳給里長（私訊）＋用 LINE 通知每位已繳費的報名者本人。
+
+// 各場次／梯次的時間地點（場次名稱照活動網站報名表的值）
+const PAID_SESSION_INFO = {
+  '10/17上午 開放組(惠宇開朗)': '10/17(六) 09:30–11:30 開放組｜惠宇開朗（太原路三段1299號）',
+  '10/17下午 廍子陀螺王(惠宇開朗)': '10/17(六) 14:00–16:00 廍子陀螺王｜惠宇開朗（太原路三段1299號）',
+  '10/18上午 親子賽(裕國豐展)': '10/18(日) 09:30–11:30 親子賽｜裕國豐展（太順路60號）',
+  '10/18下午 變裝限定場(裕國豐展)': '10/18(日) 14:00–16:00 變裝限定場｜裕國豐展（太順路60號）',
+};
+const PAID_EVENT_INFO = {
+  '🌀 陀螺賽': { name: '🌀 戰鬥陀螺賽', note: '當天請提早到場報到，領取捐款收據和比賽手環，憑手環入場比賽。' },
+  '🎭 變裝大賽': { name: '🎭 百鬼嘉年華變裝大賽', when: '10/18(日) 18:00｜裕國豐展（太順路60號）', note: '17:30–17:50 報到，完成報到就退還保證金。' },
+  '🧼 手工皂DIY': { name: '🧼 甜點造型手工皂DIY', where: '10/18(日)｜總太共好共享食堂（祥順路一段480號）', note: '完成報到就退還保證金。' },
+  '👜 彩繪提袋DIY': { name: '👜 彩繪提袋DIY', where: '10/17(六)｜總太悅來社區・活力廚房（祥順路一段500號）', note: '當天參加全額退還保證金。' },
+};
+const PAID_ORDER = ['🌀 陀螺賽', '🎭 變裝大賽', '🧼 手工皂DIY', '👜 彩繪提袋DIY'];
+
+function isPaidSignup_(r) {
+  return !/^已取消/.test(r.狀態) && !isWaitlistSignup_(r) && /已繳/.test(r.繳費);
+}
+
+function paidSort_(a, b) {
+  const ai = PAID_ORDER.indexOf(a.活動), bi = PAID_ORDER.indexOf(b.活動);
+  return (ai < 0 ? 9 : ai) - (bi < 0 ? 9 : bi) || String(a.場次梯次).localeCompare(String(b.場次梯次)) || (+a.編號 || 0) - (+b.編號 || 0);
+}
+
+/** 給已繳費報名者的通知：列出這個 LINE 對到的所有已繳費報名（時間、地點、編號）。 */
+function paidListNoticeText_(rows, unpaidCount) {
+  const names = Array.from(new Set(rows.map(r => r.姓名).filter(Boolean)));
+  const lines = ['🎃 北屯鬧起來｜報名完成通知', `${names.length === 1 ? names[0] + ' ' : ''}您好！以下報名都已完成繳費，活動當天見 🙌`];
+  PAID_ORDER.concat(Array.from(new Set(rows.map(r => r.活動))).filter(a => PAID_ORDER.indexOf(a) < 0)).forEach(act => {
+    const list = rows.filter(r => r.活動 === act);
+    if (!list.length) return;
+    const info = PAID_EVENT_INFO[act] || { name: act };
+    lines.push('', info.name);
+    if (info.when) lines.push('📅 ' + info.when);
+    list.forEach(r => {
+      const who = (r.編號 ? r.編號 + ' 號・' : '') + r.姓名 + (r.同行者 ? '（' + String(r.同行者).slice(0, 40) + '）' : '');
+      const sess = PAID_SESSION_INFO[r.場次梯次] || (info.where ? info.where.replace('｜', ' ' + String(r.場次梯次 || '').replace(/-/g, '–') + '｜') : r.場次梯次);
+      lines.push('・' + (info.when ? who : (sess ? sess + '\n　' : '') + who));
+    });
+    if (info.note) lines.push(info.note);
+  });
+  if (unpaidCount) lines.push('', `另有 ${unpaidCount} 筆報名還沒有繳費紀錄，請輸入「查詢報名」查看。`);
+  lines.push('', '📋 隨時查詢：在這裡輸入「查詢報名」', '🗺 活動地圖：https://ccs2024taiwan.pages.dev/map/', '', '里長參選人莊晴全 敬上');
+  return lines.join('\n');
+}
+
+/** 已繳費名單：建一份試算表給里長（含電話），並用 LINE 通知每位已繳費、有綁 LINE 的報名者。 */
+function sendPaidListNotices_(title, notify) {
+  try { syncSignupsNow_(); } catch (err) { console.warn('整理名單前同步失敗，使用上次的名單：' + err.message); }
+  const linked = new Set();
+  let sent = 0, failed = 0;
+  Array.from(new Set(readAll_('報名確認紀錄').map(c => c.userId).filter(Boolean))).forEach(uid => {
+    const mine = findMySignups_(uid).rows || [];
+    const paid = mine.filter(isPaidSignup_).sort(paidSort_);
+    paid.forEach(r => linked.add(r._row));
+    if (!notify || !paid.length) return;
+    if (push_(uid, [text_(paidListNoticeText_(paid, mine.filter(isUnpaidSignup_).length).slice(0, 4900))])) sent++;
+    else failed++;
+  });
+  const rows = readAll_('活動報名名單').filter(isPaidSignup_).sort(paidSort_);
+  const out = rows.map(r => [r.活動, r.場次梯次, r.編號, r.姓名, r.同行者, normPhone_(r.電話) || r.電話, r.繳費, linked.has(r._row) ? '有' : '', r.報名時間]);
+  const ss = SpreadsheetApp.create((title || '已繳費名單') + '_' + Utilities.formatDate(new Date(), TZ, 'yyyyMMdd_HHmm'));
+  const sh = ss.getSheets()[0];
+  sh.getRange(1, 1, 1, 9).setValues([['活動', '場次／梯次', '編號', '姓名', '同行者', '電話', '繳費', '已綁 LINE', '報名時間']]).setFontWeight('bold');
+  if (out.length) {
+    sh.getRange(2, 6, out.length, 1).setNumberFormat('@');
+    sh.getRange(2, 1, out.length, 9).setValues(out);
+  }
+  sh.setFrozenRows(1);
+  try { if (prop_('BACKUP_FOLDER_ID')) DriveApp.getFileById(ss.getId()).moveTo(backupRoot_()); } catch (err) { console.warn('已繳費名單留在根目錄：' + err.message); }
+  const bySession = {};
+  rows.forEach(r => { const k = r.活動 + '|' + (r.場次梯次 || ''); bySession[k] = (bySession[k] || 0) + 1; });
+  return { url: ss.getUrl(), total: rows.length, byActivity: countBy_(rows, '活動'), bySession, sent, failed, noLine: rows.filter(r => !linked.has(r._row)).length };
 }
 
 // ───────────────────────── 詢問未繳費者居住地 ─────────────────────────
@@ -4529,6 +4609,24 @@ function runScheduledBroadcasts() {
         props.setProperty(key, `sent ${now_()} ${r.count} 支`);
         notifyOwner_([`📱 ${b.title}已產生：${r.count} 支手機（沒綁 LINE、還沒繳費），預估 ${r.segments} 則簡訊。`,
           '打開 → 檔案 → 下載 → Microsoft Excel，再上傳到簡訊平台的個人化發送：', r.url].join('\n'));
+        return;
+      }
+      if (b.kind === 'paidList') {
+        const r = sendPaidListNotices_(b.title, b.notify);
+        props.setProperty(key, `sent ${now_()} ${r.total} 筆 通知 ${r.sent} 人`);
+        const lines = [`✅ ${b.title}（${Utilities.formatDate(new Date(), TZ, 'HH:mm')}）`, `已繳費共 ${r.total} 筆。`];
+        PAID_ORDER.concat(Object.keys(r.byActivity).filter(a => PAID_ORDER.indexOf(a) < 0)).forEach(act => {
+          if (!r.byActivity[act]) return;
+          lines.push('', `${act}：${r.byActivity[act]} 筆`);
+          Object.keys(r.bySession).filter(k => k.split('|')[0] === act && k.split('|')[1]).sort()
+            .forEach(k => lines.push(`・${k.split('|')[1]}：${r.bySession[k]} 筆`));
+        });
+        if (b.notify) {
+          lines.push('', `📲 已用 LINE 通知 ${r.sent} 位報名者「報名完成」（含時間、地點、編號）` + (r.failed ? `，${r.failed} 位發送失敗（可能封鎖了官方帳號或訊息額度用完）` : '') + '。');
+          if (r.noLine) lines.push(`另有 ${r.noLine} 筆已繳費的報名沒在官方 LINE 傳過「報名確認」，收不到通知。`);
+        }
+        lines.push('', '名單（含場次、編號、電話、有沒有綁 LINE）：', r.url);
+        notifyOwner_(lines.join('\n'));
         return;
       }
       if (b.kind === 'unpaidList') {
