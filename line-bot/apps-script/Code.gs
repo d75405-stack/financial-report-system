@@ -129,7 +129,8 @@ function doGet(e) {
   // 報修照片（帶簽章的連結，給里長和服務處窗口看）；活動網站 /repair/ 的公開進度
   if (p.photo) return repairPhotoPage_(String(p.photo), p.t);
   if (p.action === 'repairs') return json_({ ok: true, data: publicRepairs_() });
-  // 部署完成時 GitHub Actions 會打一次這個網址，讓已到時間的預約推播馬上發出
+  // 部署完成時 GitHub Actions 會打一次這個網址，讓已到時間的預約推播馬上發出、律師資料馬上更新
+  ensureLawyers_();
   checkBroadcasts_();
   return json_({ ok: true, service: 'line-bot' });
 }
