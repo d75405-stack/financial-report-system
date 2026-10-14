@@ -234,6 +234,16 @@ function handleEvent_(ev) {
     if (readAll_('好友紀錄').some(r => r.userId === uid)) logFriend_(uid, '封鎖');
     return;
   }
+  // 里長私訊傳 LINE 社群匯出的聊天紀錄檔（.txt）→ 更新「全全 查社群」的資料
+  if (ev.type === 'message' && ev.message.type === 'file' && /\.txt$/i.test(ev.message.fileName || '') && isOwnerUser_(uid)) {
+    let msg;
+    try { msg = importChatExport_(ev.message.id, Number(ev.message.fileSize || 0)); } catch (err) {
+      console.error('匯入社群聊天紀錄失敗：' + (err.stack || err));
+      msg = '⚠️ 社群聊天紀錄沒有更新：' + err.message;
+    }
+    if (!reply_(ev.replyToken, [text_(msg)])) push_(uid, [text_(msg)]);   // 檔案大、整理太久時 reply token 會過期
+    return;
+  }
   if (ev.type !== 'message' || ev.message.type !== 'text') return;
 
   const t = ev.message.text.trim();
@@ -278,6 +288,11 @@ function handleEvent_(ev) {
 
   // 里長私訊也可以發／撤下網站公告（「網站公告 內容」，前面有沒有「全全」都可以）
   if (isOwnerUser_(uid)) {
+    const cq = t.replace(new RegExp('^' + ASSISTANT_NAME + '[\\s,，:：]*'), '').match(CHAT_QUERY_RE);
+    if (cq) {
+      reply_(ev.replyToken, [text_(cq[2].trim() ? chatQueryText_(cq[2], uid) : CHAT_HELP_TEXT)]);
+      return;
+    }
     const nt = siteNoticeCommand_(t.replace(new RegExp('^' + ASSISTANT_NAME + '[\\s,，:：]*'), ''), uid);
     if (nt) {
       reply_(ev.replyToken, [text_(nt)]);
@@ -1164,8 +1179,10 @@ function looksLikePlacePost_(t) {
 
 /** 管理群的網站管理指令；不是這些指令回傳 null（交給特約商家或全全）。 */
 function mgmtGroupCommand_(cmd, c) {
-  if (c.isPost && !NB_ADD_RE.test(cmd)) return null;   // 貼特約公告同時 @官方帳號：特約上架
   let m;
+  // 查社群聊天紀錄（里長 10/14：管理群每個人都可以查，名字遮一半）
+  if ((m = cmd.match(CHAT_QUERY_RE))) return /^(怎麼用|如何用|說明|用法|教學)?[?？]?$/.test(m[2].trim()) ? CHAT_HELP_TEXT : chatQueryText_(m[2], c.uid);
+  if (c.isPost && !NB_ADD_RE.test(cmd)) return null;   // 貼特約公告同時 @官方帳號：特約上架
   if ((m = cmd.match(NB_REMOVE_RE))) {
     let r;
     try { r = ccsApi_('/api/neighbors', { action: 'remove', name: m[1].trim() }); } catch (err) { return '網站忙線中，請稍後再試一次：' + err.message; }
@@ -1388,10 +1405,263 @@ const MGMT_HELP_TEXT = [
   '・全全 報名人數：各活動報名人數、剩餘名額、未繳費筆數',
   '・全全 評審進度：變裝大賽評審綁定與評分進度',
   '',
+  '🔎 社群聊天紀錄（里民名字遮一半）',
+  '・全全 查社群 關鍵字：查「廍子里大小事」社群聊過什麼，例：全全 查社群 停車',
+  '・幾個關鍵字用空白分開；加年份只查那一年，例：全全 查社群 停水 2025',
+  '',
   '💡 長按某則公告或推薦按「回覆」，再打「全全 特約新增」或「全全 生活資訊新增」，就會用那一則。',
   '',
-  '只有里長能用：網站公告（發布、撤下）、公告特約（發給所有好友）、通知評審、快速報修開放、查個人報名資料、備份。',
+  '只有里長能用：網站公告（發布、撤下）、公告特約（發給所有好友）、通知評審、快速報修開放、查個人報名資料、備份、更新社群聊天紀錄（私訊傳檔案給全全）。',
 ].join('\n');
+
+// ───────────────────────── 社群聊天紀錄查詢 ─────────────────────────
+// 里長 10/14：「如何在管理群直接查社群對話紀錄」→ 管理群每個人都可以「全全 查社群 關鍵字」，里民名字遮一半。
+// 資料來源：里長從 LINE 社群匯出的聊天紀錄（.txt），私訊傳給全全就會更新；整理時名字先遮好、手機號碼遮掉，
+// 只存遮過的版本（壓縮檔）在里長自己的雲端硬碟（不公開的資料夾），程式裡不放任何聊天內容。
+
+const CHAT_QUERY_RE = /^(查社群|社群查詢|查大小事|查聊天紀錄|查聊天記錄|查對話紀錄)\s*([\s\S]*)$/;
+const CHAT_NAME = '廍子里大小事';
+const CHAT_RECENT_SHOW = 8;           // 回覆裡列出最近幾則
+const CHAT_AI_MAX_CHARS = 12000;      // 給 Claude 整理重點的對話字數上限
+const CHAT_MAX_BYTES = 45 * 1024 * 1024;
+const CHAT_SKIP_RE = /^\[(貼圖|照片|影片|檔案|語音訊息|相簿|記事本|位置資訊|聯絡資訊|禮物|投票)\]$|^(已收回訊息|訊息已收回)$/;
+// 不遮的名字：商家／公司帳號（公開的店名）、民意代表服務處、里長本人、全全
+const CHAT_KEEP_NAME_RE = /^(商家|公司|店家|民意代表|全全)|莊晴全|服務處|議員|立委/;
+const CHAT_SHOP_RE = /^(商家|公司|店家)/;
+const CHAT_HELP_TEXT = [
+  '🔎 查「' + CHAT_NAME + '」社群的聊天紀錄',
+  '用法：全全 查社群 關鍵字（幾個關鍵字用空白分開，要全部都有才算）',
+  '例：全全 查社群 停車',
+  '例：全全 查社群 太順路 紅綠燈',
+  '例：全全 查社群 停水 2025（加年份只查那一年）',
+  '',
+  '會回：提過幾次、哪一年最多、重點整理、最近幾則（名字遮一半）。',
+  '資料更新：里長把 LINE 社群匯出的聊天紀錄檔私訊傳給全全。',
+].join('\n');
+
+function chatMaskPart_(s) {
+  const c = Array.from(String(s).trim());
+  if (!c.length) return '';
+  if (c.length === 1) return '○';
+  if (c.length === 2) return c[0] + '○';
+  return c[0] + '○'.repeat(Math.min(c.length - 2, 3)) + c[c.length - 1];
+}
+
+/** 名字遮一半：「黃先生」→「黃○生」；「大樓住戶-小筠」→「大樓住戶-小○」；商家和里長本人不遮。 */
+function chatMaskName_(name) {
+  const n = String(name || '').trim();
+  if (!n || CHAT_KEEP_NAME_RE.test(n)) return n;
+  const m = n.match(/^([^\s\-－]{1,6}[-－]\s*)(.+)$/);
+  return m ? m[1].replace(/\s+$/, '') + chatMaskPart_(m[2]) : chatMaskPart_(n);
+}
+
+/** 匯出的聊天紀錄 → 一則一行「日期 時間 遮過的名字 內容」，加上資料範圍。 */
+function parseChatExport_(raw) {
+  const text = String(raw).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  const head = text.slice(0, 300).match(/^\[LINE\]\s*(.+?)的聊天/);
+  if (!head) throw new Error('這不是 LINE 匯出的聊天紀錄檔（第一行應該是「[LINE] 群組名稱的聊天」）');
+  const saved = (text.slice(0, 300).match(/儲存日期[:：]\s*(\d{4}\/\d{1,2}\/\d{1,2}(?:\s+\d{1,2}:\d{2})?)/) || [])[1] || '';
+  const lines = text.split('\n');
+  const msgs = [], names = {};
+  let day = '', first = '', cur = null, inQuote = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (inQuote) {
+      if (/"$/.test(line)) { cur.x += '\n' + line.slice(0, -1); inQuote = false; } else cur.x += '\n' + line;
+      continue;
+    }
+    let m = line.match(/^(\d{4})\/(\d{2})\/(\d{2})（.）$/);
+    if (m) { day = m[1] + m[2] + m[3]; first = first || day; cur = null; continue; }
+    m = day && line.match(/^(\d{2}):(\d{2})\t([^\t]*)\t?(.*)$/);
+    if (m) {
+      cur = { d: day, t: m[1] + m[2], n: m[3], x: m[4] };
+      if (/^"/.test(cur.x)) {
+        if (cur.x.length > 1 && /"$/.test(cur.x)) cur.x = cur.x.slice(1, -1);
+        else { cur.x = cur.x.slice(1); inQuote = true; }
+      }
+      msgs.push(cur);
+      if (cur.n) names[cur.n] = true;
+      continue;
+    }
+    if (cur && line) cur.x += '\n' + line;
+  }
+  // @標記裡的名字也要遮：用發過言的名字比對（名字裡可能有空白），比對不到就遮到下一個空白
+  const byHead = {};
+  Object.keys(names).forEach(n => { const k = n.slice(0, 2); (byHead[k] = byHead[k] || []).push(n); });
+  Object.keys(byHead).forEach(k => byHead[k].sort((a, b) => b.length - a.length));
+  const maskMentions = x => {
+    if (x.indexOf('@') < 0) return x;
+    let out = '', i = 0;
+    for (;;) {
+      const at = x.indexOf('@', i);
+      if (at < 0) return out + x.slice(i);
+      const rest = x.slice(at + 1, at + 41);
+      const known = (byHead[rest.slice(0, 2)] || []).find(n => rest.indexOf(n) === 0);
+      const w = known || (rest.match(/^[^\s@]{1,30}/) || [''])[0];
+      // 「@401mmxpw」這種店家官方 LINE 帳號不遮
+      out += x.slice(i, at + 1) + (!known && /^\d[0-9a-z_.\-]{3,}$/i.test(w) ? w : chatMaskName_(w));
+      i = at + 1 + w.length;
+    }
+  };
+  const out = [];
+  msgs.forEach(m => {
+    const x = m.x.trim();
+    if (!m.n || m.n === 'Auto-reply' || !x || CHAT_SKIP_RE.test(x)) return;
+    const body = maskMentions(x).replace(/(09\d{2})[-\s]?\d{3}[-\s]?\d{3}/g, '$1-○○○-○○○').replace(/\s*\n\s*/g, ' ').replace(/\t/g, ' ');
+    out.push(m.d + '\t' + m.t + '\t' + chatMaskName_(m.n).replace(/\t/g, ' ') + '\t' + body);
+  });
+  if (!out.length) throw new Error('檔案裡找不到聊天內容');
+  return { chat: head[1].trim(), saved, from: first, to: out[out.length - 1].slice(0, 8), count: out.length, lines: out };
+}
+
+function chatFolder_() {
+  const id = prop_('CHAT_FOLDER_ID');
+  if (id) {
+    try {
+      const f = DriveApp.getFolderById(id);
+      if (!f.isTrashed()) {
+        if (isPublicFolder_(f)) throw new Error('聊天紀錄資料夾開放了公開連結，為了保護里民資料已暫停。請到雲端硬碟把「' + f.getName() + '」的一般存取改成「限制」');
+        return f;
+      }
+    } catch (err) {
+      if (/公開連結/.test(err.message)) throw err;
+      console.warn('原本的聊天紀錄資料夾打不開，重新建立：' + err.message);
+    }
+  }
+  const f = DriveApp.createFolder('全全 社群聊天紀錄（勿分享）');
+  PropertiesService.getScriptProperties().setProperty('CHAT_FOLDER_ID', f.getId());
+  return f;
+}
+
+const chatYmd_ = d => d.slice(0, 4) + '/' + Number(d.slice(4, 6)) + '/' + Number(d.slice(6, 8));
+
+/** 里長私訊傳來的聊天紀錄檔 → 遮名整理後存到雲端硬碟（換掉舊的）。回傳給里長的說明。 */
+function importChatExport_(messageId, fileSize) {
+  if (fileSize > CHAT_MAX_BYTES) throw new Error('檔案太大（超過 45MB）');
+  const res = UrlFetchApp.fetch('https://api-data.line.me/v2/bot/message/' + encodeURIComponent(messageId) + '/content', {
+    headers: { Authorization: 'Bearer ' + prop_('LINE_CHANNEL_ACCESS_TOKEN') }, muteHttpExceptions: true,
+  });
+  if (res.getResponseCode() !== 200) throw new Error('下載不到檔案（' + res.getResponseCode() + '），請再傳一次');
+  const p = parseChatExport_(res.getBlob().getDataAsString('UTF-8'));
+  if (p.chat.indexOf('大小事') < 0) throw new Error(`這是「${p.chat}」的聊天紀錄，不是「${CHAT_NAME}」。為了不蓋掉原本的資料，沒有更新`);
+  const folder = chatFolder_();
+  const blob = Utilities.gzip(Utilities.newBlob(p.lines.join('\n'), 'text/plain', 'chat.txt'), CHAT_NAME + '聊天紀錄（遮名）.txt.gz');
+  const file = folder.createFile(blob);
+  const old = prop_('CHAT_INDEX_ID');
+  const meta = { chat: p.chat, saved: p.saved, from: p.from, to: p.to, count: p.count, at: now_() };
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty('CHAT_INDEX_ID', file.getId());
+  props.setProperty('CHAT_INDEX_META', JSON.stringify(meta));
+  if (old && old !== file.getId()) { try { DriveApp.getFileById(old).setTrashed(true); } catch (_) { /* 舊檔已經不在 */ } }
+  return [`✅ 社群聊天紀錄已更新（${p.chat}）`,
+    `資料範圍：${chatYmd_(p.from)}～${chatYmd_(p.to)}，共 ${p.count.toLocaleString()} 則（貼圖、照片不算）`,
+    '里民名字已遮一半、手機號碼已遮掉，存在您雲端硬碟「全全 社群聊天紀錄（勿分享）」資料夾，請不要把資料夾分享出去。',
+    '', '管理群可以用：全全 查社群 關鍵字', '例：全全 查社群 停車'].join('\n');
+}
+
+function chatIndexLines_() {
+  const id = prop_('CHAT_INDEX_ID');
+  if (!id) return null;
+  const blob = DriveApp.getFileById(id).getBlob().setContentType('application/x-gzip');
+  return Utilities.ungzip(blob).getDataAsString('UTF-8').split('\n');
+}
+
+/** 「全全 查社群 關鍵字」：次數、各年分布、Claude 整理的重點、最近幾則（名字已遮）。 */
+function chatQueryText_(query, uid) {
+  const started = Date.now();
+  const words = String(query || '').replace(/^[\s:：,，、]+/, '').split(/[\s,，、]+/).filter(Boolean).slice(0, 6);
+  if (!words.length) return CHAT_HELP_TEXT;
+  const years = words.filter(w => /^20\d{2}年?$/.test(w)).map(w => w.slice(0, 4));
+  const terms = words.filter(w => !/^20\d{2}年?$/.test(w)).map(w => w.toLowerCase());
+  if (!terms.length) return CHAT_HELP_TEXT;
+  let lines;
+  try { lines = chatIndexLines_(); } catch (err) { return '讀不到社群聊天紀錄，請稍後再試：' + err.message; }
+  if (!lines) return `還沒有「${CHAT_NAME}」的聊天紀錄 🙏\n請里長在 LINE 社群匯出聊天紀錄（.txt），私訊傳給官方帳號全全，整理好就能查。`;
+  const meta = JSON.parse(prop_('CHAT_INDEX_META') || '{}');
+  const range = meta.from ? `資料範圍：${chatYmd_(meta.from)}～${chatYmd_(meta.to)}` : '';
+  const label = '「' + terms.join(' ') + '」' + (years.length ? `（${years.join('、')} 年）` : '');
+  const hits = [], per = terms.map(() => 0);
+  lines.forEach(l => {
+    if (years.length && years.indexOf(l.slice(0, 4)) < 0) return;
+    const s = l.slice(14).toLowerCase();   // 名字＋內容（不比對日期時間）
+    let all = true;
+    terms.forEach((t, i) => { if (s.indexOf(t) >= 0) per[i]++; else all = false; });
+    if (all) hits.push(l);
+  });
+  if (!hits.length) {
+    return [`🔎 社群聊天紀錄：${label}`, '找不到同時有這些字的對話。']
+      .concat(terms.length > 1 ? ['', '分開來看：'].concat(terms.map((t, i) => `・${t}：${per[i].toLocaleString()} 則`)) : [])
+      .concat(['', '💡 換個說法、少一個關鍵字，或把長的詞拆開（例：太順路 紅綠燈）再查一次。', range]).join('\n');
+  }
+  const byYear = {};
+  let shops = 0;
+  hits.forEach(l => { const y = l.slice(0, 4); byYear[y] = (byYear[y] || 0) + 1; if (CHAT_SHOP_RE.test(l.split('\t')[2])) shops++; });
+  // 最近幾則：里民的優先（店家廣告常常重複貼），一樣的內容只列一次；里民的不夠才補店家的
+  const fmt = l => { const c = l.split('\t'); const x = c.slice(3).join(' '); return `・${chatYmd_(c[0])} ${c[2]}：${x.length > 70 ? x.slice(0, 70) + '…' : x}`; };
+  const seen = {}, mine = [], shopPosts = [];
+  for (let i = hits.length - 1; i >= 0 && mine.length < CHAT_RECENT_SHOW; i--) {
+    const c = hits[i].split('\t'), k = c.slice(3).join(' ').slice(0, 40);
+    if (seen[k]) continue;
+    seen[k] = true;
+    (CHAT_SHOP_RE.test(c[2]) ? shopPosts : mine).push(hits[i]);
+  }
+  const recent = mine.concat(shopPosts.slice(0, Math.max(0, CHAT_RECENT_SHOW - mine.length))).sort().reverse().map(fmt);
+  const summary = chatAiSummary_(label, hits, uid, started);
+  return [`🔎 社群聊天紀錄：${label}`,
+    `共找到 ${hits.length.toLocaleString()} 則（` + Object.keys(byYear).sort().map(y => `${y}：${byYear[y].toLocaleString()}`).join('、') + '）' +
+      (shops ? `，其中店家、公司貼文 ${shops.toLocaleString()} 則` : ''),
+    `第一次：${chatYmd_(hits[0])}｜最近一次：${chatYmd_(hits[hits.length - 1])}`]
+    .concat(summary ? ['', '📝 重點整理', summary] : [])
+    .concat(['', `💬 最近 ${recent.length} 則（里民的優先，名字遮一半）`], recent, ['', range + '（里民名字已遮）']).join('\n').slice(0, 4900);
+}
+
+/** 找到的對話交給 Claude 整理 3～6 點重點；沒有金鑰、太慢或失敗就不整理（只回數字和最近幾則）。 */
+function chatAiSummary_(label, hits, uid, started) {
+  const key = prop_('ANTHROPIC_API_KEY');
+  if (!key || Date.now() - started > 25000) return '';
+  // 對話太多時平均挑（每一年都有），最近 40 則一定放進去
+  let rows = hits.map(l => { const c = l.split('\t'); return chatYmd_(c[0]) + ' ' + c.slice(3).join(' ').slice(0, 300); });
+  const len = list => list.reduce((n, r) => n + r.length + 1, 0);
+  if (len(rows) > CHAT_AI_MAX_CHARS) {
+    const tail = rows.slice(-40), head = rows.slice(0, -40);
+    const avg = Math.max(20, len(head) / Math.max(1, head.length));
+    const k = Math.max(0, Math.floor((CHAT_AI_MAX_CHARS - len(tail)) / avg));
+    const pick = [];
+    for (let i = 0; i < k && head.length; i++) pick.push(head[Math.floor(i * head.length / k)]);
+    rows = pick.concat(tail);
+  }
+  let text = rows.join('\n');
+  if (text.length > CHAT_AI_MAX_CHARS) text = text.slice(-CHAT_AI_MAX_CHARS);
+  try {
+    const res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'server-side-fallback-2026-07-01' },
+      payload: JSON.stringify({
+        model: prop_('AI_MODEL') || AI_DEFAULT_MODEL,
+        max_tokens: 2000,
+        output_config: { effort: 'low' },
+        fallbacks: 'default',
+        system: `你是里長參選人莊晴全的助理。以下是「${CHAT_NAME}」LINE 社群裡，提到${label}的里民對話（每行：日期 內容；共找到 ${hits.length} 則，這裡是挑出來的一部分）。` +
+          '請用繁體中文、白話、不要用英文，整理 3～6 點重點：大家在說什麼、哪段時間最多、提到哪些地點或店家、問題解決了沒有或還有人在反映。' +
+          '不要寫任何人的名字或電話。每點一行、開頭用「・」，全部 350 字以內，不要標題、不要結語。內容太少或跟關鍵字無關就照實說。',
+        messages: [{ role: 'user', content: text }],
+      }),
+      muteHttpExceptions: true,
+    });
+    if (res.getResponseCode() !== 200) {
+      console.error('Claude API（社群查詢）' + res.getResponseCode() + '：' + res.getContentText().slice(0, 300));
+      return '';
+    }
+    const data = JSON.parse(res.getContentText());
+    const out = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+    logAi_(uid, '社群查詢', label, out.slice(0, 200), data.usage);
+    return data.stop_reason === 'end_turn' ? out.slice(0, 900) : '';
+  } catch (err) {
+    console.error('Claude 整理社群查詢失敗：' + err.message);
+    return '';
+  }
+}
 
 /** 下載群組裡的照片（LINE 只保留一段時間）；太大或失敗回傳 null。 */
 function lineImageData_(id) {
