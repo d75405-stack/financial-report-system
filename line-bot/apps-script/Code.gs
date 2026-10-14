@@ -53,6 +53,7 @@ const SHEETS = {
     'status', 'rep', 'assignedAt', 'repNote', 'doneAt', 'updatedAt'],
   報修窗口: ['repKey', 'repName', 'userId', 'displayName', 'boundAt', 'status'],
   特約上架紀錄: ['at', 'groupName', 'userId', 'displayName', 'command', 'result'],
+  系統紀錄: ['at', 'what', 'result'],
 };
 
 // ───────────────────────── 初始化 ─────────────────────────
@@ -3132,7 +3133,7 @@ SCHEDULED_BROADCASTS.push({ id: 'mgmt-help-1013', at: '2026-10-13T21:55:00+08:00
   text: ['各位夥伴好 🙌', '官方帳號「全全」現在可以幫大家直接管理活動網站，群組裡每個人都可以用！', '指令前面加「全全」或 @官方帳號 👇'].concat(MGMT_HELP_TEXT.split('\n').slice(2))
     .concat(['', '不會用就在群組打「全全 網站功能」，隨時叫出這份說明 😊', '', '里長參選人莊晴全 敬上']).join('\n') });
 // 里長 10/14：「LINE 選單也加上快速報修」→ 先匯出現在的兩頁切換選單（設定＋圖片）到雲端硬碟
-SCHEDULED_BROADCASTS.push({ id: 'richmenu-export-1014', at: '2026-10-14T16:35:00+08:00', title: '匯出圖文選單', kind: 'richMenuExport' });
+SCHEDULED_BROADCASTS.push({ id: 'richmenu-export-1014b', at: '2026-10-14T16:35:00+08:00', title: '匯出圖文選單', kind: 'richMenuExport' });
 // 里長 10/14：「加到網站選單也發公告」→ 快速報修開放公告（發給所有好友）
 SCHEDULED_BROADCASTS.push({ id: 'repair-open-announce-1014', at: '2026-10-14T16:40:00+08:00', title: '快速報修開放了',
   text: [
@@ -4129,8 +4130,9 @@ function runScheduledBroadcasts() {
         // Claude 看過再重畫「服務」頁、加上快速報修按鈕
         // 只是給 Claude 看的資料，失敗也不通知里長
         let r;
-        try { r = exportRichMenus_(); } catch (err) { r = '失敗 ' + err.message; }
+        try { r = exportRichMenus_(); } catch (err) { r = '失敗 ' + err.message + ' ' + String(err.stack || '').slice(0, 300); }
         props.setProperty(key, 'sent ' + now_() + ' ' + String(r).slice(0, 300));
+        try { append_('系統紀錄', { at: now_(), what: b.title, result: String(r).slice(0, 2000) }); } catch (_) { /* 記錄失敗不影響 */ }
         return;
       }
       if (b.kind === 'repairOpen') {
@@ -5455,7 +5457,8 @@ function tabbedRichMenu_() {
 
 /** 把目前的圖文選單（兩頁切換選單的每一頁＋預設選單）的設定 JSON 和圖片存到雲端硬碟「圖文選單備份」資料夾。 */
 function exportRichMenus_() {
-  const parent = prop_('BACKUP_FOLDER_ID') ? backupRoot_() : DriveApp.getRootFolder();
+  let parent;
+  try { parent = prop_('BACKUP_FOLDER_ID') ? backupRoot_() : DriveApp.getRootFolder(); } catch (_) { parent = DriveApp.getRootFolder(); }
   const it = parent.getFoldersByName('圖文選單備份');
   const folder = it.hasNext() ? it.next() : parent.createFolder('圖文選單備份');
   const stamp = Utilities.formatDate(new Date(), TZ, 'MMdd-HHmm');
@@ -5467,14 +5470,14 @@ function exportRichMenus_() {
   const saved = [];
   ids.forEach(x => {
     const meta = lineApi_('richmenu/' + x.id, null, 'get');
-    if (meta.ok) folder.createFile(`${stamp}_${x.name}.json`, meta.body, 'application/json');
+    if (meta.ok) folder.createFile(`${stamp}_${x.name}.json.txt`, meta.body, MimeType.PLAIN_TEXT);
     const img = UrlFetchApp.fetch('https://api-data.line.me/v2/bot/richmenu/' + x.id + '/content', {
       headers: { Authorization: 'Bearer ' + prop_('LINE_CHANNEL_ACCESS_TOKEN') }, muteHttpExceptions: true });
     if (img.getResponseCode() === 200) folder.createFile(img.getBlob().setName(`${stamp}_${x.name}.png`));
     saved.push(x.name + (x.id === defaultId ? '(預設)' : '') + (meta.ok ? '' : ' 讀不到設定') + (img.getResponseCode() === 200 ? '' : ' 讀不到圖片'));
   });
-  folder.createFile(`${stamp}_summary.json`, JSON.stringify({ defaultId, aliases }, null, 2), 'application/json');
-  return saved.join('、') || '沒有圖文選單';
+  folder.createFile(`${stamp}_summary.json.txt`, JSON.stringify({ defaultId, aliases }, null, 2), MimeType.PLAIN_TEXT);
+  return (saved.join('、') || '沒有圖文選單') + '｜資料夾 ' + folder.getId();
 }
 
 function setupRichMenu() {
