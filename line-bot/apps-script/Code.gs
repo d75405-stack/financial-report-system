@@ -3131,6 +3131,8 @@ const SCHEDULED_BROADCASTS = [
 SCHEDULED_BROADCASTS.push({ id: 'mgmt-help-1013', at: '2026-10-13T21:55:00+08:00', title: '管理群網站功能說明', kind: 'mgmtGroup',
   text: ['各位夥伴好 🙌', '官方帳號「全全」現在可以幫大家直接管理活動網站，群組裡每個人都可以用！', '指令前面加「全全」或 @官方帳號 👇'].concat(MGMT_HELP_TEXT.split('\n').slice(2))
     .concat(['', '不會用就在群組打「全全 網站功能」，隨時叫出這份說明 😊', '', '里長參選人莊晴全 敬上']).join('\n') });
+// 里長 10/14：「LINE 選單也加上快速報修」→ 先匯出現在的兩頁切換選單（設定＋圖片）到雲端硬碟
+SCHEDULED_BROADCASTS.push({ id: 'richmenu-export-1014', at: '2026-10-14T16:35:00+08:00', title: '匯出圖文選單', kind: 'richMenuExport' });
 // 里長 10/14：「加到網站選單也發公告」→ 快速報修開放公告（發給所有好友）
 SCHEDULED_BROADCASTS.push({ id: 'repair-open-announce-1014', at: '2026-10-14T16:40:00+08:00', title: '快速報修開放了',
   text: [
@@ -4120,6 +4122,15 @@ function runScheduledBroadcasts() {
           `目前未繳費共 ${r.total} 筆。` + (r.late ? `（其中 ${r.late} 筆是 10/16 起報名、活動當天報到時繳，不算逾期）` : '')]
           .concat(n ? ['', `另有 ${n} 筆的報名者沒在官方 LINE 傳過「報名確認」，沒辦法用 LINE 通知：`]
           .concat(missed.map(k => `・${k}：${r.missed[k]} 筆`), '名單（含電話）可在試算表「活動報名名單」篩選「未繳」查看（狀態是「候補」的不用繳）。') : []).join('\n'));
+        return;
+      }
+      if (b.kind === 'richMenuExport') {
+        // 里長 10/14「LINE 選單也加上快速報修」：現在用的是兩頁切換選單（希利克鳥 10/9 建立），先把兩頁的設定和圖片存到雲端硬碟，
+        // Claude 看過再重畫「服務」頁、加上快速報修按鈕
+        // 只是給 Claude 看的資料，失敗也不通知里長
+        let r;
+        try { r = exportRichMenus_(); } catch (err) { r = '失敗 ' + err.message; }
+        props.setProperty(key, 'sent ' + now_() + ' ' + String(r).slice(0, 300));
         return;
       }
       if (b.kind === 'repairOpen') {
@@ -5440,6 +5451,30 @@ function tabbedRichMenu_() {
   if (!res.ok) return null;
   const list = (JSON.parse(res.body).aliases || []).filter(a => RICH_MENU_ALIASES.indexOf(a.richMenuAliasId) >= 0);
   return list.length ? list : null;
+}
+
+/** 把目前的圖文選單（兩頁切換選單的每一頁＋預設選單）的設定 JSON 和圖片存到雲端硬碟「圖文選單備份」資料夾。 */
+function exportRichMenus_() {
+  const parent = prop_('BACKUP_FOLDER_ID') ? backupRoot_() : DriveApp.getRootFolder();
+  const it = parent.getFoldersByName('圖文選單備份');
+  const folder = it.hasNext() ? it.next() : parent.createFolder('圖文選單備份');
+  const stamp = Utilities.formatDate(new Date(), TZ, 'MMdd-HHmm');
+  const aliases = (() => { const r = lineApi_('richmenu/alias/list', null, 'get'); return r.ok ? JSON.parse(r.body).aliases || [] : []; })();
+  const def = lineApi_('user/all/richmenu', null, 'get');
+  const defaultId = def.ok ? JSON.parse(def.body).richMenuId : '';
+  const ids = aliases.map(a => ({ name: a.richMenuAliasId, id: a.richMenuId }));
+  if (defaultId && !ids.some(x => x.id === defaultId)) ids.push({ name: 'default', id: defaultId });
+  const saved = [];
+  ids.forEach(x => {
+    const meta = lineApi_('richmenu/' + x.id, null, 'get');
+    if (meta.ok) folder.createFile(`${stamp}_${x.name}.json`, meta.body, 'application/json');
+    const img = UrlFetchApp.fetch('https://api-data.line.me/v2/bot/richmenu/' + x.id + '/content', {
+      headers: { Authorization: 'Bearer ' + prop_('LINE_CHANNEL_ACCESS_TOKEN') }, muteHttpExceptions: true });
+    if (img.getResponseCode() === 200) folder.createFile(img.getBlob().setName(`${stamp}_${x.name}.png`));
+    saved.push(x.name + (x.id === defaultId ? '(預設)' : '') + (meta.ok ? '' : ' 讀不到設定') + (img.getResponseCode() === 200 ? '' : ' 讀不到圖片'));
+  });
+  folder.createFile(`${stamp}_summary.json`, JSON.stringify({ defaultId, aliases }, null, 2), 'application/json');
+  return saved.join('、') || '沒有圖文選單';
 }
 
 function setupRichMenu() {
