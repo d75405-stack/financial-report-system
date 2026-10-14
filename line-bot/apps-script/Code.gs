@@ -466,12 +466,15 @@ function repairRep_(text) {
   return REPAIR_REPS.concat([REPAIR_SELF]).find(r => r.re.test(s) || s === r.name || s === r.short || s.toUpperCase() === r.key) || null;
 }
 
+// 報修窗口的 status：active＝已綁定；disabled＝已解除；pending＝傳了「報修綁定」但綁定碼不對，等里長「報修窗口 同意 名字」
+const repairWindowActive_ = w => w.status !== 'disabled' && w.status !== 'pending';
+
 function repairWindows_(key) {
-  return readAll_('報修窗口').filter(w => w.repKey === key && w.status !== 'disabled');
+  return readAll_('報修窗口').filter(w => w.repKey === key && repairWindowActive_(w));
 }
 
 function repairWindowOf_(uid) {
-  return readAll_('報修窗口').find(w => w.userId === uid && w.status !== 'disabled') || null;
+  return readAll_('報修窗口').find(w => w.userId === uid && repairWindowActive_(w)) || null;
 }
 
 /** 三個服務處的綁定碼（第一次用到時產生，存在指令碼屬性 REPAIR_BIND_CODES）。 */
@@ -736,14 +739,49 @@ function repairListText_(uid) {
 /** 里長私訊「報修窗口」：三個服務處的綁定碼與目前綁定的人。 */
 function repairWindowsText_() {
   const codes = repairBindCodes_();
-  const all = readAll_('報修窗口').filter(w => w.status !== 'disabled');
-  return ['🔧 快速報修・民意代表服務處窗口', '請服務處人員加官方 LINE 好友（https://line.me/R/ti/p/@401mmxpw），在聊天室傳下面的綁定文字：', '']
+  const rows = readAll_('報修窗口');
+  const all = rows.filter(repairWindowActive_);
+  const pending = rows.filter(w => w.status === 'pending');
+  return ['🔧 快速報修・民意代表服務處窗口', '請服務處人員加官方 LINE 好友（https://line.me/R/ti/p/@401mmxpw），在聊天室傳下面的綁定文字（「報修綁定」後面是綁定碼，請原封不動轉傳，不是填名字）：', '']
     .concat(REPAIR_REPS.map(rep => {
       const ws = all.filter(w => w.repKey === rep.key);
       return `・${rep.name}\n　傳：報修綁定 ${codes[rep.key]}\n　${ws.length ? '已綁定：' + ws.map(w => w.displayName || 'LINE 用戶').join('、') : '還沒有人綁定'}`;
     }))
+    .concat(pending.length ? ['', '⏳ 綁定碼不對、等您同意的：'].concat(pending.map(w => `・${w.displayName || 'LINE 用戶'}（${w.repName || '沒寫哪個服務處'}）→ 輸入：報修窗口 同意 ${w.displayName}`)) : [])
     .concat(['', '綁定後，您點「交給 ○○」，案件就會直接用 LINE 傳給他們（每位窗口算 1 則訊息）。',
       '要換人：輸入「報修窗口 解除 曾朝榮」，原本的窗口會解除、換一個新的綁定碼。']).join('\n');
+}
+
+/**
+ * 里長「報修窗口 同意 名字 [服務處]」：把傳過「報修綁定」（綁定碼不對）的人直接綁成窗口。
+ * 找人：「報修窗口」裡等待同意的（pending），沒有的話找 7 天內私訊過「報修綁定」的人（未回覆訊息）。
+ */
+function approveRepairWindow_(arg) {
+  const repArg = REPAIR_REPS.find(r => r.re.test(arg));
+  const name = arg.replace(/(黃健豪|黃立委|曾朝榮|曾議員|賴順仁|賴議員)(立委|議員)?(服務處)?\s*$/, '').trim() || arg;
+  const same = dn => { const a = String(dn || '').trim(), b = name.trim(); return !!a && (a === b || a.indexOf(b) >= 0); };
+  const rows = readAll_('報修窗口');
+  let cands = rows.filter(w => w.status === 'pending' && same(w.displayName)).map(w => ({ userId: w.userId, displayName: w.displayName, row: w, text: w.repName }));
+  if (!cands.length) {
+    const since = Utilities.formatDate(new Date(Date.now() - 7 * 864e5), TZ, 'yyyy-MM-dd HH:mm');
+    const seen = {};
+    readAll_('未回覆訊息').filter(x => String(x.at) >= since && /報修綁定/.test(x.text) && same(x.displayName)).reverse()
+      .forEach(x => { if (!seen[x.userId]) { seen[x.userId] = 1; cands.push({ userId: x.userId, displayName: x.displayName, text: x.text }); } });
+  }
+  if (!cands.length) return `找不到「${name}」傳的綁定訊息（7 天內）。\n請他先在官方 LINE 傳「報修綁定」，或輸入「報修窗口」看綁定碼轉給他。`;
+  if (cands.length > 1) return `找到 ${cands.length} 位：${cands.map(c => c.displayName).join('、')}，請寫完整的 LINE 名稱。`;
+  const c = cands[0];
+  const rep = repArg || REPAIR_REPS.find(r => r.key === (c.row && c.row.repKey)) || repairRep_(String(c.text || '').replace(/報修綁定[\s\S]*$/, '')) || null;
+  if (!rep || rep === REPAIR_SELF) return `「${c.displayName}」是哪個服務處的窗口？請加上服務處，例如：報修窗口 同意 ${c.displayName} 黃健豪`;
+  if (repairWindows_(rep.key).some(w => w.userId === c.userId)) return `「${c.displayName}」已經是${rep.name}的報修窗口了 👍`;
+  if (c.row) update_('報修窗口', c.row._row, { repKey: rep.key, repName: rep.name, boundAt: now_(), status: 'active' });
+  else append_('報修窗口', { repKey: rep.key, repName: rep.name, userId: c.userId, displayName: c.displayName, boundAt: now_(), status: 'active' });
+  const told = push_(c.userId, [text_([`✅ 綁定完成！莊晴全已確認您是「${rep.name}」的報修窗口。`, '',
+    '之後交辦的報修案件會直接傳到這裡（有照片、地圖和報修人聯絡方式）。',
+    '處理完請點案件下方的「已處理完成」，或輸入：報修完成 編號 處理說明',
+    '看目前交給您們的案件：報修案件'].join('\n'))]);
+  return `✅ 已把「${c.displayName}」綁定為${rep.name}的報修窗口` + (told ? '，也已經用 LINE 通知他了。' : '（LINE 通知沒送出去，請直接告訴他）。') +
+    '\n輸入「報修窗口」可以看三個服務處的綁定狀況。';
 }
 
 /** 私訊裡跟報修有關的文字；有處理就回傳 true。 */
@@ -764,6 +802,11 @@ function handleRepairText_(ev, uid, t) {
     reply_(ev.replyToken, [text_(setRepairOpen_(t === '開放快速報修'))]);
     return true;
   }
+  if ((m = t.match(/^報修窗口\s*(?:同意|綁定|核准)\s*(.+)$/))) {
+    if (!isOwnerUser_(uid)) return false;
+    reply_(ev.replyToken, [text_(approveRepairWindow_(m[1].trim()))]);
+    return true;
+  }
   if (t === '報修窗口' || (m = t.match(/^報修窗口\s*解除\s*(.+)$/))) {
     if (!isOwnerUser_(uid)) return false;
     if (m) {
@@ -779,12 +822,30 @@ function handleRepairText_(ev, uid, t) {
     reply_(ev.replyToken, [text_((m ? '✅ 已解除原本的窗口並換新綁定碼。\n\n' : '') + repairWindowsText_())]);
     return true;
   }
-  if ((m = t.match(/^報修綁定\s*(\S*)$/))) {
-    const code = m[1].toUpperCase().replace(/[^A-Z0-9]/g, '');
+  // 里長 10/14 測試：服務處人員傳「黃健豪立委服務處：報修綁定 柏丞」（前面多了服務處名稱、綁定碼的位置填了名字），
+  // 原本整則沒被認出來、也沒有回覆。現在訊息裡任何地方有「報修綁定」都會處理；綁定碼不對就說清楚，並請里長同意。
+  if (t.length <= 120 && /報修綁定/.test(t)) {
     const codes = repairBindCodes_();
-    const rep = REPAIR_REPS.find(r => code && String(codes[r.key]).replace(/[^A-Z0-9]/g, '') === code);
+    const tokens = (t.toUpperCase().match(/[HZL]\s*[-－–]?\s*[A-Z0-9]{5}/g) || []).map(x => x.replace(/[^A-Z0-9]/g, ''));
+    const rep = REPAIR_REPS.find(r => tokens.indexOf(String(codes[r.key]).replace(/[^A-Z0-9]/g, '')) >= 0);
     if (!rep) {
-      reply_(ev.replyToken, [text_('綁定碼不正確，請向莊晴全服務團隊確認。')]);
+      if (isOwnerUser_(uid)) {
+        reply_(ev.replyToken, [text_('綁定碼不正確。要看三個服務處的綁定碼，請輸入「報修窗口」。')]);
+        return true;
+      }
+      const guess = repairRep_(t.replace(/報修綁定[\s\S]*$/, '')) || repairRep_(t);
+      const dn = lineDisplayName_(uid);
+      reply_(ev.replyToken, [text_(['⚠️ 還沒綁定成功：綁定碼不正確。',
+        '綁定碼是英文字母加數字，長這樣：報修綁定 H-AB2CD（不是填名字）。',
+        '我們已經通知莊晴全，他確認後會幫您完成綁定，或給您正確的綁定碼。'].join('\n'))]);
+      const rows = readAll_('報修窗口');
+      if (!rows.some(w => w.userId === uid && (w.status === 'pending' || repairWindowActive_(w)))) {
+        append_('報修窗口', { repKey: guess && guess !== REPAIR_SELF ? guess.key : '', repName: guess && guess !== REPAIR_SELF ? guess.name : '',
+          userId: uid, displayName: dn, boundAt: now_(), status: 'pending' });
+      }
+      notifyOwner_([`🔧 有人想綁定快速報修窗口，但綁定碼不對：`, `${dn || 'LINE 用戶'}${guess && guess !== REPAIR_SELF ? '（' + guess.name + '）' : ''}傳了「${t.slice(0, 60)}」`, '',
+        '是您找的服務處人員的話，直接輸入：', `報修窗口 同意 ${dn || ''}${guess && guess !== REPAIR_SELF ? '' : ' 黃健豪（換成那個服務處）'}`,
+        '就綁定好了，不用再請他傳綁定碼。'].join('\n'));
       return true;
     }
     if (repairWindows_(rep.key).some(w => w.userId === uid)) {
@@ -799,7 +860,9 @@ function handleRepairText_(ev, uid, t) {
       '要補充進度：報修進度 編號 說明（例：報修進度 F0001 已通報路燈管理處）',
       '看目前交給您們的案件：報修案件'].join('\n'))])) {
       const displayName = lineDisplayName_(uid);
-      append_('報修窗口', { repKey: rep.key, repName: rep.name, userId: uid, displayName, boundAt: now_(), status: 'active' });
+      const pend = readAll_('報修窗口').find(w => w.userId === uid && w.status === 'pending');
+      if (pend) update_('報修窗口', pend._row, { repKey: rep.key, repName: rep.name, displayName, boundAt: now_(), status: 'active' });
+      else append_('報修窗口', { repKey: rep.key, repName: rep.name, userId: uid, displayName, boundAt: now_(), status: 'active' });
       notifyOwner_(`🔧 ${rep.name}的報修窗口已綁定：${displayName || 'LINE 用戶'}`);
     }
     return true;
