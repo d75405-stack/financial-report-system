@@ -290,7 +290,7 @@ function handleEvent_(ev) {
   if (isOwnerUser_(uid)) {
     const cq = t.replace(new RegExp('^' + ASSISTANT_NAME + '[\\s,，:：]*'), '').match(CHAT_QUERY_RE);
     if (cq) {
-      reply_(ev.replyToken, [text_(cq[2].trim() ? chatQueryText_(cq[2], uid) : CHAT_HELP_TEXT)]);
+      reply_(ev.replyToken, [text_(cq[1].trim() ? chatQueryText_(cq[1], uid) : CHAT_HELP_TEXT)]);
       return;
     }
     const nt = siteNoticeCommand_(t.replace(new RegExp('^' + ASSISTANT_NAME + '[\\s,，:：]*'), ''), uid);
@@ -1181,7 +1181,7 @@ function looksLikePlacePost_(t) {
 function mgmtGroupCommand_(cmd, c) {
   let m;
   // 查社群聊天紀錄（里長 10/14：管理群每個人都可以查，名字遮一半）
-  if ((m = cmd.match(CHAT_QUERY_RE))) return /^(怎麼用|如何用|說明|用法|教學)?[?？]?$/.test(m[2].trim()) ? CHAT_HELP_TEXT : chatQueryText_(m[2], c.uid);
+  if ((m = cmd.match(CHAT_QUERY_RE))) return /^(怎麼用|如何用|說明|用法|教學)?[?？]?$/.test(m[1].trim()) ? CHAT_HELP_TEXT : chatQueryText_(m[1], c.uid);
   if (c.isPost && !NB_ADD_RE.test(cmd)) return null;   // 貼特約公告同時 @官方帳號：特約上架
   if ((m = cmd.match(NB_REMOVE_RE))) {
     let r;
@@ -1326,7 +1326,7 @@ function aiNeighborParse_(text, uid) {
       muteHttpExceptions: true,
     });
     if (res.getResponseCode() !== 200) {
-      console.error('Claude API（生活資訊整理）' + res.getResponseCode() + '：' + res.getContentText().slice(0, 300));
+      logAiError_('生活資訊整理', res);
       return null;
     }
     const data = JSON.parse(res.getContentText());
@@ -1419,7 +1419,7 @@ const MGMT_HELP_TEXT = [
 // 資料來源：里長從 LINE 社群匯出的聊天紀錄（.txt），私訊傳給全全就會更新；整理時名字先遮好、手機號碼遮掉，
 // 只存遮過的版本（壓縮檔）在里長自己的雲端硬碟（不公開的資料夾），程式裡不放任何聊天內容。
 
-const CHAT_QUERY_RE = /^(查社群|社群查詢|查大小事|查聊天紀錄|查聊天記錄|查對話紀錄)\s*([\s\S]*)$/;
+const CHAT_QUERY_RE = /^(?:(?:查詢|查|搜尋|搜|找)\s*(?:(?:社群|大小事)的?(?:聊天|對話)?(?:紀錄|記錄)?|(?:聊天|對話)(?:紀錄|記錄))(?:裡|中|內)?|(?:社群|大小事)\s*(?:查詢|搜尋))\s*([\s\S]*)$/;
 const CHAT_NAME = '廍子里大小事';
 const CHAT_RECENT_SHOW = 8;           // 回覆裡列出最近幾則
 const CHAT_AI_MAX_CHARS = 12000;      // 給 Claude 整理重點的對話字數上限
@@ -1650,7 +1650,7 @@ function chatAiSummary_(label, hits, uid, started) {
       muteHttpExceptions: true,
     });
     if (res.getResponseCode() !== 200) {
-      console.error('Claude API（社群查詢）' + res.getResponseCode() + '：' + res.getContentText().slice(0, 300));
+      logAiError_('社群查詢', res);
       return '';
     }
     const data = JSON.parse(res.getContentText());
@@ -1739,7 +1739,7 @@ function aiShopParse_(text, uid) {
       muteHttpExceptions: true,
     });
     if (res.getResponseCode() !== 200) {
-      console.error('Claude API（特約整理）' + res.getResponseCode() + '：' + res.getContentText().slice(0, 300));
+      logAiError_('特約整理', res);
       return null;
     }
     const data = JSON.parse(res.getContentText());
@@ -3031,7 +3031,7 @@ function aiAnswer_(question, uid, name) {
   let answer;
   const code = res.getResponseCode();
   if (code !== 200) {
-    console.error('Claude API ' + code + '：' + res.getContentText().slice(0, 300));
+    logAiError_('AI 問答', res);
     answer = '全全暫時無法回答，請稍後再試，或直接在聊天室留言，會由真人回覆。';
   } else {
     const data = JSON.parse(res.getContentText());
@@ -3046,6 +3046,55 @@ function aiAnswer_(question, uid, name) {
     logAi_(uid, name, question, answer, data.usage);
   }
   return answer;
+}
+
+/**
+ * Claude API 失敗：原因記到「系統紀錄」（不含提問內容；同一種 10 分鐘內只記一次），
+ * 金鑰、權限、餘額、模型這類不會自己好的問題，每天通知里長一次。
+ */
+function logAiError_(what, res) {
+  const code = res.getResponseCode();
+  let msg = '';
+  try { const e = JSON.parse(res.getContentText()).error || {}; msg = [e.type, e.message].filter(Boolean).join('：'); } catch (_) { msg = String(res.getContentText()).slice(0, 200); }
+  console.error('Claude API（' + what + '）' + code + '：' + msg);
+  try {
+    const cache = CacheService.getScriptCache();
+    if (!cache.get('aierr_' + what)) {
+      cache.put('aierr_' + what, '1', 600);
+      append_('系統紀錄', { at: now_(), what: 'AI 失敗：' + what, result: ('HTTP ' + code + '｜' + (prop_('AI_MODEL') || AI_DEFAULT_MODEL) + '｜' + msg).slice(0, 500) });
+    }
+  } catch (_) { /* 記錄失敗不影響 */ }
+  const today = ymdAfter_(0);
+  if ([400, 401, 403, 404].indexOf(code) >= 0 && prop_('AI_ERR_NOTIFIED') !== today) {
+    PropertiesService.getScriptProperties().setProperty('AI_ERR_NOTIFIED', today);
+    try {
+      notifyOwner_('⚠️ 全全的 AI 回答目前無法使用（HTTP ' + code + '）：' + msg.slice(0, 200) +
+        (/credit|balance|billing/i.test(msg) ? '\n→ 帳戶餘額不足，請到 Claude Console 的 Billing 儲值。' : '') + '\n請把這則訊息傳給 Claude 處理。');
+    } catch (_) { /* 通知失敗不影響 */ }
+  }
+}
+
+/** 部署時檢查 Claude API 能不能用（很短的一問），結果記到「系統紀錄」。 */
+function aiHealthCheck_() {
+  const key = prop_('ANTHROPIC_API_KEY');
+  if (!key) return '沒有設定 ANTHROPIC_API_KEY';
+  const model = prop_('AI_MODEL') || AI_DEFAULT_MODEL;
+  const res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'server-side-fallback-2026-07-01' },
+    payload: JSON.stringify({ model, max_tokens: 50, output_config: { effort: 'low' }, fallbacks: 'default',
+      messages: [{ role: 'user', content: '請只回答「OK」兩個字。' }] }),
+    muteHttpExceptions: true,
+  });
+  const code = res.getResponseCode();
+  let detail = '';
+  try {
+    const d = JSON.parse(res.getContentText());
+    detail = code === 200 ? 'stop=' + d.stop_reason + '｜model=' + d.model + '｜' + (d.content || []).filter(b => b.type === 'text').map(b => b.text).join('').slice(0, 30)
+      : [d.error && d.error.type, d.error && d.error.message].filter(Boolean).join('：');
+  } catch (_) { detail = String(res.getContentText()).slice(0, 300); }
+  return ('HTTP ' + code + '｜設定的模型 ' + model + '｜' + detail).slice(0, 500);
 }
 
 function logAi_(uid, name, question, answer, usage) {
@@ -3426,6 +3475,8 @@ SCHEDULED_BROADCASTS.push({ id: 'richmenu-service-v4-1014', at: '2026-10-14T17:0
   swap: { alias: 'lizhang-tab-service', name: '里辦主選單v4-服務分頁(快速報修)',
     image: 'https://d75405-stack.github.io/financial-report-system/line-bot/web/richmenu-service-v4.jpg',
     replace: { '回報': { type: 'message', label: '快速報修', text: '快速報修' } } } });
+// 里長 10/14 管理群「全全 查詢社群停車」回「暫時無法回答」：AI 問答紀錄 10/4 之後沒有成功的紀錄 → 部署時檢查一次 Claude API
+SCHEDULED_BROADCASTS.push({ id: 'ai-check-1014', at: '2026-10-14T19:35:00+08:00', title: 'AI 連線檢查', kind: 'aiCheck' });
 // 里長 10/14：「大小事聊天內容有哪些主題」→「發送至廍子里管理群」（社群三年對話用關鍵字分類的大概數量，不含任何人的名字）
 SCHEDULED_BROADCASTS.push({ id: 'mgmt-topics-1014', at: '2026-10-14T18:55:00+08:00', title: '社群聊天主題整理', kind: 'mgmtGroup',
   text: [
@@ -4529,6 +4580,14 @@ function runScheduledBroadcasts() {
         const msg = setRepairOpen_(true);
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_('🔧 ' + msg + '\n\n要暫停：私訊輸入「關閉快速報修」。');
+        return;
+      }
+      if (b.kind === 'aiCheck') {
+        // 只記到「系統紀錄」給 Claude 看，不通知里長
+        let r;
+        try { r = aiHealthCheck_(); } catch (err) { r = '失敗 ' + err.message; }
+        props.setProperty(key, 'sent ' + now_() + ' ' + String(r).slice(0, 200));
+        try { append_('系統紀錄', { at: now_(), what: b.title, result: r }); } catch (_) { /* 記錄失敗不影響 */ }
         return;
       }
       if (b.kind === 'lawyerGroup') {
