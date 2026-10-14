@@ -3131,6 +3131,8 @@ const SCHEDULED_BROADCASTS = [
 SCHEDULED_BROADCASTS.push({ id: 'mgmt-help-1013', at: '2026-10-13T21:55:00+08:00', title: '管理群網站功能說明', kind: 'mgmtGroup',
   text: ['各位夥伴好 🙌', '官方帳號「全全」現在可以幫大家直接管理活動網站，群組裡每個人都可以用！', '指令前面加「全全」或 @官方帳號 👇'].concat(MGMT_HELP_TEXT.split('\n').slice(2))
     .concat(['', '不會用就在群組打「全全 網站功能」，隨時叫出這份說明 😊', '', '里長參選人莊晴全 敬上']).join('\n') });
+// 里長 10/14：「測試完成了，開放快速報修」（黃健豪、賴順仁服務處窗口已綁定並測試過）
+SCHEDULED_BROADCASTS.push({ id: 'repair-open-1014', at: '2026-10-14T16:20:00+08:00', title: '開放快速報修', kind: 'repairOpen' });
 // 里長 10/13 晚上：「先把名單傳到管理群，不要更新（網站）」→ 社群三年來里民推薦 2 次以上的店家名單，深夜發所以靜音
 SCHEDULED_BROADCASTS.push({ id: 'mgmt-recs-1013', at: '2026-10-13T23:45:00+08:00', title: '里民推薦名單', kind: 'mgmtGroup', silent: true,
   text: [
@@ -4100,6 +4102,13 @@ function runScheduledBroadcasts() {
           `目前未繳費共 ${r.total} 筆。` + (r.late ? `（其中 ${r.late} 筆是 10/16 起報名、活動當天報到時繳，不算逾期）` : '')]
           .concat(n ? ['', `另有 ${n} 筆的報名者沒在官方 LINE 傳過「報名確認」，沒辦法用 LINE 通知：`]
           .concat(missed.map(k => `・${k}：${r.missed[k]} 筆`), '名單（含電話）可在試算表「活動報名名單」篩選「未繳」查看（狀態是「候補」的不用繳）。') : []).join('\n'));
+        return;
+      }
+      if (b.kind === 'repairOpen') {
+        // 開放快速報修（跟里長私訊「開放快速報修」一樣：開放前的測試案件設為不處理），結果通知里長
+        const msg = setRepairOpen_(true);
+        props.setProperty(key, 'sent ' + now_());
+        notifyOwner_('🔧 ' + msg + '\n\n要暫停：私訊輸入「關閉快速報修」。');
         return;
       }
       if (b.kind === 'mgmtGroup') {
