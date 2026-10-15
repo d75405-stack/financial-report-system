@@ -3477,6 +3477,8 @@ SCHEDULED_BROADCASTS.push({ id: 'richmenu-service-v4-1014', at: '2026-10-14T17:0
     replace: { '回報': { type: 'message', label: '快速報修', text: '快速報修' } } } });
 // 里長 10/14 管理群「全全 查詢社群停車」回「暫時無法回答」：AI 問答紀錄 10/4 之後沒有成功的紀錄 → 部署時檢查一次 Claude API
 SCHEDULED_BROADCASTS.push({ id: 'ai-check-1014', at: '2026-10-14T19:35:00+08:00', title: 'AI 連線檢查', kind: 'aiCheck' });
+// 里長 10/15 早上換了新金鑰 →「換好了，幫我測試」
+SCHEDULED_BROADCASTS.push({ id: 'ai-check-1015', at: '2026-10-15T08:28:00+08:00', title: 'AI 連線檢查（換金鑰後）', kind: 'aiCheck' });
 // 里長 10/14：「大小事聊天內容有哪些主題」→「發送至廍子里管理群」（社群三年對話用關鍵字分類的大概數量，不含任何人的名字）
 SCHEDULED_BROADCASTS.push({ id: 'mgmt-topics-1014', at: '2026-10-14T18:55:00+08:00', title: '社群聊天主題整理', kind: 'mgmtGroup',
   text: [
