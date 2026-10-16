@@ -789,7 +789,8 @@ function repairWindowsText_() {
 
 /**
  * 里長「報修窗口 同意 名字 [服務處]」：把傳過「報修綁定」（綁定碼不對）的人直接綁成窗口。
- * 找人：「報修窗口」裡等待同意的（pending），沒有的話找 7 天內私訊過「報修綁定」的人（未回覆訊息）。
+ * 找人：「報修窗口」裡等待同意的（pending），沒有的話找 7 天內私訊過「報修綁定」的人（未回覆訊息）；
+ * 再沒有的話，找 14 天內加好友或私訊過官方 LINE、LINE 名稱對得上的人（服務處人員只加好友、自我介紹，沒傳綁定碼時）。
  */
 function approveRepairWindow_(arg) {
   const repArg = REPAIR_REPS.find(r => r.re.test(arg));
@@ -803,11 +804,47 @@ function approveRepairWindow_(arg) {
     readAll_('未回覆訊息').filter(x => String(x.at) >= since && /報修綁定/.test(x.text) && same(x.displayName)).reverse()
       .forEach(x => { if (!seen[x.userId]) { seen[x.userId] = 1; cands.push({ userId: x.userId, displayName: x.displayName, text: x.text }); } });
   }
+  if (!cands.length) cands = recentContacts_(14).filter(x => same(x.displayName));
   if (!cands.length) return `找不到「${name}」傳的綁定訊息（7 天內）。\n請他先在官方 LINE 傳「報修綁定」，或輸入「報修窗口」看綁定碼轉給他。`;
   if (cands.length > 1) return `找到 ${cands.length} 位：${cands.map(c => c.displayName).join('、')}，請寫完整的 LINE 名稱。`;
   const c = cands[0];
   const rep = repArg || REPAIR_REPS.find(r => r.key === (c.row && c.row.repKey)) || repairRep_(String(c.text || '').replace(/報修綁定[\s\S]*$/, '')) || null;
   if (!rep || rep === REPAIR_SELF) return `「${c.displayName}」是哪個服務處的窗口？請加上服務處，例如：報修窗口 同意 ${c.displayName} 黃健豪`;
+  return bindRepairWindow_(rep, c);
+}
+
+/** 最近 days 天加好友或私訊過官方 LINE 的人（每人一筆，取最新的 LINE 名稱與訊息）。 */
+function recentContacts_(days) {
+  const since = Utilities.formatDate(new Date(Date.now() - days * 864e5), TZ, 'yyyy-MM-dd HH:mm');
+  const by = {};
+  readAll_('好友紀錄').filter(x => String(x.at) >= since && x.userId && x.event === '加入')
+    .forEach(x => { by[x.userId] = { userId: x.userId, displayName: x.displayName, text: '' }; });
+  readAll_('未回覆訊息').filter(x => String(x.at) >= since && x.userId)
+    .forEach(x => { by[x.userId] = { userId: x.userId, displayName: x.displayName || (by[x.userId] || {}).displayName, text: x.text }; });
+  return Object.keys(by).map(k => by[k]);
+}
+
+/**
+ * 預約排程用：14 天內私訊自我介紹是某服務處人員（訊息符合 intro，例如「我是曾咨耀的助理」）的人，綁定成該服務處的報修窗口。
+ * 找到剛好一位才綁；找不到或不只一位就請里長用「報修窗口 同意 LINE名稱 服務處」。程式裡不寫個人的 LINE 名稱或 ID。
+ */
+function bindRepByIntro_(repKey, intro) {
+  const rep = REPAIR_REPS.find(r => r.key === repKey);
+  if (!rep) return '找不到服務處 ' + repKey;
+  const re = new RegExp(intro);
+  const since = Utilities.formatDate(new Date(Date.now() - 14 * 864e5), TZ, 'yyyy-MM-dd HH:mm');
+  const by = {};
+  readAll_('未回覆訊息').filter(x => String(x.at) >= since && x.userId && re.test(String(x.text || '')) && /助理|服務處|秘書|主任|窗口/.test(String(x.text || '')))
+    .forEach(x => { by[x.userId] = { userId: x.userId, displayName: x.displayName, text: x.text }; });
+  const cands = Object.keys(by).map(k => by[k]);
+  if (cands.length !== 1) return `⚠️ ${rep.name}報修窗口沒有自動綁定：找到 ${cands.length} 位自我介紹的人` +
+    (cands.length ? `（${cands.map(c => c.displayName).join('、')}）` : '') + `。\n請輸入：報修窗口 同意 LINE名稱 ${rep.short.replace(/議員|立委/, '')}`;
+  if (repairWindows_(rep.key).some(w => w.userId === cands[0].userId)) return `「${cands[0].displayName}」已經是${rep.name}的報修窗口了 👍`;
+  return bindRepairWindow_(rep, cands[0]);
+}
+
+/** 把 c（{ userId, displayName, row? }）綁成 rep 的報修窗口，通知本人；回傳給里長的訊息。 */
+function bindRepairWindow_(rep, c) {
   if (repairWindows_(rep.key).some(w => w.userId === c.userId)) return `「${c.displayName}」已經是${rep.name}的報修窗口了 👍`;
   if (c.row) update_('報修窗口', c.row._row, { repKey: rep.key, repName: rep.name, boundAt: now_(), status: 'active' });
   else append_('報修窗口', { repKey: rep.key, repName: rep.name, userId: c.userId, displayName: c.displayName, boundAt: now_(), status: 'active' });
@@ -4041,6 +4078,9 @@ SCHEDULED_BROADCASTS.push({ id: 'unpaid-list-1016', at: '2026-10-16T09:00:00+08:
 // 主辦 10/15 決定：10/16(五) 12:00 取消 10/15 以前報名、逾期沒繳的報名（名額保留給活動當天現場排隊繳費補位），
 // LINE 通知被取消的人和手工皂、彩繪提袋的候補（見 overdueCancelSite_、sendOverdueNotices_）。
 // 一定要排在 paid-list-1016 前面：runScheduledBroadcasts 照陣列順序處理，同一時間的先取消、再發已繳費名單
+// 里長 10/16 指示：曾朝榮議員服務處的人（10/13 加官方 LINE、自我介紹是曾咨耀的助理）綁成快速報修窗口
+SCHEDULED_BROADCASTS.push({ id: 'bind-rep-z-1016', at: '2026-10-16T12:55:00+08:00', title: '綁定曾朝榮議員服務處報修窗口', kind: 'bindRepIntro',
+  rep: 'Z', intro: '曾咨耀|曾朝榮|曾議員' });
 SCHEDULED_BROADCASTS.push({ id: 'overdue-cancel-1016', at: '2026-10-16T12:00:00+08:00', title: '逾期未繳取消＋候補通知', kind: 'overdueCancel' });
 // 里長 10/14：「禮拜五中午 12 點通知已繳費名單」→ 名單私訊里長＋LINE 通知已繳費的報名者本人（不發管理群、聯辦群）
 SCHEDULED_BROADCASTS.push({ id: 'paid-list-1016', at: '2026-10-16T12:00:00+08:00', title: '10/16 已繳費名單', kind: 'paidList', notify: true });
@@ -5194,6 +5234,12 @@ function runScheduledBroadcasts() {
         const msg = setRepairOpen_(true);
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_('🔧 ' + msg + '\n\n要暫停：私訊輸入「關閉快速報修」。');
+        return;
+      }
+      if (b.kind === 'bindRepIntro') {
+        const r = bindRepByIntro_(b.rep, b.intro);
+        props.setProperty(key, 'sent ' + now_() + ' ' + String(r).slice(0, 120));
+        notifyOwner_('🔧 ' + r);
         return;
       }
       if (b.kind === 'aiCheck') {
