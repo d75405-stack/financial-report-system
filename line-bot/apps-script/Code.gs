@@ -3636,6 +3636,22 @@ SCHEDULED_BROADCASTS.push({ id: 'ai-check-1014', at: '2026-10-14T19:35:00+08:00'
 SCHEDULED_BROADCASTS.push({ id: 'ai-check-1015', at: '2026-10-15T08:28:00+08:00', title: 'AI 連線檢查（換金鑰後）', kind: 'aiCheck' });
 // 里長 10/14：「大小事聊天內容有哪些主題」→「發送至廍子里管理群」（社群三年對話用關鍵字分類的大概數量，不含任何人的名字）
 // 里長 10/17 早上指示：比賽時間發到管理群，請工作人員轉告
+// 里長 10/17 13:55 指示：開放組成績發到管理群（網站陀螺賽頁也已公布）
+SCHEDULED_BROADCASTS.push({ id: 'mgmt-results-open-1017', at: '2026-10-17T13:50:00+08:00', title: '開放組成績', kind: 'mgmtGroup',
+  text: [
+    '🏆 萬聖節開放組｜比賽成績（10/17 上午・54 位選手）',
+    '',
+    '👑 冠軍　12 號 鄭志偉',
+    '🥈 亞軍　35 號 沈裕基',
+    '🥉 季軍　1 號 江佶霖',
+    '4️⃣ 殿軍　33 號 孫軒麟',
+    '',
+    '恭喜得獎選手！謝謝所有選手和工作人員 🙏',
+    '',
+    '📋 網站成績公布：' + CCS_BASE + '/signup/beyblade/#results',
+    '🖼 成績圖（可以直接轉傳）：' + CCS_BASE + '/signup/beyblade/results-open-1017.webp',
+    '🌳 完整對戰表圖：' + CCS_BASE + '/signup/beyblade/bracket-open-1017.webp',
+  ].join('\n') });
 // 里長 10/17 13:30 指示：下午活動要開始了，通知全部 LINE 好友（內容里長已確認）
 SCHEDULED_BROADCASTS.push({ id: 'afternoon-start-1017', at: '2026-10-17T13:30:00+08:00', title: '北屯鬧起來｜下午活動 14:00 開始囉！',
   text: [
