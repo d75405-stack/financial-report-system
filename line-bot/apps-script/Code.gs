@@ -3636,6 +3636,9 @@ SCHEDULED_BROADCASTS.push({ id: 'ai-check-1014', at: '2026-10-14T19:35:00+08:00'
 SCHEDULED_BROADCASTS.push({ id: 'ai-check-1015', at: '2026-10-15T08:28:00+08:00', title: 'AI 連線檢查（換金鑰後）', kind: 'aiCheck' });
 // 里長 10/14：「大小事聊天內容有哪些主題」→「發送至廍子里管理群」（社群三年對話用關鍵字分類的大概數量，不含任何人的名字）
 // 里長 10/17 早上指示：比賽時間發到管理群，請工作人員轉告
+// 里長 10/17 09:00 指示：通知開放組報名者快開賽了
+SCHEDULED_BROADCASTS.push({ id: 'call-open-1017', at: '2026-10-17T09:00:00+08:00', title: '開放組快開賽通知', kind: 'sessionCall',
+  session: '10/17上午 開放組(惠宇開朗)', head: '📣 戰鬥陀螺賽｜開放組快開賽了！' });
 SCHEDULED_BROADCASTS.push({ id: 'mgmt-schedule-1017', at: '2026-10-17T08:05:00+08:00', title: '今明兩天比賽時間', kind: 'mgmtGroup',
   text: [
     '🎃 北屯鬧起來｜比賽時間（請夥伴們幫忙轉告）',
@@ -4534,6 +4537,37 @@ function flushNoticeLog_() {
   else props.deleteProperty('NOTICE_UNLOGGED');
 }
 
+/** 開賽前叫人：發給這個陀螺場次有綁 LINE、沒取消的報名者（里長 10/17 指示）。同一場只發一次（活動通知紀錄）。 */
+function sendSessionCall_(session, head) {
+  try { syncSignupsNow_(); } catch (err) { console.warn('開賽通知前同步失敗，使用上次的名單：' + err.message); }
+  const kind = '開賽通知 ' + session;
+  flushNoticeLog_();
+  const done = new Set(noticeLog_().filter(x => x.kind === kind).map(x => x.userId));
+  const covered = new Set();
+  const out = { sent: 0, failed: 0, already: 0 };
+  const isMine = r => r.活動 === '🌀 陀螺賽' && r.場次梯次 === session && !/^已取消/.test(r.狀態) && !isWaitlistSignup_(r);
+  const where = PAID_SESSION_INFO[session] || session;
+  linkedSignups_().forEach(({ uid, rows }) => {
+    const mine = rows.filter(isMine);
+    mine.forEach(r => covered.add(r._row));
+    if (!mine.length) return;
+    if (done.has(uid)) return out.already++;
+    const names = Array.from(new Set(mine.map(r => r.姓名).filter(Boolean)));
+    const lines = [head, '', `${names.length === 1 ? names[0] + ' ' : ''}您好，比賽就快開始了！請盡快到報到處報到，領取捐款收據和比賽手環，憑手環入場比賽。`,
+      '📅 ' + where, ''];
+    mine.forEach(r => lines.push(`・${signupWho_(r)}${/已繳/.test(r.繳費) ? '' : '｜報到時現場繳報名費 200 元'}`));
+    const m = venueMapOf_(where);
+    lines.push('', '📺 對戰表：' + CCS_BASE + '/bracket/', m ? '🗺 ' + m.name + '：' + m.url : '', '', '里長參選人莊晴全 敬上');
+    if (!tryPush_(uid, [text_(lines.filter((x, i, a) => x !== '' || a[i - 1] !== '').join('\n').slice(0, 4900))])) return out.failed++;
+    logNotice_(uid, kind, mine.map(noticeItem_).join('、').slice(0, 1000));
+    out.sent++;
+  });
+  const all = readAll_('活動報名名單').filter(isMine);
+  out.total = all.length;
+  out.unlinked = all.filter(r => !covered.has(r._row)).length;
+  return out;
+}
+
 /** 推播給一個人；網路錯誤、逾時等例外算發送失敗（不中斷整批）。 */
 function tryPush_(uid, messages) {
   try { return push_(uid, messages); } catch (err) {
@@ -5194,6 +5228,13 @@ function runScheduledBroadcasts() {
         props.setProperty(key, `sent ${now_()} 取消 ${Math.max(site.count, n.cancelTotal || 0)} 筆 通知 ${n.cancelSent} 人 候補 ${n.waitSent} 人`);
         props.deleteProperty('BCERR_' + b.id);
         notifyOwner_(overdueSummaryText_(site, n));
+        return;
+      }
+      if (b.kind === 'sessionCall') {
+        const r = sendSessionCall_(b.session, b.head);
+        props.setProperty(key, 'sent ' + now_() + ` ${r.sent} 人`);
+        notifyOwner_(`📣 已用 LINE 通知「${b.session}」的報名者快開賽了：${r.sent} 位` +
+          (r.failed ? `，${r.failed} 位沒送出去` : '') + `\n這場有效報名 ${r.total} 筆，其中 ${r.unlinked} 筆沒有綁 LINE（收不到，請現場廣播叫號）。`);
         return;
       }
       if (b.kind === 'eveReminder') {
