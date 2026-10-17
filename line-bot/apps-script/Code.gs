@@ -3636,6 +3636,9 @@ SCHEDULED_BROADCASTS.push({ id: 'ai-check-1014', at: '2026-10-14T19:35:00+08:00'
 SCHEDULED_BROADCASTS.push({ id: 'ai-check-1015', at: '2026-10-15T08:28:00+08:00', title: 'AI 連線檢查（換金鑰後）', kind: 'aiCheck' });
 // 里長 10/14：「大小事聊天內容有哪些主題」→「發送至廍子里管理群」（社群三年對話用關鍵字分類的大概數量，不含任何人的名字）
 // 里長 10/17 早上指示：比賽時間發到管理群，請工作人員轉告
+// 里長 10/17 16:00 指示：賴順仁議員的印章在裕國豐展，先上網站頂部公告
+SCHEDULED_BROADCASTS.push({ id: 'notice-lai-stamp-1017', at: '2026-10-17T16:00:00+08:00', title: '網站公告：賴順仁議員打卡蓋章', kind: 'siteNotice',
+  text: '🤝 賴順仁議員打卡蓋章在「裕國豐展」前市集（太順路60號），今天 10/17 16:00–21:00，粉專按讚分享就能蓋章（印章：曬死鬼）送萬聖小禮物！集章地圖 👉 ' + CCS_BASE + '/map/' });
 // 里長 10/17 13:55 指示：開放組成績發到管理群（網站陀螺賽頁也已公布）
 SCHEDULED_BROADCASTS.push({ id: 'mgmt-results-open-1017', at: '2026-10-17T13:50:00+08:00', title: '開放組成績', kind: 'mgmtGroup',
   text: [
@@ -5265,6 +5268,16 @@ function runScheduledBroadcasts() {
         props.setProperty(key, `sent ${now_()} 取消 ${Math.max(site.count, n.cancelTotal || 0)} 筆 通知 ${n.cancelSent} 人 候補 ${n.waitSent} 人`);
         props.deleteProperty('BCERR_' + b.id);
         notifyOwner_(overdueSummaryText_(site, n));
+        return;
+      }
+      if (b.kind === 'siteNotice') {
+        // 里長交代的網站公告（每一頁最上面那條），跟里長私訊「網站公告 內容」一樣
+        const r = ccsApi_('/api/site-info', { action: 'setNotice', text: b.text, by: '里長' });
+        if (!r.ok) throw new Error(r.error || '網站沒有回應');
+        props.setProperty(key, 'sent ' + now_());
+        notifyOwner_(['✅ 網站公告已上線（每一頁最上面都看得到）', '', '📢 ' + r.notice.text]
+          .concat(r.replaced ? ['', `（原本的公告「${String(r.replaced.text).slice(0, 30)}」已換掉）`] : [])
+          .concat(['', '撤下：私訊官方帳號「撤下網站公告」']).join('\n'));
         return;
       }
       if (b.kind === 'sessionCall') {
