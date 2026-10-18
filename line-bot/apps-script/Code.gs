@@ -3642,6 +3642,20 @@ SCHEDULED_BROADCASTS.push({ id: 'ai-check-1014', at: '2026-10-14T19:35:00+08:00'
 SCHEDULED_BROADCASTS.push({ id: 'ai-check-1015', at: '2026-10-15T08:28:00+08:00', title: 'AI 連線檢查（換金鑰後）', kind: 'aiCheck' });
 // 里長 10/14：「大小事聊天內容有哪些主題」→「發送至廍子里管理群」（社群三年對話用關鍵字分類的大概數量，不含任何人的名字）
 // 里長 10/17 早上指示：比賽時間發到管理群，請工作人員轉告
+// 里長 10/18 18:06 指示：變裝大賽成績頁（手動輸入）放到聯辦群
+SCHEDULED_BROADCASTS.push({ id: 'report-score-page-1018', at: '2026-10-18T18:06:00+08:00', title: '變裝大賽成績頁', kind: 'reportGroup',
+  images: [{ url: CCS_BASE + '/score/qr-score.jpg', preview: CCS_BASE + '/score/qr-score-s.jpg' }],
+  text: [
+    '🎭 百鬼嘉年華變裝大賽｜成績頁（手動輸入）',
+    '👉 ' + CCS_BASE + '/score/',
+    '',
+    '📺 觀眾／投影：打開網址或掃下面的 QR Code。按「公布」之前只會顯示「評分中」，公布後顯示名次、組別、名稱、分數、獎項，每 10 秒自動更新。',
+    '',
+    '✍️ 工作人員輸入成績：用「登入過工作人員後台」的手機打開同一個網址，下面會出現「輸入成績」：',
+    '1. 每一列填 名次、組別、名稱、分數、獎項（可空白），不夠按「＋ 加一列」',
+    '2. 按「💾 儲存」（觀眾還看不到）',
+    '3. 確定後按「📢 公布給觀眾看」；要收回按「🙈 先藏起來」',
+  ].join('\n') });
 // 里長 10/18 08:25 指示：現場報名 QR Code 發到管理群，讓工作人員轉傳
 SCHEDULED_BROADCASTS.push({ id: 'mgmt-onsite-qr-1018', at: '2026-10-18T08:25:00+08:00', title: '現場報名 QR Code', kind: 'mgmtGroup',
   images: [{ url: CCS_BASE + '/onsite/qr-onsite.jpg', preview: CCS_BASE + '/onsite/qr-onsite-s.jpg' }],
@@ -5401,6 +5415,16 @@ function runScheduledBroadcasts() {
         }
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_(`✅ 已在律師群組發布「${b.title}」`);
+        return;
+      }
+      if (b.kind === 'reportGroup') {
+        // 發到聯辦群（跟每日報名快報同一個群組；images:[{url, preview}] 一起發）
+        const gid = prop_('REPORT_GROUP_ID') || REPORT_GROUP_DEFAULT;
+        const msgs = [text_(b.text)].concat((b.images || []).map(m => ({ type: 'image', originalContentUrl: m.url, previewImageUrl: m.preview || m.url })));
+        const res = lineApi_('message/push', { to: gid, messages: msgs, notificationDisabled: !!b.silent });
+        if (!res.ok) throw new Error(res.body);
+        props.setProperty(key, 'sent ' + now_());
+        notifyOwner_(`✅ 已在聯辦群發布「${b.title}」` + (b.images && b.images.length ? `（含 ${b.images.length} 張圖）` : ''));
         return;
       }
       if (b.kind === 'mgmtGroup') {
