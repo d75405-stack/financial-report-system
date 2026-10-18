@@ -2095,6 +2095,8 @@ const LATE_SIGNUP_FROM = '2026-10-16';
 const ONSITE_URL = 'https://ccs2024taiwan.pages.dev/onsite/';
 const ONSITE_OPEN = '2026-10-17T00:00';
 const ONSITE_CLOSE = '2026-10-18T23:59';
+// 陀螺賽四場都比完、關閉所有陀螺賽報名的時間（里長 10/18 17:25；跟活動網站 functions/api/_onsite.js 的 doneAt 一樣）
+const BEY_DONE_AT = '2026-10-18T17:00';
 const ONSITE_SIGNUP_TEXT = '線上報名到 10/16(五) 23:59 截止；截止後陀螺賽、變裝大賽名額沒滿的改為現場報名：10/17(六) 00:00 起填現場報名表 ' + ONSITE_URL + ' ，活動當天到現場繳費，額滿為止（手工皂、彩繪提袋 DIY 不開放現場報名）。';
 
 // 逾期未繳取消（主辦 10/15 決定）：10/15(四)（含）以前報名、逾期沒繳的，10/16(五) 12:00 由活動網站自動取消（/api/overdue-cancel）。
@@ -2134,6 +2136,10 @@ function onsiteSignupMessage_(ms) {
       '（陀螺賽報名費 200 元全數捐給心路基金會，可開捐款收據；手工皂、彩繪提袋 DIY 不開放現場報名）'].join('\n'));
   }
   if (now > ONSITE_CLOSE) return text_('現場報名已經結束，謝謝大家的熱情參與！🎃');
+  if (now >= BEY_DONE_AT) {
+    return linkButton_('🌀 戰鬥陀螺賽四場都比完了，報名已關閉，謝謝大家！成績在活動網站陀螺賽頁 🏆\n' +
+      '🎭 變裝大賽（今晚 18:00 裕國豐展）名額還沒滿的，可以填現場報名表，填完到報到處繳保證金 👇', '填寫現場報名表', ONSITE_URL);
+  }
   // 取消空出的名額不在現場報名表上，只給活動當天在現場排隊、當場繳費的人補位（主辦 10/15 決定）；按鈕訊息最多 160 字
   return linkButton_('📝 現場報名（陀螺賽、變裝大賽）：名額還沒滿的場次，填表登記、開捐款收據，填完到報到處繳費 👇\n' +
     '額滿的場次：取消空出的名額只在活動當天現場排隊、當場繳費補位（額滿為止）', '填寫現場報名表', ONSITE_URL);
