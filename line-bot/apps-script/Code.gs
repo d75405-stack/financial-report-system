@@ -3636,6 +3636,22 @@ SCHEDULED_BROADCASTS.push({ id: 'ai-check-1014', at: '2026-10-14T19:35:00+08:00'
 SCHEDULED_BROADCASTS.push({ id: 'ai-check-1015', at: '2026-10-15T08:28:00+08:00', title: 'AI 連線檢查（換金鑰後）', kind: 'aiCheck' });
 // 里長 10/14：「大小事聊天內容有哪些主題」→「發送至廍子里管理群」（社群三年對話用關鍵字分類的大概數量，不含任何人的名字）
 // 里長 10/17 早上指示：比賽時間發到管理群，請工作人員轉告
+// 里長 10/18 08:25 指示：現場報名 QR Code 發到管理群，讓工作人員轉傳
+SCHEDULED_BROADCASTS.push({ id: 'mgmt-onsite-qr-1018', at: '2026-10-18T08:25:00+08:00', title: '現場報名 QR Code', kind: 'mgmtGroup',
+  images: [{ url: CCS_BASE + '/onsite/qr-onsite.jpg', preview: CCS_BASE + '/onsite/qr-onsite-s.jpg' }],
+  text: [
+    '📝 現場報名 QR Code（請夥伴們幫忙轉傳，也可以印出來貼在報到處）',
+    '',
+    '線上報名已截止，今天 10/18 名額還沒滿的場次改為現場報名，額滿為止：',
+    '🌀 戰鬥陀螺賽　🎭 變裝大賽',
+    '（手工皂、彩繪提袋 DIY 不開放現場報名）',
+    '',
+    '👉 掃下面的 QR Code，或點：' + ONSITE_URL,
+    '',
+    '填完後到活動現場報到處繳費：',
+    '・陀螺賽報名費 200 元，全數捐給心路基金會',
+    '・變裝大賽保證金 100 元，完成報到退還',
+  ].join('\n') });
 // 里長 10/17 16:10 更正：賴順仁議員的印章是在惠宇開朗（換掉上面那則網站公告）
 SCHEDULED_BROADCASTS.push({ id: 'notice-lai-stamp-1017b', at: '2026-10-17T16:10:00+08:00', title: '網站公告更正：賴順仁議員印章在惠宇開朗', kind: 'siteNotice',
   text: '🤝 更正：賴順仁議員的集章印章（曬死鬼）在「惠宇開朗」（太原路三段1299號），今天 10/17 16:00–21:00，粉專按讚分享就能蓋章送萬聖小禮物！集章地圖 👉 ' + CCS_BASE + '/map/' });
@@ -5389,10 +5405,12 @@ function runScheduledBroadcasts() {
           notifyOwner_(`⚠️「${b.title}」沒有發出：找不到官方帳號所在的管理群。`);
           return;
         }
-        const res = lineApi_('message/push', { to: g.groupId, messages: [text_(b.text)], notificationDisabled: !!b.silent });
+        // images:[{url, preview}] 一起發（圖要先放在活動網站上，LINE 只收 https 的 JPEG/PNG）
+        const msgs = [text_(b.text)].concat((b.images || []).map(m => ({ type: 'image', originalContentUrl: m.url, previewImageUrl: m.preview || m.url })));
+        const res = lineApi_('message/push', { to: g.groupId, messages: msgs, notificationDisabled: !!b.silent });
         if (!res.ok) throw new Error(res.body);
         props.setProperty(key, 'sent ' + now_());
-        notifyOwner_(`✅ 已在「${g.groupName}」發布「${b.title}」`);
+        notifyOwner_(`✅ 已在「${g.groupName}」發布「${b.title}」` + (b.images && b.images.length ? `（含 ${b.images.length} 張圖）` : ''));
         return;
       }
       if (b.to) {
