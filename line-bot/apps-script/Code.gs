@@ -3354,7 +3354,7 @@ function ensureReportTrigger_() {
   try {
     withLock_(() => {
       const have = ScriptApp.getProjectTriggers().map(t => t.getHandlerFunction());
-      if (have.indexOf('sendSignupReport') < 0) {
+      if (have.indexOf('sendSignupReport') < 0 && !signupReportEnded_()) {
         ScriptApp.newTrigger('sendSignupReport').timeBased().everyDays(1).atHour(12).nearMinute(0).inTimezone(TZ).create();
         console.log('已自動建立每日中午報名快報排程');
       }
@@ -3370,8 +3370,18 @@ function ensureReportTrigger_() {
   }
 }
 
+// 里長 10/19：「聯辦群組不再回報」——活動已結束，每日中午報名快報停發。
+// 這天（含）以後觸發器跑到就不發，並把排程刪掉；ensureReportTrigger_ 也不會再自動建回來。
+const SIGNUP_REPORT_END = '2026-10-19';
+function signupReportEnded_() { return Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd') >= SIGNUP_REPORT_END; }
+
 /** 觸發器進入點。 */
 function sendSignupReport() {
+  if (signupReportEnded_()) {
+    ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'sendSignupReport').forEach(t => ScriptApp.deleteTrigger(t));
+    console.log('活動已結束，聯辦群每日報名快報停發，排程已刪除');
+    return '活動已結束，聯辦群每日報名快報已停發';
+  }
   const groupId = prop_('REPORT_GROUP_ID') || REPORT_GROUP_DEFAULT;
   const text = buildSignupReport_();
   const v2 = lineApi_('message/push', { to: groupId, messages: [{
@@ -5626,6 +5636,7 @@ function buildSignupReport_() {
 /** 試算表選單：設定匯出密碼、建立每日中午排程，並可立即發送一次。 */
 function setupSignupReport() {
   const ui = SpreadsheetApp.getUi();
+  if (signupReportEnded_()) return ui.alert('活動已結束，聯辦群每日報名快報已停發（里長 10/19）。');
   try {
     checkOwner_(false);
   } catch (err) {
