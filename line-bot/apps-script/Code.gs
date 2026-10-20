@@ -51,7 +51,7 @@ const SHEETS = {
   律師時段: ['slotId', 'date', 'start', 'end', 'lawyer', 'capacity', 'note'],
   諮詢預約: ['id', 'createdAt', 'slotId', 'userId', 'name', 'phone', 'topic', 'detail', 'status', 'reminded'],
   報修: ['id', 'createdAt', 'userId', 'name', 'phone', 'category', 'content', 'location', 'gps', 'photoUrl', 'photoId',
-    'status', 'rep', 'assignedAt', 'repNote', 'doneAt', 'updatedAt'],
+    'status', 'rep', 'assignedAt', 'repNote', 'doneAt', 'updatedAt', 'donePhotoId', 'photoPublic'],
   報修窗口: ['repKey', 'repName', 'userId', 'displayName', 'boundAt', 'status'],
   特約上架紀錄: ['at', 'groupName', 'userId', 'displayName', 'command', 'result'],
   系統紀錄: ['at', 'what', 'result'],
@@ -130,6 +130,7 @@ function doGet(e) {
   // 報修照片（帶簽章的連結，給里長和服務處窗口看）；活動網站 /repair/ 的公開進度
   if (p.photo) return repairPhotoPage_(String(p.photo), p.t);
   if (p.action === 'repairs') return json_({ ok: true, data: publicRepairs_() });
+  if (p.action === 'repairPhoto') return json_(publicRepairPhoto_(p.id, p.k, p.n));
   // 部署完成時 GitHub Actions 會打一次這個網址，讓已到時間的預約推播馬上發出、律師資料馬上更新
   ensureLawyers_();
   ensureKnowledgePatch_();
@@ -247,6 +248,8 @@ function handleEvent_(ev) {
     return;
   }
   // 收過逾期取消通知的人傳照片（可能是繳費收據）：也通知里長（不回覆）
+  // 服務處窗口／里長傳報修的處理照片（標記完成或「報修照片 編號」後 30 分鐘內）
+  if (ev.type === 'message' && ev.message.type === 'image' && handleRepairImage_(ev, uid)) return;
   if (ev.type === 'message' && ev.message.type === 'image') watchOverdueImage_(uid);
   if (ev.type !== 'message' || ev.message.type !== 'text') return;
 
@@ -463,7 +466,14 @@ const repairPhotoIds_ = r => String((r && r.photoId) || '').split(',').map(x => 
 // 開放前（里長 10/13：「先不要開放，我先串聯好」）：里民輸入「報修」回覆建置中，表單和網站進度也不開放；
 // 里長和已綁定的服務處窗口照常可以用（綁定、測試流程）。里長私訊「開放快速報修」就開放（指令碼屬性 REPAIR_OPEN）。
 const REPAIR_CLOSED_TEXT = '🔧 快速報修功能建置中，尚未開放，敬請期待！';
-const REPAIR_CMD_RE = /^報修(分派|交給|完成|進度|不處理)\s*([Ff]?\s*\d{1,4})\s*([\s\S]*)$/;
+const REPAIR_CMD_RE = /^報修(分派|交給|完成|進度|不處理|照片)\s*([Ff]?\s*\d{1,4})\s*([\s\S]*)$/;
+// 里長 10/20：「快速報修能增加顯示申請人提供的照片、與報修後完成照片嗎？」→ 網站 /repair/ 公開兩種照片：
+// ・報修照片：里長分派後才公開（先看過照片），而且只公開這個時間以後送出的（報修表單從這時候起寫明照片會公開；
+//   之前的表單寫「網站不公開照片」，那些照片維持只給里長和服務處看）。里長可以「報修照片 編號 不公開／公開」個別調整（photoPublic 欄）。
+// ・處理照片：服務處窗口或里長標記完成後（或輸入「報修照片 編號」）30 分鐘內在官方 LINE 傳的照片，存在 donePhotoId 欄。
+const REPAIR_PHOTO_PUBLIC_FROM = '2026-10-20 12:00';
+const REPAIR_DONE_PHOTO_TTL = 1800;
+const repairDonePhotoIds_ = r => String((r && r.donePhotoId) || '').split(',').map(x => x.trim()).filter(Boolean);
 const REPAIR_LIST_RE = /^(我的報修|報修進度|查詢報修|報修查詢|報修清單|報修案件)$/;
 
 function repairOpen_() {
@@ -600,7 +610,7 @@ function repairPhotoToken_(id) {
 
 /** 照片放在私人雲端硬碟，服務處打不開；改用這個網頁應用程式的網址顯示（帶簽章，只有拿到連結的人看得到）。 */
 function repairPhotoUrl_(r) {
-  if (!repairPhotoIds_(r).length) return '';
+  if (!repairPhotoIds_(r).length && !repairDonePhotoIds_(r).length) return '';
   let base = prop_('WEBAPP_URL');
   if (!base) { try { base = ScriptApp.getService().getUrl(); } catch (_) { base = ''; } }
   return base ? base + '?photo=' + encodeURIComponent(r.id) + '&t=' + repairPhotoToken_(r.id) : '';
@@ -610,20 +620,25 @@ function repairPhotoPage_(id, token) {
   const r = readAll_('報修').find(x => x.id === id);
   const page = body => HtmlService.createHtmlOutput(body).setTitle('報修照片 ' + id)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
-  const ids = repairPhotoIds_(r);
-  if (!r || !ids.length || String(token || '') !== repairPhotoToken_(id)) return page('<p style="font-family:sans-serif">找不到照片，或連結已失效。</p>');
-  const imgs = [];
-  let missing = 0;
-  ids.forEach((fid, i) => {
+  const ids = repairPhotoIds_(r), done = repairDonePhotoIds_(r);
+  if (!r || (!ids.length && !done.length) || String(token || '') !== repairPhotoToken_(id)) return page('<p style="font-family:sans-serif">找不到照片，或連結已失效。</p>');
+  let missing = 0, shown = 0;
+  const imgs = (list, label) => list.map((fid, i) => {
     try {
       const blob = DriveApp.getFileById(fid).getBlob();
-      imgs.push(`<img alt="報修照片 ${i + 1}" style="max-width:100%;height:auto;display:block;margin:0 0 12px" src="data:${blob.getContentType()};base64,${Utilities.base64Encode(blob.getBytes())}">`);
+      shown++;
+      return `<img alt="${label} ${i + 1}" style="max-width:100%;height:auto;display:block;margin:0 0 12px" src="data:${blob.getContentType()};base64,${Utilities.base64Encode(blob.getBytes())}">`;
     } catch (err) {
       missing++;
+      return '';
     }
-  });
-  if (!imgs.length) return page('<p style="font-family:sans-serif">照片檔案打不開（可能已被刪除）。</p>');
-  return page(`<div style="font-family:sans-serif;margin:8px 0">報修 ${r.id}｜${r.category}${ids.length > 1 ? `｜照片 ${ids.length} 張` : ''}</div>` + imgs.join('') +
+  }).join('');
+  const head = t => `<div style="font-family:sans-serif;margin:8px 0;font-weight:bold">${t}</div>`;
+  // 有處理照片時分兩段：里民報修時拍的、處理完成後拍的
+  const body = (ids.length ? (done.length ? head(`📷 報修照片（${ids.length} 張）`) : '') + imgs(ids, '報修照片') : '') +
+    (done.length ? head(`✅ 處理照片（${done.length} 張）`) + imgs(done, '處理照片') : '');
+  if (!shown) return page('<p style="font-family:sans-serif">照片檔案打不開（可能已被刪除）。</p>');
+  return page(`<div style="font-family:sans-serif;margin:8px 0">報修 ${r.id}｜${r.category}${!done.length && ids.length > 1 ? `｜照片 ${ids.length} 張` : ''}</div>` + body +
     (missing ? `<p style="font-family:sans-serif;color:#888">另有 ${missing} 張照片打不開（可能已被刪除）。</p>` : ''));
 }
 
@@ -631,7 +646,7 @@ function repairPhotoPage_(id, token) {
 function repairFlex_(r, title, buttons, withReporter) {
   const links = [{ label: '📍 看地圖', uri: repairMapUrl_(r) }];
   const photo = repairPhotoUrl_(r);
-  const nPhotos = repairPhotoIds_(r).length;
+  const nPhotos = repairPhotoIds_(r).length + repairDonePhotoIds_(r).length;
   if (photo) links.unshift({ label: nPhotos > 1 ? `📷 看照片（${nPhotos} 張）` : '📷 看照片', uri: photo });
   const btn = (action, style) => ({ type: 'button', style, height: 'sm', action });
   return {
@@ -702,11 +717,11 @@ function assignRepair_(r, rep) {
   clearRepairCache_();
   const nr = Object.assign({}, r, { status: '處理中', rep: rep.name });
   const head = `✅ ${r.id} 已交給 ${rep.name}，網站進度顯示「處理中｜${rep.name}」。`;
-  if (rep === REPAIR_SELF) return [text_(head + `\n處理完請輸入：報修完成 ${r.id} 處理說明`)];
+  if (rep === REPAIR_SELF) return [text_(head + `\n處理完請輸入：報修完成 ${r.id} 處理說明\n（完成後可以直接傳處理照片，會放在網站給里民看）`)];
   const ws = repairWindows_(rep.key);
   const title = `🔧 ${rep.short}您好，莊晴全轉交報修`;
   const sent = pushRepair_(ws.map(w => w.userId),
-    repairFlex_(nr, title, [{ label: '✅ 已處理完成', text: `報修完成 ${r.id}` }], true),
+    repairFlex_(nr, title, [{ label: '✅ 已處理完成', text: `報修完成 ${r.id}` }, { label: '📷 傳處理照片', text: `報修照片 ${r.id}` }], true),
     repairText_(nr, title, true) + `\n\n處理完請輸入：報修完成 ${r.id} 處理說明`);
   if (sent) return [text_(head + `\n已用 LINE 通知 ${sent} 位窗口，處理完他們點「已處理完成」，系統會通知您和報修的里民。`)];
   return [
@@ -728,6 +743,7 @@ function completeRepair_(r, note, actorUid, quietOwner) {
   try {
     push_(r.userId, [text_([`✅ 您報修的案件已處理完成`, `${r.id}｜${r.category}`, `📍 ${r.location}`, `處理單位：${rep}`]
       .concat(repNote ? ['說明：' + repNote] : [])
+      .concat(['', `處理照片和進度：${REPAIR_PAGE_URL}#${r.id}`])
       .concat(['', '謝謝您的通報！還有需要報修，點選單「快速報修」。']).join('\n'))]);
   } catch (err) {
     console.error('通知報修人失敗：' + err.message);
@@ -741,6 +757,138 @@ function completeRepair_(r, note, actorUid, quietOwner) {
     } catch (err) {
       console.error('通知里長報修完成失敗：' + err.message);
     }
+  }
+}
+
+/** 報修照片要不要公開在網站：里長個別設定過（photoPublic）就照設定；沒設定的話，分派後、而且是表單寫明會公開以後送出的才公開。 */
+function repairPhotoShown_(r) {
+  if (r.photoPublic === 'no') return false;
+  if (r.photoPublic === 'yes') return true;
+  return r.status !== '待分派' && String(r.createdAt) >= REPAIR_PHOTO_PUBLIC_FROM;
+}
+
+/** 舊的「報修」工作表沒有新欄位的標題，補上（新欄位一律加在最後面，舊資料不受影響）。 */
+function ensureRepairHeader_() {
+  sheet_('報修').getRange(1, 1, 1, SHEETS.報修.length).setValues([SHEETS.報修]).setFontWeight('bold');
+}
+
+/** 接下來 30 分鐘這個人私訊傳的照片，算 id 這件報修的處理照片。 */
+function waitRepairPhoto_(uid, id) {
+  try {
+    CacheService.getScriptCache().put('rphoto_' + uid, id, REPAIR_DONE_PHOTO_TTL);
+  } catch (err) {
+    console.warn('記住要等處理照片的報修失敗：' + err.message);
+  }
+}
+
+/** 「報修照片 編號 [清除｜不公開｜公開]」：等處理照片、清掉處理照片、里長調整里民的報修照片要不要公開。回傳回覆文字。 */
+function repairPhotoCommand_(r, rest, uid, owner) {
+  if (r.status === '不處理') return `${r.id} 設為不處理，網站不會顯示，不用傳照片。`;
+  if (/^(清除|刪除|刪掉|清空|重傳)$/.test(rest)) {
+    const n = repairDonePhotoIds_(r).length;
+    if (!n) return `${r.id} 還沒有處理照片。`;
+    ensureRepairHeader_();
+    update_('報修', r._row, { donePhotoId: '', updatedAt: now_() });
+    clearRepairCache_();
+    waitRepairPhoto_(uid, r.id);
+    return `✅ 已清除 ${r.id} 的 ${n} 張處理照片，網站不再顯示。\n要重傳的話，30 分鐘內直接在這裡傳照片。`;
+  }
+  if (/^(不公開|隱藏|公開)$/.test(rest)) {
+    if (!owner) return '里民的報修照片要不要公開，只有莊晴全可以設定。';
+    if (!repairPhotoIds_(r).length) return `${r.id} 里民報修時沒有附照片。`;
+    const show = rest === '公開';
+    ensureRepairHeader_();
+    update_('報修', r._row, { photoPublic: show ? 'yes' : 'no', updatedAt: now_() });
+    clearRepairCache_();
+    return show ? `✅ ${r.id} 里民的報修照片會公開在網站處理進度。\n要收回：報修照片 ${r.id} 不公開`
+      : `✅ ${r.id} 里民的報修照片不公開在網站了（您和服務處照樣看得到）。\n要再公開：報修照片 ${r.id} 公開`;
+  }
+  waitRepairPhoto_(uid, r.id);
+  const n = repairDonePhotoIds_(r).length;
+  return `📷 請在 30 分鐘內直接在這裡傳 ${r.id} 的處理照片（最多 ${REPAIR_MAX_PHOTOS} 張${n ? `，目前已有 ${n} 張` : ''}），會公開在網站處理進度。` +
+    `\n傳錯了：報修照片 ${r.id} 清除` +
+    (owner && repairPhotoIds_(r).length ? `\n里民的報修照片不要公開：報修照片 ${r.id} 不公開` : '');
+}
+
+/** 下載私訊裡的照片（LINE 只保留一段時間），回傳 blob；不是照片或超過 5MB 就丟出錯誤（訊息給人看的）。 */
+function lineImageBlob_(messageId, name) {
+  const res = UrlFetchApp.fetch('https://api-data.line.me/v2/bot/message/' + encodeURIComponent(messageId) + '/content', {
+    headers: { Authorization: 'Bearer ' + prop_('LINE_CHANNEL_ACCESS_TOKEN') }, muteHttpExceptions: true,
+  });
+  if (res.getResponseCode() !== 200) throw new Error('下載不到照片（' + res.getResponseCode() + '）');
+  const blob = res.getBlob();
+  const mime = String(blob.getContentType() || 'image/jpeg').split(';')[0].trim();
+  if (!/^image\/(jpeg|png|webp)$/.test(mime)) throw new Error('只收照片（jpg、png）');
+  const bytes = blob.getBytes();
+  if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new Error('照片太大（超過 5MB）');
+  return Utilities.newBlob(bytes, mime, name + '.' + mime.split('/')[1]);
+}
+
+/**
+ * 服務處窗口／里長私訊傳照片：標記完成或「報修照片 編號」後 30 分鐘內傳的，存成那件報修的處理照片（網站公開）。
+ * 有處理（回覆了）就回傳 true；一般里民傳的照片回傳 false，照原本的流程。
+ */
+function handleRepairImage_(ev, uid) {
+  const cache = CacheService.getScriptCache();
+  const id = cache.get('rphoto_' + uid);
+  const owner = isOwnerUser_(uid);
+  const w = owner ? null : repairWindowOf_(uid);
+  if (!id) {
+    if (!w) return false;   // 里長私訊照片可能是別的用途，不回
+    // 服務處窗口傳照片但沒說是哪一件；一次傳好幾張只提醒一次
+    if (cache.get('rphoto_hint_' + uid)) return true;
+    cache.put('rphoto_hint_' + uid, '1', 120);
+    reply_(ev.replyToken, [text_('📷 這張照片要放在哪一件報修？請先輸入「報修照片 編號」（例：報修照片 F0001），再傳照片。\n看交給您們的案件：報修案件')]);
+    return true;
+  }
+  const r = findRepair_(id);
+  if (!r || r.status === '不處理' || (!owner && !(w && r.rep === w.repName))) return false;
+  const set = ev.message.imageSet;
+  const last = !set || !set.total || Number(set.index) === Number(set.total);   // 一次傳好幾張：只回最後一張
+  const say = t => { if (last) reply_(ev.replyToken, [text_(t)]); return true; };
+  const full = `${r.id} 的處理照片已經有 ${REPAIR_MAX_PHOTOS} 張了（最多 ${REPAIR_MAX_PHOTOS} 張）。要重傳先輸入：報修照片 ${r.id} 清除`;
+  if (repairDonePhotoIds_(r).length >= REPAIR_MAX_PHOTOS) return say(full);
+  let file;
+  try {
+    file = storePhotoFile_('報修處理_' + r.category, lineImageBlob_(ev.message.id, r.id + '-處理-' + Date.now()));
+  } catch (err) {
+    console.error('報修處理照片儲存失敗：' + err.message);
+    reply_(ev.replyToken, [text_('⚠️ 照片沒有存起來：' + err.message + '\n請再傳一次。')]);
+    return true;
+  }
+  // 一次傳好幾張時會同時進來好幾個事件：鎖住再讀最新的照片清單，才不會互相蓋掉
+  const n = withLock_(() => {
+    const cur = findRepair_(id);
+    const ids = repairDonePhotoIds_(cur);
+    if (ids.length >= REPAIR_MAX_PHOTOS) return -1;
+    ids.push(file.getId());
+    ensureRepairHeader_();
+    update_('報修', cur._row, { donePhotoId: ids.join(','), updatedAt: now_() });
+    return ids.length;
+  });
+  if (n < 0) {
+    try { file.setTrashed(true); } catch (_) { /* 多的那張留在雲端硬碟也沒關係 */ }
+    return say(full);
+  }
+  clearRepairCache_();
+  waitRepairPhoto_(uid, r.id);   // 再等 30 分鐘，可以繼續傳
+  return say(`✅ 已收到 ${r.id} 的處理照片（共 ${n} 張），網站處理進度看得到。` +
+    (n < REPAIR_MAX_PHOTOS ? `還可以再傳 ${REPAIR_MAX_PHOTOS - n} 張。` : '') + `\n傳錯了：報修照片 ${r.id} 清除`);
+}
+
+/** 網站 /repair/ 的照片（活動網站 /api/repair-photo 轉一手）：只給公開進度上有的案件；k=d 處理照片，其他是里民的報修照片。 */
+function publicRepairPhoto_(id, kind, n) {
+  const none = { ok: false, error: '找不到照片' };
+  if (!repairOpen_() || !/^\d$/.test(String(n))) return none;
+  const r = readAll_('報修').find(x => x.id === String(id || ''));
+  if (!r || r.status === '不處理' || String(r.createdAt).slice(0, 10) < ymdAfter_(-120)) return none;
+  const fid = (kind === 'd' ? repairDonePhotoIds_(r) : repairPhotoShown_(r) ? repairPhotoIds_(r) : [])[Number(n)];
+  if (!fid) return none;
+  try {
+    const blob = DriveApp.getFileById(fid).getBlob();
+    return { ok: true, mime: blob.getContentType(), data: Utilities.base64Encode(blob.getBytes()) };
+  } catch (err) {
+    return { ok: false, error: '照片檔案打不開' };
   }
 }
 
@@ -851,6 +999,7 @@ function bindRepairWindow_(rep, c) {
   const told = push_(c.userId, [text_([`✅ 綁定完成！莊晴全已確認您是「${rep.name}」的報修窗口。`, '',
     '之後交辦的報修案件會直接傳到這裡（有照片、地圖和報修人聯絡方式）。',
     '處理完請點案件下方的「已處理完成」，或輸入：報修完成 編號 處理說明',
+    '處理完的照片：點「已處理完成」後直接在這裡傳照片，會放在網站給里民看',
     '看目前交給您們的案件：報修案件'].join('\n'))]);
   return `✅ 已把「${c.displayName}」綁定為${rep.name}的報修窗口` + (told ? '，也已經用 LINE 通知他了。' : '（LINE 通知沒送出去，請直接告訴他）。') +
     '\n輸入「報修窗口」可以看三個服務處的綁定狀況。';
@@ -928,7 +1077,8 @@ function handleRepairText_(ev, uid, t) {
     if (reply_(ev.replyToken, [text_([`✅ 綁定完成！您是「${rep.name}」的報修窗口。`, '',
       '之後莊晴全交辦的報修案件會直接傳到這裡（有照片、地圖和報修人聯絡方式）。',
       '處理完請點案件下方的「已處理完成」，或輸入：報修完成 編號 處理說明',
-      '（例：報修完成 F0001 已更換燈泡）', '',
+      '（例：報修完成 F0001 已更換燈泡）',
+      '處理完的照片：點「已處理完成」後直接在這裡傳照片，會放在網站給里民看', '',
       '要補充進度：報修進度 編號 說明（例：報修進度 F0001 已通報路燈管理處）',
       '看目前交給您們的案件：報修案件'].join('\n'))])) {
       const displayName = lineDisplayName_(uid);
@@ -944,7 +1094,7 @@ function handleRepairText_(ev, uid, t) {
   const r = findRepair_(m[2]);
   const owner = isOwnerUser_(uid);
   const w = owner ? null : repairWindowOf_(uid);
-  if (!owner && !(w && (cmd === '完成' || cmd === '進度'))) {
+  if (!owner && !(w && (cmd === '完成' || cmd === '進度' || cmd === '照片'))) {
     reply_(ev.replyToken, [text_('這個指令只有莊晴全服務團隊和負責的服務處窗口可以使用。')]);
     return true;
   }
@@ -975,8 +1125,14 @@ function handleRepairText_(ev, uid, t) {
       return true;
     }
     completeRepair_(r, rest, uid);
+    waitRepairPhoto_(uid, r.id);
     reply_(ev.replyToken, [text_(`✅ ${r.id} 已標記完成，已通知報修的里民，網站進度會顯示「已完成」。謝謝您！` +
-      (rest ? '' : `\n要補充處理說明：報修進度 ${r.id} 說明`))]);
+      (rest ? '' : `\n要補充處理說明：報修進度 ${r.id} 說明`) +
+      `\n\n📷 有處理完成的照片嗎？30 分鐘內直接在這裡傳照片（最多 ${REPAIR_MAX_PHOTOS} 張），會放在網站處理進度給大家看。`)]);
+    return true;
+  }
+  if (cmd === '照片') {
+    reply_(ev.replyToken, [text_(repairPhotoCommand_(r, rest, uid, owner))]);
     return true;
   }
   if (cmd === '進度') {
@@ -1014,7 +1170,7 @@ function setRepairOpen_(open) {
     .join('\n');
 }
 
-/** 活動網站 /repair/ 用的公開資料：不含報修人姓名、電話、LINE、狀況說明、照片、定位。 */
+/** 活動網站 /repair/ 用的公開資料：不含報修人姓名、電話、LINE、狀況說明、定位；照片只給張數（照片本身用 publicRepairPhoto_ 拿）。 */
 function publicRepairs_() {
   const cache = CacheService.getScriptCache();
   if (!repairOpen_()) return { open: false, updatedAt: now_(), reps: [], list: [] };
@@ -1026,6 +1182,7 @@ function publicRepairs_() {
     .map(r => ({
       id: r.id, createdAt: r.createdAt, category: r.category, location: r.location, status: r.status,
       rep: r.status === '待分派' ? '' : r.rep, note: r.repNote, doneAt: r.doneAt,
+      photos: repairPhotoShown_(r) ? repairPhotoIds_(r).length : 0, donePhotos: repairDonePhotoIds_(r).length,
     }));
   const data = { open: true, updatedAt: now_(), reps: REPAIR_REPS.map(x => x.name).concat([REPAIR_SELF.name]), list };
   // 快取一筆最多 100KB，太大存不進去就不快取（不影響回傳）
@@ -3128,7 +3285,7 @@ function knowledgeExtra_() {
 }
 
 const KNOWLEDGE_EXTRA = [
-  ['快速報修（最新，以此為準）', '快速報修：路燈故障、剪草、修剪樹木、道路坑洞、水溝清理、環境清潔等，在官方 LINE 點選單「快速報修」或輸入「報修」，填類別、地點、狀況說明，可以附照片和定位。送出後由莊晴全分派給黃健豪立委服務處、曾朝榮議員服務處、賴順仁議員服務處或莊晴全服務團隊處理，處理完成會用 LINE 通知報修人。處理進度公開在 https://ccs2024taiwan.pages.dev/repair/ （只顯示類別、地點、處理單位和進度，不顯示報修人姓名電話）。輸入「我的報修」可以看自己報修的進度。'],
+  ['快速報修（最新，以此為準）', '快速報修：路燈故障、剪草、修剪樹木、道路坑洞、水溝清理、環境清潔等，在官方 LINE 點選單「快速報修」或輸入「報修」，填類別、地點、狀況說明，可以附照片和定位。送出後由莊晴全分派給黃健豪立委服務處、曾朝榮議員服務處、賴順仁議員服務處或莊晴全服務團隊處理，處理完成會用 LINE 通知報修人。處理進度公開在 https://ccs2024taiwan.pages.dev/repair/ （顯示類別、地點、處理單位、進度，莊晴全分派後也會公開里民附的照片和服務處處理完成的照片；不顯示報修人姓名電話）。輸入「我的報修」可以看自己報修的進度。'],
   ['集章兌換規則（最新，以此為準）', '集印章活動：集滿 5 顆印章可以換一種獎品，集滿 10 顆印章可以再換一種獎品（兩種都集到就能換兩次），5、10 顆的獎品在惠宇開朗兌換，10/18(日) 14:00–16:00，換完為止。集滿 15 顆印章可以換抽獎券，抽獎券也是在惠宇開朗換。抽獎在 10/18(日) 晚上裕國豐展的變裝大賽進行中開獎（變裝大賽 18:00 開始），抽獎券請保管好。'],
   ['集章地圖卡發放位置（最新，以此為準）', '紙本「集章地圖卡」（集章圖紙）10/12（一）起開始發放，限量 500 份，發完為止；共 15 處發放，任一處都可以拿：裕國豐展、惠宇開朗、總太聚作、總太2020、總太悅來、總太共好、總太美樂地、八月小確幸、敬甜點、簇新美學、全家太順店、臥野、御脊傳統整復推拿、中醫大市立醫院、全聯建和店。在官方 LINE 輸入「集章」也查得到。集章點與路線：https://ccs2024taiwan.pages.dev/map/'],
   ['查詢報名（最新，以此為準）', '想知道有沒有報名成功、繳費了沒：① 活動網站查詢報名頁 https://ccs2024taiwan.pages.dev/signup/check/ ，填報名時的姓名和電話，四個活動一次查；② 在官方 LINE 私訊輸入「查詢報名 姓名 電話」，綁定後繳費提醒和報名完成通知都會用 LINE 發送。'],

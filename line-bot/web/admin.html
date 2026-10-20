@@ -50,7 +50,8 @@
       <p class="alert hidden" id="repair-closed-note">⚠️ 快速報修還沒開放：里民輸入「報修」會看到「建置中，尚未開放」，網站進度頁也不顯示。現在只有您和服務處窗口能測試；準備好了在 LINE 私訊官方帳號「開放快速報修」。</p>
       <div class="card">
         <p class="muted">里民在 LINE 點「快速報修」送出 → 您的 LINE 收到通知，點「交給 ○○」分派 → 服務處窗口處理完點「已處理完成」→ 系統通知報修的里民。
-          公開進度：<a id="repair-page" target="_blank" rel="noopener"></a>（只顯示類別、地點、處理單位、進度）。</p>
+          公開進度：<a id="repair-page" target="_blank" rel="noopener"></a>（顯示類別、地點、處理單位、進度；分派後公開里民附的照片，窗口完成後在 LINE 傳的處理照片也會公開）。
+          里民的照片不要公開：在 LINE 私訊「報修照片 編號 不公開」。</p>
         <div class="filters">
           <select id="repair-status"><option value="">全部狀態</option></select>
           <select id="repair-rep"><option value="">全部處理單位</option></select>
@@ -409,7 +410,7 @@ function renderRepairs() {
       <td>${esc(r.name)}<div class="muted">${esc(r.phone)}</div></td>
       <td>${esc(r.category)}</td>
       <td class="pre">📍 ${esc(r.location)} <a href="${esc(r.mapLink)}" target="_blank" rel="noopener">地圖</a><div>${esc(r.content)}</div></td>
-      <td>${r.photoUrl ? `<a href="${esc(r.photoLink || r.photoUrl)}" target="_blank" rel="noopener">查看</a>` : ''}</td>
+      <td>${r.photoUrl || r.donePhotoId ? `<a href="${esc(r.photoLink || r.photoUrl)}" target="_blank" rel="noopener">查看</a>${r.donePhotoId ? '<br><small>含處理照片</small>' : ''}` : ''}</td>
       <td><span class="badge ${esc(r.status)}">${esc(r.status)}</span>${r.doneAt ? `<div class="muted">${esc(r.doneAt)}</div>` : ''}</td>
       <td>${esc(r.rep)}<div class="muted">${esc(r.repNote)}</div></td>
       <td><button class="small" data-repair="${esc(r.id)}">處理</button></td>

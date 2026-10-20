@@ -92,13 +92,14 @@
       <label>狀況說明</label>
       <textarea name="content" required maxlength="1000" placeholder="例：路燈晚上不亮已經三天"></textarea>
       <label>照片 <span class="hint">（選填，最多 4 張，可以一次選多張）</span></label>
+      <p class="hint">照片會公開在網站的處理進度（莊晴全分派後），請不要拍到人臉、車牌或門牌。</p>
       <input type="file" accept="image/*" id="repair-photo" multiple>
       <div id="repair-photos" class="thumbs"></div>
       <label>姓名</label>
       <input name="name" id="repair-name" required maxlength="30">
       <label>聯絡電話 <span class="hint">（選填，方便服務處聯絡您）</span></label>
       <input name="phone" type="tel" maxlength="20">
-      <p class="muted">🔒 姓名、電話只提供給負責處理的服務處聯絡用；網站進度只顯示類別、地點、處理單位和進度。</p>
+      <p class="muted">🔒 姓名、電話只提供給負責處理的服務處聯絡用；網站進度顯示類別、地點、處理單位、進度和照片，不會顯示姓名電話。</p>
       <button class="block" type="submit">送出報修</button>
     </form>
     <div class="card" id="my-repairs-card">
