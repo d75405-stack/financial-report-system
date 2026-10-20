@@ -63,6 +63,15 @@
         </table></div>
       </div>
       <div class="card">
+        <h2>修改紀錄</h2>
+        <p class="muted">每次分派、更新進度、標記完成、改回處理中、傳或清除照片，都會記下是誰、改了什麼（最近 300 筆，新的在上面）。</p>
+        <div class="filters"><input id="audit-search" placeholder="搜尋編號、誰、動作"></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>時間</th><th>編號</th><th>誰</th><th>動作</th><th>修改前</th><th>修改後</th></tr></thead>
+          <tbody id="audit-rows"></tbody>
+        </table></div>
+      </div>
+      <div class="card">
         <h2>民意代表服務處窗口</h2>
         <p class="muted">請服務處人員加官方 LINE 好友，在聊天室傳下面的綁定文字；綁定後，分派的案件會直接用 LINE 傳給他們（每位窗口算 1 則訊息）。要換人：在 LINE 私訊官方帳號「報修窗口 解除 曾朝榮」。</p>
         <ul class="list" id="repair-windows"></ul>
@@ -385,9 +394,11 @@ $('#form-report').addEventListener('submit', e => {
 
 // 快速報修
 async function loadRepairs() {
-  const [list, windows] = await Promise.all([admin('repairs'), admin('repairWindows')]);
+  const [list, windows, audit] = await Promise.all([admin('repairs'), admin('repairWindows'), admin('repairAudit')]);
   state.repairs = list;
+  state.audit = audit;
   renderRepairs();
+  renderAudit();
   $('#repair-windows').innerHTML = windows.map(w => `
     <li>
       <b>${esc(w.name)}</b>
@@ -397,6 +408,15 @@ async function loadRepairs() {
 }
 
 ['#repair-status', '#repair-rep', '#repair-search'].forEach(sel => $(sel).addEventListener('input', renderRepairs));
+// 報修修改紀錄（里長 10/20：服務處可以修改案件，後台要記錄修改了什麼）
+function renderAudit() {
+  const q = $('#audit-search').value.trim();
+  const rows = (state.audit || []).filter(a => !q || [a.id, a.who, a.action, a.before, a.after].join(' ').includes(q));
+  $('#audit-rows').innerHTML = rows.length ? rows.map(a => `
+    <tr><td>${esc(a.at)}</td><td>${esc(a.id)}</td><td>${esc(a.who)}</td><td>${esc(a.action)}</td>
+      <td class="pre">${esc(a.before)}</td><td class="pre">${esc(a.after)}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">還沒有修改紀錄</td></tr>';
+}
+$('#audit-search').addEventListener('input', renderAudit);
 
 function renderRepairs() {
   const status = $('#repair-status').value;
