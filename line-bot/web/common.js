@@ -1,4 +1,4 @@
-async function api(action, data) {
+async function api(action, data, retried) {
   // 用 text/plain 避免 CORS 預檢，Apps Script 不支援 OPTIONS 請求。
   const res = await fetch(window.APP_CONFIG.API_URL, {
     method: 'POST',
@@ -6,7 +6,17 @@ async function api(action, data) {
     body: JSON.stringify(Object.assign({ action }, data || {})),
   });
   const json = await res.json();
-  if (!json.ok) throw new Error(json.error || '發生錯誤');
+  if (!json.ok) {
+    // 里長 10/20「轉換網頁太久也會故障」：剛好有人在寫入時會「鎖定逾時」（那次什麼都沒寫進去），等一下自動再試一次
+    if (/鎖定逾時|lock/i.test(json.error || '')) {
+      if (!retried) {
+        await new Promise(r => setTimeout(r, 1500));
+        return api(action, data, true);
+      }
+      throw new Error('現在使用的人比較多，請過幾秒再試一次');
+    }
+    throw new Error(json.error || '發生錯誤');
+  }
   return json.data;
 }
 

@@ -581,14 +581,17 @@ function submitRepair_(user, req) {
   const name = requireText_(req.name, '姓名', 30);
   const phone = clean_(req.phone, 20);
   const gps = /^-?\d{1,3}\.\d{3,8},-?\d{1,3}\.\d{3,8}$/.test(clean_(req.gps, 40)) ? clean_(req.gps, 40) : '';
-  const all = readAll_('報修');
   const today = now_().slice(0, 10);
-  const mineToday = all.filter(r => r.userId === user.userId && String(r.createdAt).slice(0, 10) === today).length;
-  if (mineToday >= REPAIR_DAILY_LIMIT) throw new Error(`今天已經報修 ${mineToday} 件了，其他的請明天再報，或在聊天室留言給我們`);
-  const id = 'F' + ('000' + (all.reduce((mx, r) => Math.max(mx, parseInt(String(r.id).slice(1), 10) || 0), 0) + 1)).slice(-4);
+  const limitCheck = all => {
+    const mineToday = all.filter(r => r.userId === user.userId && String(r.createdAt).slice(0, 10) === today).length;
+    if (mineToday >= REPAIR_DAILY_LIMIT) throw new Error(`今天已經報修 ${mineToday} 件了，其他的請明天再報，或在聊天室留言給我們`);
+  };
+  limitCheck(readAll_('報修'));
   const photos = (Array.isArray(req.photos) ? req.photos : req.photo ? [req.photo] : []).filter(Boolean);
   if (photos.length > REPAIR_MAX_PHOTOS) throw new Error(`照片最多 ${REPAIR_MAX_PHOTOS} 張`);
-  const blobs = photos.map((ph, i) => decodePhoto_(id + (photos.length > 1 ? '-' + (i + 1) : ''), ph));   // 格式不對整筆退回
+  // 里長 10/20「轉換網頁太久也會故障」（鎖定逾時）：照片存雲端硬碟很慢，先存好再鎖，鎖只用在取編號＋寫入那一下
+  const stamp = '報修' + Utilities.formatDate(new Date(), TZ, 'MMdd-HHmmss');
+  const blobs = photos.map((ph, i) => decodePhoto_(stamp + (photos.length > 1 ? '-' + (i + 1) : ''), ph));   // 格式不對整筆退回
   const urls = [], ids = [];
   let photoError = '';
   blobs.forEach(blob => {
@@ -603,11 +606,18 @@ function submitRepair_(user, req) {
     }
   });
   const photoUrl = urls[0] || '', photoId = ids.join(',');
-  const r = {
-    id, createdAt: now_(), userId: user.userId, name, phone, category, content, location, gps, photoUrl, photoId,
-    status: '待分派', rep: '', assignedAt: '', repNote: '', doneAt: '', updatedAt: now_(),
-  };
-  append_('報修', r);
+  const r = withLock_(() => {
+    const all = readAll_('報修');
+    limitCheck(all);
+    const id = 'F' + ('000' + (all.reduce((mx, x) => Math.max(mx, parseInt(String(x.id).slice(1), 10) || 0), 0) + 1)).slice(-4);
+    const row = {
+      id, createdAt: now_(), userId: user.userId, name, phone, category, content, location, gps, photoUrl, photoId,
+      status: '待分派', rep: '', assignedAt: '', repNote: '', doneAt: '', updatedAt: now_(),
+    };
+    append_('報修', row);
+    return row;
+  });
+  const id = r.id;
   clearRepairCache_();
   notifyRepairOwner_(r, photoError ? '（照片儲存失敗：' + photoError + '）' : '');
   return { id, photoSaved: urls.length === photos.length, photos: urls.length, page: REPAIR_PAGE_URL };
@@ -6319,11 +6329,20 @@ function handleApi_(req) {
       backupRoot_();
       return backupToDrive();
     }
+    if (ADMIN_READ_ONLY.indexOf(action.slice(6)) >= 0) return adminApi_(action.slice(6), req);
     return withLock_(() => adminApi_(action.slice(6), req));
   }
   const user = verifyIdToken_(req.idToken);
+  if (LIFF_NO_OUTER_LOCK.indexOf(action) >= 0) return liffApi_(action, req, user);
   return withLock_(() => liffApi_(action, req, user));
 }
+
+// 里長 10/20「轉換網頁太久也會故障」：網頁畫面顯示「鎖定逾時」。原本每個網頁請求都要排隊等全域鎖（20 秒等不到就失敗），
+// 有人在上傳照片、寫入時，只是打開頁面的人也被卡住。只讀資料的請求不用排隊；
+// submitRepair、workUpdate 自己只在寫入的那一下鎖（照片存雲端硬碟在鎖外面做）。
+const LIFF_NO_OUTER_LOCK = ['me', 'myReports', 'myRepairs', 'workRepairs', 'listSlots', 'listLawyers', 'myBookings', 'announcements',
+  'submitRepair', 'workUpdate'];
+const ADMIN_READ_ONLY = ['summary', 'options', 'reports', 'repairs', 'repairAudit', 'repairWindows', 'members', 'announcements', 'lawyers', 'slots', 'bookings'];
 
 function liffApi_(action, req, user) {
   const member = findMember_(user.userId);
@@ -6399,19 +6418,23 @@ function liffApi_(action, req, user) {
         const x = addRepairProgress_(r.id, requireText_(req.text, '處理進度', 300), uid);
         msg = `已更新處理進度（${repairToldText_(x.told)}）`;
       } else if (req.op === 'removeProgress') {
-        msg = removeRepairProgress_(r, uid);
+        msg = withLock_(() => removeRepairProgress_(findRepair_(r.id), uid));
       } else if (req.op === 'photos') {
         msg = `已上傳 ${addWorkPhotos_(r, req.photos, uid)} 張處理照片，網站會和里民的照片並排對照`;
       } else if (req.op === 'clearPhotos') {
-        msg = repairPhotoCommand_(r, '清除', uid, who.owner).split('\n')[0];
+        msg = withLock_(() => repairPhotoCommand_(findRepair_(r.id), '清除', uid, who.owner)).split('\n')[0];
       } else if (req.op === 'done') {
         if (r.status === '已完成') throw new Error('這件已經是已完成');
-        const n = addWorkPhotos_(r, req.photos, uid);
-        const told = completeRepair_(findRepair_(r.id), clean_(req.text, 300), uid);
+        const n = addWorkPhotos_(r, req.photos, uid);   // 照片在鎖外面存
+        const told = withLock_(() => {
+          const cur = findRepair_(r.id);
+          if (cur.status === '已完成') throw new Error('這件已經是已完成');
+          return completeRepair_(cur, clean_(req.text, 300), uid);
+        });
         msg = '已標記處理完成' + (n ? `，上傳了 ${n} 張處理照片` : '') + (told ? '，也用 LINE 通知了報修的里民' : '；⚠️ 報修的里民 LINE 通知沒送出');
       } else if (req.op === 'reopen') {
         if (r.status !== '已完成') throw new Error('這件不是已完成，不用改回');
-        reopenRepair_(r, uid);
+        withLock_(() => reopenRepair_(findRepair_(r.id), uid));
         msg = '已改回處理中（之前發給里民的完成通知收不回來）';
       } else {
         throw new Error('不支援的操作');
