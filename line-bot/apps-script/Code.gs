@@ -3810,6 +3810,25 @@ SCHEDULED_BROADCASTS.push({ id: 'ai-check-1015', at: '2026-10-15T08:28:00+08:00'
 // 里長 10/14：「大小事聊天內容有哪些主題」→「發送至廍子里管理群」（社群三年對話用關鍵字分類的大概數量，不含任何人的名字）
 // 里長 10/17 早上指示：比賽時間發到管理群，請工作人員轉告
 // 里長 10/18 18:06 指示：變裝大賽成績頁（手動輸入）放到聯辦群
+// 里長 10/20：「要，發給三個服務處窗口」——快速報修新增處理照片，告訴服務處窗口怎麼傳
+SCHEDULED_BROADCASTS.push({ id: 'repair-photo-howto-1020', at: '2026-10-20T11:25:00+08:00', title: '快速報修新功能：處理照片', kind: 'repairWindows',
+  text: [
+    '【快速報修新功能】處理完成照片 📷',
+    '',
+    '您好，謝謝{rep}一直協助廍子里的報修！',
+    '快速報修新增「處理照片」，處理完的照片會放在網站處理進度，讓里民看到修好的樣子：',
+    '',
+    '1️⃣ 處理完，照樣點案件下方的「✅ 已處理完成」（或輸入：報修完成 編號 處理說明）',
+    '2️⃣ 30 分鐘內，直接在這個聊天室傳照片（最多 4 張）',
+    '',
+    '也可以先點案件的「📷 傳處理照片」（或輸入：報修照片 編號，例：報修照片 F0001），再傳照片。',
+    '傳錯了：報修照片 編號 清除',
+    '',
+    '📌 拍照時請避免拍到人臉、車牌。',
+    '網站處理進度：' + REPAIR_PAGE_URL,
+    '',
+    '莊晴全 敬上',
+  ].join('\n') });
 SCHEDULED_BROADCASTS.push({ id: 'report-score-page-1018', at: '2026-10-18T18:06:00+08:00', title: '變裝大賽成績頁', kind: 'reportGroup',
   images: [{ url: CCS_BASE + '/score/qr-score.jpg', preview: CCS_BASE + '/score/qr-score-s.jpg' }],
   text: [
@@ -5582,6 +5601,26 @@ function runScheduledBroadcasts() {
         }
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_(`✅ 已在律師群組發布「${b.title}」`);
+        return;
+      }
+      if (b.kind === 'repairWindows') {
+        // 發給已綁定的快速報修窗口（「報修窗口」工作表，同一人只發一次）；text 裡的 {rep} 換成他們的服務處
+        const seen = {};
+        const ws = readAll_('報修窗口').filter(w => repairWindowActive_(w) && w.userId && !seen[w.userId] && (seen[w.userId] = 1));
+        if (!ws.length) {
+          props.setProperty(key, 'skipped ' + now_() + ' 沒有綁定的報修窗口');
+          notifyOwner_(`⚠️「${b.title}」沒有發出：目前沒有綁定的服務處報修窗口。`);
+          return;
+        }
+        const ok = [], bad = [];
+        ws.forEach(w => {
+          const who = `${w.repName}${w.displayName ? ' ' + w.displayName : ''}`;
+          const res = lineApi_('message/push', { to: w.userId, messages: [text_(b.text.replace(/\{rep\}/g, w.repName))] });
+          (res.ok ? ok : bad).push(who);
+        });
+        props.setProperty(key, 'sent ' + now_() + ` ${ok.length}/${ws.length}`);
+        notifyOwner_(`✅ 已發「${b.title}」給 ${ok.length} 位服務處窗口：\n` + ok.map(x => '・' + x).join('\n') +
+          (bad.length ? `\n\n⚠️ 沒送出去（可能封鎖了官方帳號）：\n` + bad.map(x => '・' + x).join('\n') : ''));
         return;
       }
       if (b.kind === 'reportGroup') {
