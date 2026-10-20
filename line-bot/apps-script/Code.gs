@@ -3964,6 +3964,11 @@ SCHEDULED_BROADCASTS.push({ id: 'services-howto-1020', at: '2026-10-20T19:00:00+
     '里長參選人莊晴全 敬上',
   ].join('\n')],
   buttons: { text: '點下面開始使用 👇', links: [{ label: '🔧 立即報修', page: 'repair' }, { label: '⚖️ 預約律師', page: 'booking' }] } });
+// 里長 10/20 傳交通局回覆的截圖：「F0003 內容更新上去」
+SCHEDULED_BROADCASTS.push({ id: 'repair-progress-f0003-1020', at: '2026-10-20T12:17:00+08:00', title: 'F0003 處理進度', kind: 'repairProgress', repairId: 'F0003',
+  text: '已向交通局反映您的建議，請研議是否可以調整號誌秒數。交通局回覆：環中東路（建軍二街）北上號誌原本是 1.快車道 2.匝道加慢車道，' +
+    '現在改成 1.匝道專用 2.快車道加慢車道。之前平面車流都會走慢車道，因為秒數和匝道一起，所以比較長；現在是把快車道和慢車道一起，' +
+    '建議改走快車道。剛改完還在觀察，秒數分配會再做調整。' });
 // 里長 10/20：「發給三個服務處窗口，說明更新進度和傳照片」
 SCHEDULED_BROADCASTS.push({ id: 'repair-progress-howto-1020', at: '2026-10-20T12:15:00+08:00', title: '快速報修：更新進度和傳照片', kind: 'repairWindows',
   text: [
@@ -5782,6 +5787,19 @@ function runScheduledBroadcasts() {
         }
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_(`✅ 已在律師群組發布「${b.title}」`);
+        return;
+      }
+      if (b.kind === 'repairProgress') {
+        // 里長交代的處理進度（等於里長在 LINE 輸入「報修進度 編號 內容」：記成莊晴全服務團隊、網站公開、通知報修的里民）
+        const r = findRepair_(b.repairId);
+        if (!r || r.status === '不處理') {
+          props.setProperty(key, 'skipped ' + now_() + ' 找不到報修或不處理');
+          notifyOwner_(`⚠️「${b.title}」沒有更新：找不到報修 ${b.repairId}，或這件設為不處理。`);
+          return;
+        }
+        const note = addRepairProgress_(r.id, b.text, ownerIds_()[0] || '');
+        props.setProperty(key, 'sent ' + now_());
+        notifyOwner_(`✅ 已更新 ${r.id}（${r.category}｜${r.location}）的處理進度，網站公開，也用 LINE 通知了報修的里民：\n${note}\n\n要改：先輸入「報修進度 ${r.id} 刪除」再重新輸入。`);
         return;
       }
       if (b.kind === 'repairWindows') {
