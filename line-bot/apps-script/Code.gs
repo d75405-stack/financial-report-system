@@ -3810,6 +3810,44 @@ SCHEDULED_BROADCASTS.push({ id: 'ai-check-1015', at: '2026-10-15T08:28:00+08:00'
 // 里長 10/14：「大小事聊天內容有哪些主題」→「發送至廍子里管理群」（社群三年對話用關鍵字分類的大概數量，不含任何人的名字）
 // 里長 10/17 早上指示：比賽時間發到管理群，請工作人員轉告
 // 里長 10/18 18:06 指示：變裝大賽成績頁（手動輸入）放到聯辦群
+// 里長 10/20：「快速報修系統與免費法律諮詢發給所有人有這些功能」「最好使用程序能跟大家講一下」→ 今晚 7 點發給所有好友（里長選的時間）
+SCHEDULED_BROADCASTS.push({ id: 'services-howto-1020', at: '2026-10-20T19:00:00+08:00', title: '廍子里兩項免費服務',
+  text: [
+    '里長參選人莊晴全，為里民提供兩項免費服務：快速報修、免費法律諮詢。使用方式如下 👇',
+    '',
+    '🔧 快速報修',
+    '路燈不亮、雜草太高、樹木要修剪、道路坑洞、水溝堵塞…拍張照、填地點就能通報。',
+    '',
+    '📝 怎麼報修',
+    '1️⃣ 點最下面的「立即報修」（或在這裡輸入「報修」、點選單「快速報修」）',
+    '2️⃣ 選類別，填地點（可以附上定位、在地圖上選位置）',
+    '3️⃣ 寫狀況說明，可以附照片（最多 4 張），留姓名（電話選填），按「送出報修」',
+    '4️⃣ 莊晴全轉交民意代表服務處處理，處理完成會用 LINE 通知您',
+    '5️⃣ 處理進度和修好後的照片都公開在網站（不會公開您的姓名電話）：',
+    REPAIR_PAGE_URL,
+    '',
+    '想看自己報修的進度：輸入「我的報修」',
+  ].join('\n'),
+  more: [[
+    '⚖️ 免費法律諮詢（宣品法律事務所）',
+    '・週二 陳沂裴 律師｜几乎食間 Jeff\'s kitchen',
+    '・週三 李佩珊 律師、週四 郭乃瑩 律師｜裕國豐展 高爾夫球室（太順路60號）',
+    '・晚上 6:00–8:00，每次 30 分鐘',
+    '・🔒 一對一諮詢，只有您和律師，無他人介入',
+    '',
+    '📝 怎麼預約',
+    '1️⃣ 點最下面的「預約律師」（或在這裡輸入「律師諮詢」）',
+    '2️⃣ 看律師專長，選日期和時段',
+    '3️⃣ 填姓名、電話、諮詢類別（問題可以簡單寫，方便律師先準備），按「確認預約」',
+    '4️⃣ 諮詢前一天傍晚，LINE 會提醒您時間和地點',
+    '5️⃣ 準時到場，跟律師一對一諮詢',
+    '',
+    '📌 需提前 7 天預約，不開放當天預約',
+    '查詢或取消預約：輸入「我的預約」',
+    '',
+    '里長參選人莊晴全 敬上',
+  ].join('\n')],
+  buttons: { text: '點下面開始使用 👇', links: [{ label: '🔧 立即報修', page: 'repair' }, { label: '⚖️ 預約律師', page: 'booking' }] } });
 // 里長 10/20：「要，發給三個服務處窗口」——快速報修新增處理照片，告訴服務處窗口怎麼傳
 SCHEDULED_BROADCASTS.push({ id: 'repair-photo-howto-1020', at: '2026-10-20T11:25:00+08:00', title: '快速報修新功能：處理照片', kind: 'repairWindows',
   text: [
@@ -5670,9 +5708,11 @@ function runScheduledBroadcasts() {
         notifyOwner_(`ℹ️「${b.title}」沒有發出：所有場次都已額滿。`);
         return;
       }
-      const messages = [text_(`【${b.title}】\n${body}`)];
+      // more：接著發的文字（同一次推播最多 5 則，每位好友只算 1 則額度）；buttons：一張卡片放多個按鈕
+      const messages = [text_(`【${b.title}】\n${body}`)].concat((b.more || []).map(t => text_(t)));
       const uri = b.button && (b.button.uri || (prop_('LIFF_ID') && liffUrl_(b.button.page)));
       if (uri) messages.push(linkButton_(b.button.text, b.button.label, uri));
+      if (b.buttons && prop_('LIFF_ID')) messages.push(linkButtons_(b.buttons.text, b.buttons.links.map(l => ({ label: l.label, uri: l.uri || liffUrl_(l.page) }))));
       broadcastAll_(messages);
       props.setProperty(key, 'sent ' + now_());
       append_('公告', { id: newId_('A'), createdAt: now_(), target: 'all', title: b.title, content: body, recipients: '所有好友' });
@@ -7366,6 +7406,15 @@ function linkButton_(text, label, uri) {
     type: 'template',
     altText: text,
     template: { type: 'buttons', text: text.slice(0, 160), actions: [{ type: 'uri', label: label.slice(0, 20), uri }] },
+  };
+}
+
+/** 一張卡片放多個連結按鈕（最多 4 個）。 */
+function linkButtons_(text, links) {
+  return {
+    type: 'template',
+    altText: text,
+    template: { type: 'buttons', text: text.slice(0, 160), actions: links.slice(0, 4).map(l => ({ type: 'uri', label: l.label.slice(0, 20), uri: l.uri })) },
   };
 }
 
