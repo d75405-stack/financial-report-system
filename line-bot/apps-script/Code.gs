@@ -4112,6 +4112,38 @@ SCHEDULED_BROADCASTS.push({ id: 'repair-progress-f0003-1020', at: '2026-10-20T12
   text: '已向交通局反映您的建議，請研議是否可以調整號誌秒數。交通局回覆：環中東路（建軍二街）北上號誌原本是 1.快車道 2.匝道加慢車道，' +
     '現在改成 1.匝道專用 2.快車道加慢車道。之前平面車流都會走慢車道，因為秒數和匝道一起，所以比較長；現在是把快車道和慢車道一起，' +
     '建議改走快車道。剛改完還在觀察，秒數分配會再做調整。' });
+// 里長 10/20：「要，兩個都發」→ ① F0004 報修人更正誤標的已完成 ② 三個服務處窗口：服務處案件網頁
+SCHEDULED_BROADCASTS.push({ id: 'repair-f0004-correct-1020', at: '2026-10-20T12:54:00+08:00', title: 'F0004 更正通知', kind: 'repairNotice', repairId: 'F0004',
+  text: [
+    '📢 更正通知',
+    '抱歉，您報修的 {id}（{category}｜{location}）剛才誤標為「已完成」，目前仍在處理中。',
+    '',
+    '{rep}最新進度：{note}',
+    '',
+    '處理進度：{page}',
+    '處理完成時會再用 LINE 通知您，謝謝您的耐心！',
+    '',
+    '莊晴全服務團隊 敬上',
+  ].join('\n') });
+SCHEDULED_BROADCASTS.push({ id: 'repair-work-page-1020', at: '2026-10-20T12:54:00+08:00', title: '快速報修：服務處案件網頁', kind: 'repairWindows',
+  text: [
+    '【快速報修｜服務處案件網頁上線】',
+    '',
+    '您好，謝謝{rep}協助廍子里的報修！現在可以用網頁看交給您們的所有案件，直接在上面修改 👇',
+    '{work}',
+    '',
+    '📋 網頁上可以：',
+    '・看每件的地點（附地圖）、狀況、報修人姓名電話（點電話可以直接撥）和照片',
+    '・寫處理進度，按「送出進度」',
+    '・上傳處理照片（最多 4 張），網站會和里民的照片並排「處理前／處理後」',
+    '・按「✅ 標記處理完成」（寫的說明和照片會一起送出）',
+    '・按錯了可以「↩️ 改回處理中」，也能刪除最後一筆進度、清除處理照片',
+    '',
+    '每次更新都會用 LINE 通知報修的里民，修改也都會留下紀錄。',
+    '之後收到的案件卡片也有「📋 我的案件（網頁）」按鈕；原本在聊天室打字的方式照樣可以用。',
+    '',
+    '莊晴全 敬上',
+  ].join('\n') });
 // 里長 10/20：「發給三個服務處窗口，說明更新進度和傳照片」
 SCHEDULED_BROADCASTS.push({ id: 'repair-progress-howto-1020', at: '2026-10-20T12:15:00+08:00', title: '快速報修：更新進度和傳照片', kind: 'repairWindows',
   text: [
@@ -5969,6 +6001,22 @@ function runScheduledBroadcasts() {
           '\n（之前發給里民的完成通知收不回來）');
         return;
       }
+      if (b.kind === 'repairNotice') {
+        // 發給某件報修的報修人（例如更正誤標的已完成）；{id} {category} {location} {rep} {note} {page} 換成這件的資料
+        const r = findRepair_(b.repairId);
+        if (!r || !r.userId) {
+          props.setProperty(key, 'skipped ' + now_() + ' 找不到報修');
+          notifyOwner_(`⚠️「${b.title}」沒有發出：找不到報修 ${b.repairId}。`);
+          return;
+        }
+        const body = b.text.replace(/\{id\}/g, r.id).replace(/\{category\}/g, r.category).replace(/\{location\}/g, r.location)
+          .replace(/\{rep\}/g, r.rep || REPAIR_SELF.name).replace(/\{note\}/g, r.repNote || '（還沒有進度說明）').replace(/\{page\}/g, REPAIR_PAGE_URL + '#' + r.id);
+        const told = push_(r.userId, [text_(body)]);
+        auditRepair_(r.id, '', '通知報修人：' + b.title, '', told ? '已用 LINE 通知里民' : '⚠️ 里民的 LINE 通知沒送出');
+        props.setProperty(key, (told ? 'sent ' : 'failed ') + now_());
+        notifyOwner_(told ? `✅ 已發「${b.title}」給 ${r.id} 的報修人：\n\n${body}` : `⚠️「${b.title}」沒送出去（報修人可能封鎖了官方帳號）。`);
+        return;
+      }
       if (b.kind === 'repairWindows') {
         // 發給已綁定的快速報修窗口（「報修窗口」工作表，同一人只發一次）；text 裡的 {rep} 換成他們的服務處
         const seen = {};
@@ -5981,7 +6029,7 @@ function runScheduledBroadcasts() {
         const ok = [], bad = [];
         ws.forEach(w => {
           const who = `${w.repName}${w.displayName ? ' ' + w.displayName : ''}`;
-          const res = lineApi_('message/push', { to: w.userId, messages: [text_(b.text.replace(/\{rep\}/g, w.repName))] });
+          const res = lineApi_('message/push', { to: w.userId, messages: [text_(b.text.replace(/\{rep\}/g, w.repName).replace(/\{work\}/g, liffUrl_('work')))] });
           (res.ok ? ok : bad).push(who);
         });
         props.setProperty(key, 'sent ' + now_() + ` ${ok.length}/${ws.length}`);
