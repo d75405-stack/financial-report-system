@@ -131,6 +131,7 @@ function doGet(e) {
   if (p.photo) return repairPhotoPage_(String(p.photo), p.t);
   if (p.action === 'repairs') return json_({ ok: true, data: publicRepairs_() });
   if (p.action === 'repairPhoto') return json_(publicRepairPhoto_(p.id, p.k, p.n));
+  if (p.action === 'lawyerSlots') return json_({ ok: true, data: publicLawyerSlots_() });
   // 部署完成時 GitHub Actions 會打一次這個網址，讓已到時間的預約推播馬上發出、律師資料馬上更新
   ensureLawyers_();
   ensureKnowledgePatch_();
@@ -2754,7 +2755,8 @@ function signupRowsText_(list) {
 
 const LAWYER_PLACE_TEXT = '📍 地點確認中，目前尚未開放預約，敬請期待！';
 // 里長 10/11 指示：律師諮詢的介紹都要寫隱密性高、一對一、無他人介入
-const LAWYER_PRIVACY_TEXT = '🔒 隱密性高：只有您與律師一對一諮詢，無他人介入';
+// 里長 10/20：「預約律師部分要強調絕對隱私，莊晴全不會到場，律師與您 1 對 1」
+const LAWYER_PRIVACY_TEXT = '🔒 絕對隱私：莊晴全不會到場，由律師與您 1 對 1 諮詢，無他人介入';
 
 /** 地點與開放狀況：已公布地點的列出來；有可預約時段的寫開放預約，其餘寫確認中／尚未開放。 */
 function lawyerPlaceText_(list) {
@@ -3165,7 +3167,7 @@ const KNOWLEDGE_SEED = [
   ['報名後流程', '報名成功後頁面會自動開啟官方 LINE 並預填「報名確認」訊息，請按傳送，就會收到繳費提醒。完成繳費後會再收到繳費完成通知。'],
   ['特約商家', '廍子里大小事特約商家共 40 家，提供活動期間優惠，名單與社群 QR Code：https://ccs2024taiwan.pages.dev/shops/'],
   ['驅魔小遊戲', '線上小遊戲有「收集闖關版」與「對戰 RPG 版」，從活動網站首頁進入即可遊玩，進度存在手機上。'],
-  ['免費律師諮詢', '里辦提供免費律師諮詢，隱密性高：只有里民與律師一對一諮詢，無他人介入。在官方 LINE 點圖文選單「律師諮詢」或輸入「律師諮詢」即可查看時段並預約，前一天會收到提醒。輸入「我的預約」可查詢或取消。'],
+  ['免費律師諮詢', '里辦提供免費律師諮詢，絕對隱私：莊晴全不會到場，由律師與里民 1 對 1 諮詢，無他人介入。在官方 LINE 點圖文選單「律師諮詢」或輸入「律師諮詢」即可查看時段並預約，前一天會收到提醒。輸入「我的預約」可查詢或取消。'],
   ['里民回報', '工作人員可在官方 LINE 點「回報」填寫表單（可附照片與定位）。一般里民遇到路燈、環境、治安等問題，請直接在聊天室留言描述地點與狀況，里辦會處理。'],
   ['最新公告', '在官方 LINE 輸入「公告」可查看最新宣達事項。'],
 ];
@@ -3219,16 +3221,19 @@ const KNOWLEDGE_STALE_FIXES = [
   [/[，,]\s*由候補(?:依序)?遞補/g, '，' + HELD_SPOT_TEXT],
   [/(?<![，,])由候補(?:依序)?遞補/g, '保留給活動當天現場排隊、當場繳費補位（' + WAIT_PRIORITY_TEXT + '）'],
   [/[，,]?\s*並?開放名額給其他人(?:報名)?/g, '，' + HELD_SPOT_TEXT],
-  // 10/11 里長指示補上隱密性（只補一次：已經寫了「隱密性高」的不再加）
-  [/里辦提供免費律師諮詢，(?!隱密性高)/g, '里辦提供免費律師諮詢，隱密性高：只有里民與律師一對一諮詢，無他人介入。'],
+  // 10/11 里長指示補上隱密性（只補一次：已經寫了「隱密性高」「絕對隱私」的不再加）
+  [/里辦提供免費律師諮詢，(?!隱密性高|絕對隱私)/g, '里辦提供免費律師諮詢，絕對隱私：莊晴全不會到場，由律師與里民 1 對 1 諮詢，無他人介入。'],
+  // 10/20 里長：強調絕對隱私、莊晴全不會到場
+  [/隱密性高：只有里民與律師一對一諮詢，無他人介入。/g, '絕對隱私：莊晴全不會到場，由律師與里民 1 對 1 諮詢，無他人介入。'],
 ];
 
 /**
  * 部署時（doGet）把試算表「知識庫」裡過時的句子換掉一次，不用等有人問全全（knowledgeText_ 讀取時也會換）。
  * 只換 KNOWLEDGE_STALE_FIXES 列出的句子，同一格裡手動加的其他內容不動；做過的版本記在指令碼屬性 KNOWLEDGE_PATCH_VER。
  * 10/15：逾期未繳、取消空出的名額改成只保留給活動當天現場排隊繳費補位，DIY 不再線上遞補（主辦 10/15 決定）。
+ * 10/20：律師諮詢改寫「絕對隱私：莊晴全不會到場，由律師與里民 1 對 1 諮詢」（里長 10/20）。
  */
-const KNOWLEDGE_PATCH_VER = 'overdue-hold-1015';
+const KNOWLEDGE_PATCH_VER = 'lawyer-privacy-1020';
 function ensureKnowledgePatch_() {
   if (prop_('KNOWLEDGE_PATCH_VER') === KNOWLEDGE_PATCH_VER) return;
   try {
@@ -3830,17 +3835,18 @@ SCHEDULED_BROADCASTS.push({ id: 'services-howto-1020', at: '2026-10-20T19:00:00+
   ].join('\n'),
   more: [[
     '⚖️ 免費法律諮詢（宣品法律事務所）',
+    LAWYER_PRIVACY_TEXT,
+    '',
     '・週二 陳沂裴 律師｜几乎食間 Jeff\'s kitchen',
     '・週三 李佩珊 律師、週四 郭乃瑩 律師｜裕國豐展 高爾夫球室（太順路60號）',
     '・晚上 6:00–8:00，每次 30 分鐘',
-    '・🔒 一對一諮詢，只有您和律師，無他人介入',
     '',
     '📝 怎麼預約',
     '1️⃣ 點最下面的「預約律師」（或在這裡輸入「律師諮詢」）',
     '2️⃣ 看律師專長，選日期和時段',
     '3️⃣ 填姓名、電話、諮詢類別（問題可以簡單寫，方便律師先準備），按「確認預約」',
     '4️⃣ 諮詢前一天傍晚，LINE 會提醒您時間和地點',
-    '5️⃣ 準時到場，跟律師一對一諮詢',
+    '5️⃣ 準時到場，律師與您 1 對 1 諮詢（莊晴全不會到場）',
     '',
     '📌 需提前 7 天預約，不開放當天預約',
     '查詢或取消預約：輸入「我的預約」',
@@ -6199,9 +6205,11 @@ function adminApi_(action, req) {
 
     case 'bookings': {
       const slots = indexBy_(readAll_('律師時段'), 'slotId');
+      // 隱密性（里長 10/11、10/20 絕對隱私）：後台也只看時段＋遮住的姓名，電話、類別、問題只私訊給律師本人
       return readAll_('諮詢預約').reverse().map(b => {
         const s = slots[b.slotId] || {};
-        return Object.assign(stripRow_(b), { date: s.date, start: s.start, end: s.end, lawyer: s.lawyer });
+        return { id: b.id, createdAt: b.createdAt, status: b.status, name: maskName_(b.name), phone: '🔒', topic: '🔒', detail: '',
+          date: s.date, start: s.start, end: s.end, lawyer: s.lawyer };
       });
     }
 
@@ -6477,6 +6485,35 @@ function lawyerBookingStatusText_(query, lawyer) {
   if (!only) lines.push('', '只看某天：輸入「預約狀況 10/20」');
   lines.push(lawyer ? '🔒 這份資料只給您本人，請勿轉傳' : LAWYER_GROUP_PRIVACY_NOTE + '；律師私訊官方 LINE 輸入「預約狀況」可看完整資料');
   return lines.join('\n').slice(0, 4900);
+}
+
+/**
+ * 活動網站 /lawyer/ 公開的預約狀況（里長 10/20：「法律諮詢也顯示有預約與沒預約人數，呈現在網頁上，申請人姓名不顯示」）：
+ * 近 30 天到之後開好的時段，每晚一筆、每個時段有沒有人預約。只給律師、日期、時間、地點和人數，
+ * 預約人的姓名、電話、類別、問題都不給。快取 60 秒。
+ */
+function publicLawyerSlots_() {
+  if (!lawyerOpen_()) return { open: false, updatedAt: now_(), today: '', earliest: '', days: [] };
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('lawyer_public');
+  if (hit) return JSON.parse(hit);
+  const from = ymdAfter_(-30);
+  const counts = countBy_(readAll_('諮詢預約').filter(b => b.status === '已預約' || b.status === '已完成'), 'slotId');
+  const places = {};
+  readAll_('律師資料').forEach(l => { places[l.name] = l.place || ''; });
+  const byDay = {};
+  readAll_('律師時段').filter(s => s.date >= from)
+    .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
+    .forEach(s => {
+      const k = s.date + '|' + s.lawyer;
+      const d = byDay[k] || (byDay[k] = { date: s.date, weekday: weekdayOf_(s.date), lawyer: s.lawyer, place: s.note || places[s.lawyer] || '', slots: [] });
+      const cap = Math.max(1, Number(s.capacity || 1));
+      d.slots.push({ start: s.start, end: s.end, cap, booked: Math.min(cap, counts[s.slotId] || 0) });
+    });
+  const data = { open: true, updatedAt: now_(), today: ymdAfter_(0), earliest: ymdAfter_(LAWYER_BOOK_LEAD_DAYS),
+    days: Object.keys(byDay).map(k => byDay[k]).sort((a, b) => a.date.localeCompare(b.date)) };
+  try { cache.put('lawyer_public', JSON.stringify(data), 60); } catch (err) { console.warn('律師預約狀況快取失敗：' + err.message); }
+  return data;
 }
 
 /** 前一天的預約名單（隔天有開時段才發）。 */
