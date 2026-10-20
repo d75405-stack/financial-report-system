@@ -469,10 +469,9 @@ const repairPhotoIds_ = r => String((r && r.photoId) || '').split(',').map(x => 
 const REPAIR_CLOSED_TEXT = '🔧 快速報修功能建置中，尚未開放，敬請期待！';
 const REPAIR_CMD_RE = /^報修(分派|交給|完成|進度|不處理|照片)\s*([Ff]?\s*\d{1,4})\s*([\s\S]*)$/;
 // 里長 10/20：「快速報修能增加顯示申請人提供的照片、與報修後完成照片嗎？」→ 網站 /repair/ 公開兩種照片：
-// ・報修照片：里長分派後才公開（先看過照片），而且只公開這個時間以後送出的（報修表單從這時候起寫明照片會公開；
-//   之前的表單寫「網站不公開照片」，那些照片維持只給里長和服務處看）。里長可以「報修照片 編號 不公開／公開」個別調整（photoPublic 欄）。
+// ・報修照片：里民附的照片直接公開（里長 10/20：「我要直接顯示申請人提供照片，還有完成後民意代表提供照片放在網站上，讓多數人看到差異」，
+//   以前送出的報修也一樣）。不適合公開的，里長「報修照片 編號 不公開」個別收起來（photoPublic 欄 no；公開 yes）。
 // ・處理照片：服務處窗口或里長標記完成後（或輸入「報修照片 編號」）30 分鐘內在官方 LINE 傳的照片，存在 donePhotoId 欄。
-const REPAIR_PHOTO_PUBLIC_FROM = '2026-10-20 12:00';
 const REPAIR_DONE_PHOTO_TTL = 1800;
 // 里長 10/20：「快速報修增加給民意代表處理的進度可以填寫進去更新」→ 服務處窗口（和里長）點案件的「📝 更新進度」後，
 // 10 分鐘內直接打字就是這件的處理進度；每次的進度都留下來（progressLog 欄，JSON：[{at, by, text, done}]），
@@ -733,8 +732,11 @@ function pushRepair_(ids, flex, fallback) {
 function notifyRepairOwner_(r, extra) {
   try {
     const title = '🔧 新報修';
-    pushRepair_(ownerIds_(), repairFlex_(r, title + (extra ? extra : ''), repairAssignButtons_(r), true),
-      repairText_(r, title, true) + (extra ? '\n' + extra : '') + `\n\n分派：輸入「報修分派 ${r.id} 曾朝榮議員」（或黃健豪立委、賴順仁議員、莊晴全團隊）`);
+    // 里民附的照片直接公開在網站（里長 10/20）：不適合公開的，里長點「🙈 照片不公開」收起來
+    const hide = repairPhotoIds_(r).length ? [{ label: '🙈 照片不公開', text: `報修照片 ${r.id} 不公開` }] : [];
+    pushRepair_(ownerIds_(), repairFlex_(r, title + (extra ? extra : ''), repairAssignButtons_(r).concat(hide), true),
+      repairText_(r, title, true) + (extra ? '\n' + extra : '') + `\n\n分派：輸入「報修分派 ${r.id} 曾朝榮議員」（或黃健豪立委、賴順仁議員、莊晴全團隊）` +
+      (hide.length ? `\n照片會直接公開在網站，不適合公開：輸入「報修照片 ${r.id} 不公開」` : ''));
   } catch (err) {
     console.error('通知里長報修失敗：' + err.message);
   }
@@ -855,11 +857,9 @@ function handleRepairNoteText_(ev, uid, t) {
   return true;
 }
 
-/** 報修照片要不要公開在網站：里長個別設定過（photoPublic）就照設定；沒設定的話，分派後、而且是表單寫明會公開以後送出的才公開。 */
+/** 報修照片要不要公開在網站：直接公開（里長 10/20），里長設為不公開（photoPublic = no）的除外。 */
 function repairPhotoShown_(r) {
-  if (r.photoPublic === 'no') return false;
-  if (r.photoPublic === 'yes') return true;
-  return r.status !== '待分派' && String(r.createdAt) >= REPAIR_PHOTO_PUBLIC_FROM;
+  return r.photoPublic !== 'no';
 }
 
 /** 舊的「報修」工作表沒有新欄位的標題，補上（新欄位一律加在最後面，舊資料不受影響）。 */
@@ -3400,7 +3400,7 @@ function knowledgeExtra_() {
 }
 
 const KNOWLEDGE_EXTRA = [
-  ['快速報修（最新，以此為準）', '快速報修：路燈故障、剪草、修剪樹木、道路坑洞、水溝清理、環境清潔等，在官方 LINE 點選單「快速報修」或輸入「報修」，填類別、地點、狀況說明，可以附照片和定位。送出後由莊晴全分派給黃健豪立委服務處、曾朝榮議員服務處、賴順仁議員服務處或莊晴全服務團隊處理，處理完成會用 LINE 通知報修人。處理進度公開在 https://ccs2024taiwan.pages.dev/repair/ （顯示類別、地點、處理單位、進度，莊晴全分派後也會公開里民附的照片和服務處處理完成的照片；不顯示報修人姓名電話）。輸入「我的報修」可以看自己報修的進度。'],
+  ['快速報修（最新，以此為準）', '快速報修：路燈故障、剪草、修剪樹木、道路坑洞、水溝清理、環境清潔等，在官方 LINE 點選單「快速報修」或輸入「報修」，填類別、地點、狀況說明，可以附照片和定位。送出後由莊晴全分派給黃健豪立委服務處、曾朝榮議員服務處、賴順仁議員服務處或莊晴全服務團隊處理，處理完成會用 LINE 通知報修人。處理進度公開在 https://ccs2024taiwan.pages.dev/repair/ （顯示類別、地點、處理單位、進度，也公開里民附的照片和服務處處理完成的照片，讓大家看處理前後的差別；不顯示報修人姓名電話）。輸入「我的報修」可以看自己報修的進度。'],
   ['集章兌換規則（最新，以此為準）', '集印章活動：集滿 5 顆印章可以換一種獎品，集滿 10 顆印章可以再換一種獎品（兩種都集到就能換兩次），5、10 顆的獎品在惠宇開朗兌換，10/18(日) 14:00–16:00，換完為止。集滿 15 顆印章可以換抽獎券，抽獎券也是在惠宇開朗換。抽獎在 10/18(日) 晚上裕國豐展的變裝大賽進行中開獎（變裝大賽 18:00 開始），抽獎券請保管好。'],
   ['集章地圖卡發放位置（最新，以此為準）', '紙本「集章地圖卡」（集章圖紙）10/12（一）起開始發放，限量 500 份，發完為止；共 15 處發放，任一處都可以拿：裕國豐展、惠宇開朗、總太聚作、總太2020、總太悅來、總太共好、總太美樂地、八月小確幸、敬甜點、簇新美學、全家太順店、臥野、御脊傳統整復推拿、中醫大市立醫院、全聯建和店。在官方 LINE 輸入「集章」也查得到。集章點與路線：https://ccs2024taiwan.pages.dev/map/'],
   ['查詢報名（最新，以此為準）', '想知道有沒有報名成功、繳費了沒：① 活動網站查詢報名頁 https://ccs2024taiwan.pages.dev/signup/check/ ，填報名時的姓名和電話，四個活動一次查；② 在官方 LINE 私訊輸入「查詢報名 姓名 電話」，綁定後繳費提醒和報名完成通知都會用 LINE 發送。'],
