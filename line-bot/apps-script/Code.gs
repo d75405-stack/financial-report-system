@@ -51,7 +51,7 @@ const SHEETS = {
   律師時段: ['slotId', 'date', 'start', 'end', 'lawyer', 'capacity', 'note'],
   諮詢預約: ['id', 'createdAt', 'slotId', 'userId', 'name', 'phone', 'topic', 'detail', 'status', 'reminded'],
   報修: ['id', 'createdAt', 'userId', 'name', 'phone', 'category', 'content', 'location', 'gps', 'photoUrl', 'photoId',
-    'status', 'rep', 'assignedAt', 'repNote', 'doneAt', 'updatedAt', 'donePhotoId', 'photoPublic'],
+    'status', 'rep', 'assignedAt', 'repNote', 'doneAt', 'updatedAt', 'donePhotoId', 'photoPublic', 'progressLog'],
   報修窗口: ['repKey', 'repName', 'userId', 'displayName', 'boundAt', 'status'],
   特約上架紀錄: ['at', 'groupName', 'userId', 'displayName', 'command', 'result'],
   系統紀錄: ['at', 'what', 'result'],
@@ -474,7 +474,35 @@ const REPAIR_CMD_RE = /^報修(分派|交給|完成|進度|不處理|照片)\s*(
 // ・處理照片：服務處窗口或里長標記完成後（或輸入「報修照片 編號」）30 分鐘內在官方 LINE 傳的照片，存在 donePhotoId 欄。
 const REPAIR_PHOTO_PUBLIC_FROM = '2026-10-20 12:00';
 const REPAIR_DONE_PHOTO_TTL = 1800;
+// 里長 10/20：「快速報修增加給民意代表處理的進度可以填寫進去更新」→ 服務處窗口（和里長）點案件的「📝 更新進度」後，
+// 10 分鐘內直接打字就是這件的處理進度；每次的進度都留下來（progressLog 欄，JSON：[{at, by, text, done}]），
+// 網站顯示處理進度時間軸，也用 LINE 通知報修的里民（服務處更新的也通知里長）。repNote 照舊放最新的一筆。
+const REPAIR_NOTE_TTL = 600;
+const REPAIR_LOG_MAX = 20;
 const repairDonePhotoIds_ = r => String((r && r.donePhotoId) || '').split(',').map(x => x.trim()).filter(Boolean);
+
+/** 這件報修的處理進度紀錄。舊資料只有 repNote（沒有紀錄）的，把那句當成第一筆。 */
+function repairLog_(r) {
+  let log = [];
+  try { log = JSON.parse((r && r.progressLog) || '[]'); } catch (_) { log = []; }
+  if (!Array.isArray(log)) log = [];
+  if (!log.length && r && r.repNote && r.status !== '不處理') log = [{ at: r.doneAt || r.updatedAt || r.assignedAt || r.createdAt, by: r.rep || REPAIR_SELF.name, text: r.repNote }];
+  return log;
+}
+
+/** 誰寫的進度：里長（和後台）算莊晴全服務團隊，服務處窗口算他們的服務處，其他（系統）算負責的單位。 */
+function repairActor_(r, uid) {
+  if (uid === REPAIR_SELF || (uid && isOwnerUser_(uid))) return REPAIR_SELF.name;
+  const w = uid ? repairWindowOf_(uid) : null;
+  return (w && w.repName) || r.rep || REPAIR_SELF.name;
+}
+
+/** 在處理進度紀錄最後加一筆，回傳要寫回工作表的欄位（progressLog、repNote）。by：寫的人所屬單位。 */
+function repairLogPatch_(r, text, done, by) {
+  const entry = { at: now_(), by: by || r.rep || REPAIR_SELF.name, text: String(text).trim().slice(0, 300) };
+  if (done) entry.done = true;
+  return { progressLog: JSON.stringify(repairLog_(r).concat([entry]).slice(-REPAIR_LOG_MAX)), repNote: entry.text };
+}
 const REPAIR_LIST_RE = /^(我的報修|報修進度|查詢報修|報修查詢|報修清單|報修案件)$/;
 
 function repairOpen_() {
@@ -718,11 +746,12 @@ function assignRepair_(r, rep) {
   clearRepairCache_();
   const nr = Object.assign({}, r, { status: '處理中', rep: rep.name });
   const head = `✅ ${r.id} 已交給 ${rep.name}，網站進度顯示「處理中｜${rep.name}」。`;
-  if (rep === REPAIR_SELF) return [text_(head + `\n處理完請輸入：報修完成 ${r.id} 處理說明\n（完成後可以直接傳處理照片，會放在網站給里民看）`)];
+  if (rep === REPAIR_SELF) return [text_(head + `\n更新進度：報修進度 ${r.id}\n處理完請輸入：報修完成 ${r.id} 處理說明\n（完成後可以直接傳處理照片，會放在網站給里民看）`)];
   const ws = repairWindows_(rep.key);
   const title = `🔧 ${rep.short}您好，莊晴全轉交報修`;
   const sent = pushRepair_(ws.map(w => w.userId),
-    repairFlex_(nr, title, [{ label: '✅ 已處理完成', text: `報修完成 ${r.id}` }, { label: '📷 傳處理照片', text: `報修照片 ${r.id}` }], true),
+    repairFlex_(nr, title, [{ label: '📝 更新進度', text: `報修進度 ${r.id}` }, { label: '✅ 已處理完成', text: `報修完成 ${r.id}` },
+      { label: '📷 傳處理照片', text: `報修照片 ${r.id}` }], true),
     repairText_(nr, title, true) + `\n\n處理完請輸入：報修完成 ${r.id} 處理說明`);
   if (sent) return [text_(head + `\n已用 LINE 通知 ${sent} 位窗口，處理完他們點「已處理完成」，系統會通知您和報修的里民。`)];
   return [
@@ -735,8 +764,11 @@ function assignRepair_(r, rep) {
 /** 標記完成：通知報修的里民；不是里長本人按的也通知里長。 */
 function completeRepair_(r, note, actorUid, quietOwner) {
   const patch = { status: '已完成', doneAt: now_(), updatedAt: now_() };
-  if (note) patch.repNote = note.slice(0, 300);
   if (!r.rep) patch.rep = REPAIR_SELF.name;   // 沒分派就直接完成：算莊晴全團隊處理，網站才有處理單位
+  if (note) {
+    ensureRepairHeader_();
+    Object.assign(patch, repairLogPatch_(r, note, true, repairActor_(Object.assign({}, r, { rep: r.rep || REPAIR_SELF.name }), actorUid)));
+  }
   update_('報修', r._row, patch);
   clearRepairCache_();
   const rep = r.rep || REPAIR_SELF.name;
@@ -759,6 +791,68 @@ function completeRepair_(r, note, actorUid, quietOwner) {
       console.error('通知里長報修完成失敗：' + err.message);
     }
   }
+}
+
+/** 服務處窗口／里長更新處理進度：記進紀錄、網站公開、通知報修的里民（服務處更新的也通知里長）。回傳記下的文字。 */
+function addRepairProgress_(id, text, uid) {
+  let by = '';
+  const r = withLock_(() => {
+    const cur = findRepair_(id);
+    ensureRepairHeader_();
+    by = repairActor_(cur, uid);
+    const patch = Object.assign(repairLogPatch_(cur, text, false, by), { updatedAt: now_() });
+    update_('報修', cur._row, patch);
+    return Object.assign({}, cur, patch);
+  });
+  clearRepairCache_();
+  try {
+    push_(r.userId, [text_([`🔧 您報修的案件有新進度`, `${r.id}｜${r.category}`, `📍 ${r.location}`, `${by}：${r.repNote}`,
+      '', `處理進度：${REPAIR_PAGE_URL}#${r.id}`].join('\n'))]);
+  } catch (err) {
+    console.error('通知報修人進度失敗：' + err.message);
+  }
+  const owners = ownerIds_();
+  if (owners.indexOf(uid) < 0) {
+    const w = repairWindowOf_(uid);
+    try {
+      multicast_(owners, [text_(`📝 報修 ${r.id} 有新進度（${by}${w && w.displayName ? ' ' + w.displayName : ''}）\n${r.category}｜${r.location}\n${r.repNote}`)]);
+    } catch (err) {
+      console.error('通知里長報修進度失敗：' + err.message);
+    }
+  }
+  return r.repNote;
+}
+
+/** 「報修進度 編號 刪除」：拿掉最後一筆處理進度（打錯字時用）。回傳回覆文字。 */
+function removeRepairProgress_(r) {
+  const log = repairLog_(r);
+  if (!log.length) return `${r.id} 還沒有處理進度。`;
+  const last = log.pop();
+  ensureRepairHeader_();
+  update_('報修', r._row, { progressLog: JSON.stringify(log), repNote: log.length ? log[log.length - 1].text : '', updatedAt: now_() });
+  clearRepairCache_();
+  return `✅ 已刪除 ${r.id} 最後一筆處理進度：「${last.text}」\n網站不再顯示這一筆（已經通知里民的 LINE 訊息收不回來）。`;
+}
+
+/** 點「📝 更新進度」後等著的那一則文字（10 分鐘內）：存成處理進度。有處理就回傳 true。 */
+function handleRepairNoteText_(ev, uid, t) {
+  const cache = CacheService.getScriptCache();
+  const id = cache.get('rnote_' + uid);
+  if (!id) return false;
+  // 其他指令照常處理（不要被當成進度）
+  if (new RegExp('^(' + ASSISTANT_NAME + '|報修|快速報修|我的|律師|預約|網站公告|公告|額度|查詢|開放|關閉|說明)').test(t) || REPAIR_LIST_RE.test(t)) return false;
+  cache.remove('rnote_' + uid);
+  if (/^(取消|算了|不用了?|不更新)$/.test(t)) {
+    reply_(ev.replyToken, [text_('好的，沒有更新進度。')]);
+    return true;
+  }
+  const r = findRepair_(id);
+  const owner = isOwnerUser_(uid), w = owner ? null : repairWindowOf_(uid);
+  if (!r || r.status === '不處理' || (!owner && !(w && r.rep === w.repName))) return false;
+  const note = addRepairProgress_(r.id, t, uid);
+  reply_(ev.replyToken, [text_(`✅ 已更新 ${r.id} 的處理進度（網站公開，也用 LINE 通知了報修的里民）：\n${note}` +
+    `\n\n打錯了：報修進度 ${r.id} 刪除`)]);
+  return true;
 }
 
 /** 報修照片要不要公開在網站：里長個別設定過（photoPublic）就照設定；沒設定的話，分派後、而且是表單寫明會公開以後送出的才公開。 */
@@ -910,7 +1004,8 @@ function repairListText_(uid) {
     const mine = all.filter(r => r.status === '處理中' && r.rep === w.repName);
     if (!mine.length) return `${w.repName}目前沒有處理中的報修案件 👍`;
     return [`🔧 交給${w.repName}的報修（${mine.length} 件處理中）`, '']
-      .concat(mine.map(r => repairLines_(r, true).concat([`🗺 ${repairMapUrl_(r)}`]).join('\n') + `\n→ 處理完輸入：報修完成 ${r.id} 處理說明`).join('\n\n'))
+      .concat(mine.map(r => repairLines_(r, true).concat([`🗺 ${repairMapUrl_(r)}`]).concat(r.repNote ? [`📝 最新進度：${r.repNote}`] : []).join('\n') +
+        `\n→ 更新進度：報修進度 ${r.id}\n→ 處理完輸入：報修完成 ${r.id} 處理說明`).join('\n\n'))
       .join('\n').slice(0, 4900);
   }
   const mine = all.filter(r => r.userId === uid).slice(-10).reverse();
@@ -999,6 +1094,7 @@ function bindRepairWindow_(rep, c) {
   else append_('報修窗口', { repKey: rep.key, repName: rep.name, userId: c.userId, displayName: c.displayName, boundAt: now_(), status: 'active' });
   const told = push_(c.userId, [text_([`✅ 綁定完成！莊晴全已確認您是「${rep.name}」的報修窗口。`, '',
     '之後交辦的報修案件會直接傳到這裡（有照片、地圖和報修人聯絡方式）。',
+    '處理中有進度：點案件下方的「📝 更新進度」，直接打字就會更新（網站公開、通知里民）',
     '處理完請點案件下方的「已處理完成」，或輸入：報修完成 編號 處理說明',
     '處理完的照片：點「已處理完成」後直接在這裡傳照片，會放在網站給里民看',
     '看目前交給您們的案件：報修案件'].join('\n'))]);
@@ -1008,6 +1104,7 @@ function bindRepairWindow_(rep, c) {
 
 /** 私訊裡跟報修有關的文字；有處理就回傳 true。 */
 function handleRepairText_(ev, uid, t) {
+  if (handleRepairNoteText_(ev, uid, t)) return true;
   let m;
   if (t === '快速報修' || t === '報修' || t === '我要報修') {
     if (!canRepair_(uid)) reply_(ev.replyToken, [text_(REPAIR_CLOSED_TEXT)]);
@@ -1080,7 +1177,7 @@ function handleRepairText_(ev, uid, t) {
       '處理完請點案件下方的「已處理完成」，或輸入：報修完成 編號 處理說明',
       '（例：報修完成 F0001 已更換燈泡）',
       '處理完的照片：點「已處理完成」後直接在這裡傳照片，會放在網站給里民看', '',
-      '要補充進度：報修進度 編號 說明（例：報修進度 F0001 已通報路燈管理處）',
+      '要補充進度：點案件的「📝 更新進度」直接打字，或輸入：報修進度 編號 說明（例：報修進度 F0001 已通報路燈管理處）',
       '看目前交給您們的案件：報修案件'].join('\n'))])) {
       const displayName = lineDisplayName_(uid);
       const pend = readAll_('報修窗口').find(w => w.userId === uid && w.status === 'pending');
@@ -1137,13 +1234,25 @@ function handleRepairText_(ev, uid, t) {
     return true;
   }
   if (cmd === '進度') {
-    if (!rest) {
-      reply_(ev.replyToken, [text_(`請在編號後面寫進度說明，例如：報修進度 ${r.id} 已通報路燈管理處，預計週五修復`)]);
+    if (r.status === '不處理') {
+      reply_(ev.replyToken, [text_(`${r.id} 設為不處理，網站不會顯示。`)]);
       return true;
     }
-    update_('報修', r._row, { repNote: rest.slice(0, 300), updatedAt: now_() });
-    clearRepairCache_();
-    reply_(ev.replyToken, [text_(`✅ 已更新 ${r.id} 的進度說明（網站公開）：${rest.slice(0, 300)}`)]);
+    if (/^(刪除|刪掉|撤回|收回)$/.test(rest)) {
+      reply_(ev.replyToken, [text_(removeRepairProgress_(r))]);
+      return true;
+    }
+    if (!rest) {
+      // 「📝 更新進度」按鈕：接下來 10 分鐘打的字就是進度
+      CacheService.getScriptCache().put('rnote_' + uid, r.id, REPAIR_NOTE_TTL);
+      const last = repairLog_(r).slice(-1)[0];
+      reply_(ev.replyToken, [text_(`📝 請直接輸入 ${r.id}（${r.category}｜${r.location}）的處理進度，10 分鐘內傳出就會更新，例如：` +
+        `\n已通報路燈管理處，預計週五修復` + (last ? `\n\n上一次的進度：${last.text}` : '') +
+        `\n\n會公開在網站處理進度，也會用 LINE 通知報修的里民。不更新：輸入「取消」`)]);
+      return true;
+    }
+    const note = addRepairProgress_(r.id, rest, uid);
+    reply_(ev.replyToken, [text_(`✅ 已更新 ${r.id} 的處理進度（網站公開，也用 LINE 通知了報修的里民）：\n${note}\n\n打錯了：報修進度 ${r.id} 刪除`)]);
     return true;
   }
   // 不處理（重複通報、不是里內的事…）：網站不顯示，里民在「我的報修」看得到
@@ -1182,7 +1291,8 @@ function publicRepairs_() {
     .reverse().slice(0, 300)
     .map(r => ({
       id: r.id, createdAt: r.createdAt, category: r.category, location: r.location, status: r.status,
-      rep: r.status === '待分派' ? '' : r.rep, note: r.repNote, doneAt: r.doneAt,
+      rep: r.status === '待分派' ? '' : r.rep, note: r.repNote, doneAt: r.doneAt, assignedAt: r.status === '待分派' ? '' : r.assignedAt,
+      log: repairLog_(r).map(x => ({ at: x.at, by: x.by, text: x.text, done: !!x.done })),
       photos: repairPhotoShown_(r) ? repairPhotoIds_(r).length : 0, donePhotos: repairDonePhotoIds_(r).length,
     }));
   const data = { open: true, updatedAt: now_(), reps: REPAIR_REPS.map(x => x.name).concat([REPAIR_SELF.name]), list };
@@ -6112,7 +6222,10 @@ function adminApi_(action, req) {
       const r = readAll_('報修').find(x => x.id === req.id);
       if (!r) throw new Error('找不到報修 ' + req.id);
       const note = req.note === undefined ? undefined : clean_(req.note, 300);
-      if (note !== undefined && note !== r.repNote) update_('報修', r._row, { repNote: note, updatedAt: now_() });
+      if (note !== undefined && note !== r.repNote) {
+        ensureRepairHeader_();
+        update_('報修', r._row, Object.assign(note ? repairLogPatch_(r, note, false, REPAIR_SELF.name) : { repNote: '' }, { updatedAt: now_() }));
+      }
       const cur = Object.assign({}, r, note !== undefined ? { repNote: note } : {});
       let messages = [];
       const rep = REPAIR_REPS.concat([REPAIR_SELF]).find(x => x.key === req.repKey);
