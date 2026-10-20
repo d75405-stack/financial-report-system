@@ -4112,6 +4112,23 @@ SCHEDULED_BROADCASTS.push({ id: 'repair-progress-f0003-1020', at: '2026-10-20T12
   text: '已向交通局反映您的建議，請研議是否可以調整號誌秒數。交通局回覆：環中東路（建軍二街）北上號誌原本是 1.快車道 2.匝道加慢車道，' +
     '現在改成 1.匝道專用 2.快車道加慢車道。之前平面車流都會走慢車道，因為秒數和匝道一起，所以比較長；現在是把快車道和慢車道一起，' +
     '建議改走快車道。剛改完還在觀察，秒數分配會再做調整。' });
+// 里長 10/20：「幫我設計這兩個功能，我要自行轉發到群組」「QR 不顯示因為社群會擋」「完成後發到莊晴全的 LINE」
+// 宣傳圖放在活動網站 /img/promo/（網站部署要 1～2 分鐘，所以晚幾分鐘發）
+SCHEDULED_BROADCASTS.push({ id: 'promo-services-owner-1020', at: '2026-10-20T13:13:00+08:00', title: '快速報修、免費法律諮詢宣傳圖', kind: 'ownerImages',
+  images: [
+    { url: CCS_BASE + '/img/promo/services-repair-1020.jpg', preview: CCS_BASE + '/img/promo/services-repair-1020-s.jpg' },
+    { url: CCS_BASE + '/img/promo/services-lawyer-1020.jpg', preview: CCS_BASE + '/img/promo/services-lawyer-1020-s.jpg' },
+  ],
+  text: [
+    '📣 快速報修、免費法律諮詢宣傳圖（社群會擋 QR Code，圖上改成「LINE 搜尋 ID」）',
+    '長按圖片就能轉傳到群組，下面這段文字可以一起貼：',
+    '',
+    '📢 廍子里兩項免費服務，歡迎多加利用！',
+    '🔧 快速報修：路燈不亮、雜草太高、坑洞、水溝堵塞，拍照填地點用 LINE 就能通報，處理進度和處理前後照片都公開。',
+    '⚖️ 免費法律諮詢：每週二、三、四晚上，宣品法律事務所律師與您 1 對 1 諮詢，絕對隱私。',
+    '👉 LINE 搜尋 ID：@401mmxpw 加好友',
+    '廍子里長候選人 莊晴全',
+  ].join('\n') });
 // 里長 10/20：「要，兩個都發」→ ① F0004 報修人更正誤標的已完成 ② 三個服務處窗口：服務處案件網頁
 SCHEDULED_BROADCASTS.push({ id: 'repair-f0004-correct-1020', at: '2026-10-20T12:54:00+08:00', title: 'F0004 更正通知', kind: 'repairNotice', repairId: 'F0004',
   text: [
@@ -5999,6 +6016,14 @@ function runScheduledBroadcasts() {
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_(`✅ ${r.id}（${r.category}｜${r.location}）已改回「處理中」，網站進度也改回來了` + (ws.length ? `，也告訴了${r.rep}的窗口。` : '。') +
           '\n（之前發給里民的完成通知收不回來）');
+        return;
+      }
+      if (b.kind === 'ownerImages') {
+        // 私訊里長（管理員）：文字＋圖片（圖要先放在活動網站上，LINE 只收 https 的 JPEG/PNG）
+        const ids = ownerIds_();
+        const msgs = [text_(b.text)].concat((b.images || []).map(m => ({ type: 'image', originalContentUrl: m.url, previewImageUrl: m.preview || m.url })));
+        multicast_(ids, msgs.slice(0, 5));
+        props.setProperty(key, 'sent ' + now_() + ' ' + ids.length + ' 位');
         return;
       }
       if (b.kind === 'repairNotice') {
