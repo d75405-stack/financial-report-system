@@ -23,6 +23,7 @@
     <p class="muted" id="hello"></p>
     <div class="menu">
       <a href="#repair" id="menu-repair"><span>🔧</span>快速報修</a>
+      <a href="#work" id="menu-work" class="hidden"><span>📋</span>服務處案件</a>
       <a href="#report"><span>📝</span>回報</a>
       <a href="#booking"><span>⚖️</span>律師諮詢</a>
       <a href="#news"><span>📢</span>公告</a>
@@ -145,6 +146,22 @@
     </div>
   </section>
 
+  <!-- 服務處案件（里長 10/20）：民意代表服務處的報修窗口看自己的案件、更新進度、標記完成、上傳處理照片；里長看全部 -->
+  <section id="view-work" class="hidden">
+    <h1>服務處案件</h1>
+    <p class="muted" id="work-who"></p>
+    <div class="card hidden" id="work-denied"></div>
+    <div id="work-main" class="hidden">
+      <div class="tabs" id="work-tabs">
+        <button type="button" data-f="處理中" class="active">處理中</button>
+        <button type="button" data-f="已完成">已完成</button>
+        <button type="button" data-f="">全部</button>
+      </div>
+      <div id="work-list"></div>
+      <p class="muted center">每次修改都會記在後台的修改紀錄。<a id="work-page" target="_blank" rel="noopener">看網站公開的處理進度</a></p>
+    </div>
+  </section>
+
   <!-- 公告 -->
   <section id="view-news" class="hidden">
     <h1>公告</h1>
@@ -206,6 +223,8 @@ function route() {
   if (view === 'repair' && canRepair) loadRepairs();
   if (view === 'booking') loadBooking();
   if (view === 'news') loadNews();
+  $('#menu-work').classList.toggle('hidden', !me.repairWork);
+  if (view === 'work') loadWork();
 }
 
 // 綁定
@@ -514,6 +533,108 @@ async function loadNews() {
     ul.innerHTML = `<li class="muted">${esc(err.message)}</li>`;
   }
 }
+
+// 服務處案件（里長 10/20：「要，做服務處的案件網頁」）
+let workData = null, workFilter = '處理中';
+const workPhotos = {};   // 每件還沒上傳的處理照片（縮好的 data URL）
+async function loadWork() {
+  $('#work-list').innerHTML = '<div class="card center muted">載入中…</div>';
+  try {
+    workData = await call('workRepairs');
+  } catch (err) {
+    $('#work-main').classList.add('hidden');
+    $('#work-denied').classList.remove('hidden');
+    $('#work-denied').textContent = err.message;
+    return;
+  }
+  $('#work-denied').classList.add('hidden');
+  $('#work-main').classList.remove('hidden');
+  $('#work-page').href = workData.page;
+  renderWork();
+}
+function workCard(r) {
+  const open = r.status !== '已完成', ph = workPhotos[r.id] || [], max = workData.maxPhotos;
+  const log = (r.log || []).map(x => `<li><span class="muted">${esc(x.at)}</span> <b>${esc(x.by)}</b>${x.done ? '（完成）' : ''}：${esc(x.text)}</li>`).join('');
+  return `<div class="card work" data-id="${esc(r.id)}">
+    <div class="row" style="justify-content:space-between"><b style="flex:0 1 auto">${esc(r.id)}｜${esc(r.category)}</b><span class="badge ${esc(r.status)}" style="flex:0 0 auto">${esc(r.status)}</span></div>
+    <div>📍 ${esc(r.location)} <a href="${esc(r.mapLink)}" target="_blank" rel="noopener">地圖</a></div>
+    <div style="white-space:pre-wrap">📝 ${esc(r.content)}</div>
+    <div class="muted">👤 ${esc(r.name)}${r.phone ? ` <a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>` : ''}｜${esc(r.createdAt)} 報修${r.doneAt ? '｜' + esc(r.doneAt) + ' 完成' : ''}</div>
+    ${workData.owner ? `<div class="muted">處理單位：${esc(r.rep || '（還沒分派，請在 LINE 點「交給 ○○」）')}</div>` : ''}
+    ${r.photoLink ? `<div><a href="${esc(r.photoLink)}" target="_blank" rel="noopener">📷 看照片（里民 ${r.photos} 張・處理 ${r.donePhotos} 張）</a></div>` : ''}
+    ${log ? `<label>處理進度</label><ul class="list work-log">${log}</ul>` : ''}
+    <label>${open ? '更新處理進度' : '補充說明'} <span class="hint">（網站公開，也會用 LINE 通知報修的里民）</span></label>
+    <textarea class="w-text" maxlength="300" placeholder="例：已通報路燈管理處，預計週五修復"></textarea>
+    <button type="button" data-op="progress" class="block" style="margin-top:8px">送出進度</button>
+    <label>處理照片 <span class="hint">（最多 ${max} 張，目前 ${r.donePhotos} 張；網站會和里民的照片並排「處理前／處理後」）</span></label>
+    ${r.donePhotos < max ? `<input type="file" accept="image/*" multiple class="w-photo">` : '<p class="hint">已經 4 張了，要重傳先清除。</p>'}
+    <div class="thumbs">${ph.map((src, i) => `<div class="thumb"><img src="${src}" alt="照片 ${i + 1}"><button type="button" class="thumb-x" data-x="${i}" aria-label="拿掉第 ${i + 1} 張">✕</button></div>`).join('')}</div>
+    <div class="row" style="margin-top:10px">
+      ${ph.length ? '<button type="button" data-op="photos" class="ghost">上傳選好的照片</button>' : ''}
+      ${open ? '<button type="button" data-op="done">✅ 標記處理完成</button>' : '<button type="button" data-op="reopen" class="ghost">↩️ 改回處理中（按錯了）</button>'}
+    </div>
+    ${open ? '<p class="hint">標記完成時，上面寫的文字會當成完成說明，選好的照片也會一起上傳。</p>' : ''}
+    <div class="row" style="margin-top:6px">
+      ${log ? '<button type="button" data-op="removeProgress" class="small ghost">刪除最後一筆進度</button>' : ''}
+      ${r.donePhotos ? '<button type="button" data-op="clearPhotos" class="small ghost">清除處理照片</button>' : ''}
+    </div>
+  </div>`;
+}
+function renderWork() {
+  const list = workData.list.filter(r => !workFilter || r.status === workFilter);
+  const n = workData.list.filter(r => r.status === '處理中').length;
+  $('#work-who').textContent = `${workData.rep}｜處理中 ${n} 件`;
+  $('#work-list').innerHTML = list.length ? list.map(workCard).join('') :
+    `<div class="card center muted">${workFilter === '處理中' ? '目前沒有處理中的案件 👍' : '沒有案件'}</div>`;
+}
+document.querySelectorAll('#work-tabs button').forEach(b => b.addEventListener('click', () => {
+  workFilter = b.dataset.f;
+  document.querySelectorAll('#work-tabs button').forEach(x => x.classList.toggle('active', x === b));
+  renderWork();
+}));
+$('#work-list').addEventListener('change', async e => {
+  if (!e.target.classList.contains('w-photo')) return;
+  const card = e.target.closest('.work'), id = card.dataset.id, r = workData.list.find(x => x.id === id);
+  const files = [].slice.call(e.target.files || []);
+  const list = workPhotos[id] = workPhotos[id] || [];
+  const room = workData.maxPhotos - r.donePhotos - list.length;
+  if (files.length > room) toast(`處理照片最多 ${workData.maxPhotos} 張，${room > 0 ? '只加入前 ' + room + ' 張' : '已經滿了'}`, true);
+  const text = card.querySelector('.w-text').value;
+  for (const f of files.slice(0, Math.max(0, room))) {
+    try { list.push(await resizeImage(f, 1280)); } catch (err) { toast(err.message, true); }
+  }
+  card.outerHTML = workCard(r);
+  $(`.work[data-id="${id}"] .w-text`).value = text;   // 打到一半的字留著
+});
+$('#work-list').addEventListener('click', e => {
+  const x = e.target.closest('.thumb-x');
+  const card = e.target.closest('.work');
+  if (!card) return;
+  const id = card.dataset.id, r = workData.list.find(i => i.id === id);
+  if (x) {
+    const text = card.querySelector('.w-text').value;
+    (workPhotos[id] || []).splice(Number(x.dataset.x), 1);
+    card.outerHTML = workCard(r);
+    $(`.work[data-id="${id}"] .w-text`).value = text;
+    return;
+  }
+  const b = e.target.closest('button[data-op]');
+  if (!b) return;
+  const op = b.dataset.op, text = card.querySelector('.w-text').value.trim(), photos = workPhotos[id] || [];
+  if (op === 'progress' && !text) return toast('請先寫處理進度', true);
+  if (op === 'photos' && !photos.length) return toast('請先選照片', true);
+  const ask = { done: `確定 ${id} 已經處理完成？會用 LINE 通知報修的里民。`, reopen: `把 ${id} 改回「處理中」？`,
+    removeProgress: `刪除 ${id} 最後一筆處理進度？`, clearPhotos: `清除 ${id} 的全部處理照片？` }[op];
+  if (ask && !confirm(ask)) return;
+  withBusy(b, async () => {
+    const res = await call('workUpdate', { id, op, text: op === 'progress' || op === 'done' ? text : '', photos: op === 'photos' || op === 'done' ? photos : [] });
+    if (op === 'photos' || op === 'done') delete workPhotos[id];
+    const i = workData.list.findIndex(v => v.id === id);
+    workData.list[i] = res.item;
+    toast(res.msg);
+    renderWork();
+  });
+});
 
 init();
 </script>
