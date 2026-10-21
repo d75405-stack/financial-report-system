@@ -4077,6 +4077,7 @@ SCHEDULED_BROADCASTS.push({ id: 'richmenu-direct-main-1021', at: '2026-10-21T11:
     replace: { '快速報修': { label: '快速報修', page: 'repair' },
       '特約商店': { type: 'uri', label: '特約商店', uri: CCS_BASE + '/shops/' },
       '里民生活資訊': { type: 'uri', label: '里民生活資訊', uri: CCS_BASE + '/neighbors/' } } } });
+SCHEDULED_BROADCASTS.push({ id: 'richmenu-export-1021b', at: '2026-10-21T11:52:00+08:00', title: '匯出圖文選單（改完確認）', kind: 'richMenuExport' });
 // 里長 10/14 管理群「全全 查詢社群停車」回「暫時無法回答」：AI 問答紀錄 10/4 之後沒有成功的紀錄 → 部署時檢查一次 Claude API
 SCHEDULED_BROADCASTS.push({ id: 'ai-check-1014', at: '2026-10-14T19:35:00+08:00', title: 'AI 連線檢查', kind: 'aiCheck' });
 // 里長 10/15 早上換了新金鑰 →「換好了，幫我測試」
