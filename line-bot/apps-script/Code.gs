@@ -4066,6 +4066,17 @@ SCHEDULED_BROADCASTS.push({ id: 'richmenu-service-v4-1014', at: '2026-10-14T17:0
   swap: { alias: 'lizhang-tab-service', name: '里辦主選單v4-服務分頁(快速報修)',
     image: 'https://d75405-stack.github.io/financial-report-system/line-bot/web/richmenu-service-v4.jpg',
     replace: { '回報': { type: 'message', label: '快速報修', text: '快速報修' } } } });
+// 里長 10/21「LINE 功能鍵按下去反應時間能調整嗎」：快速報修、律師諮詢、特約商店、里民生活資訊原本是「送出文字 → 等系統回一張卡片 →
+// 再按卡片開網頁」，改成按下去直接開網頁（圖片沿用原本的，不變）。先備份目前的選單。打字的關鍵字照樣有回覆。
+SCHEDULED_BROADCASTS.push({ id: 'richmenu-export-1021', at: '2026-10-21T11:50:00+08:00', title: '匯出圖文選單（改直接開網頁前備份）', kind: 'richMenuExport' });
+SCHEDULED_BROADCASTS.push({ id: 'richmenu-direct-service-1021', at: '2026-10-21T11:51:00+08:00', title: '里辦服務分頁：快速報修、律師諮詢按下去直接開網頁', kind: 'richMenuSwap',
+  swap: { alias: 'lizhang-tab-service', name: '里辦主選單v5-服務分頁(直接開網頁)',
+    replace: { '快速報修': { label: '快速報修', page: 'repair' }, '律師諮詢': { label: '律師諮詢', page: 'booking' } } } });
+SCHEDULED_BROADCASTS.push({ id: 'richmenu-direct-main-1021', at: '2026-10-21T11:51:00+08:00', title: '主選單分頁：快速報修、特約商店、里民生活資訊按下去直接開網頁', kind: 'richMenuSwap',
+  swap: { alias: 'lizhang-tab-halloween', name: '里辦主選單v5-主分頁(直接開網頁)',
+    replace: { '快速報修': { label: '快速報修', page: 'repair' },
+      '特約商店': { type: 'uri', label: '特約商店', uri: CCS_BASE + '/shops/' },
+      '里民生活資訊': { type: 'uri', label: '里民生活資訊', uri: CCS_BASE + '/neighbors/' } } } });
 // 里長 10/14 管理群「全全 查詢社群停車」回「暫時無法回答」：AI 問答紀錄 10/4 之後沒有成功的紀錄 → 部署時檢查一次 Claude API
 SCHEDULED_BROADCASTS.push({ id: 'ai-check-1014', at: '2026-10-14T19:35:00+08:00', title: 'AI 連線檢查', kind: 'aiCheck' });
 // 里長 10/15 早上換了新金鑰 →「換好了，幫我測試」
@@ -7526,8 +7537,9 @@ function tabbedRichMenu_() {
 }
 
 /**
- * 換掉兩頁切換選單的其中一頁：swap = { alias, name, image（網址）, replace: { 舊按鈕名稱: 新動作 } }。
- * 用原本那一頁的按鈕位置建新選單、上傳新圖片，再把別名指到新選單；原本是預設選單的話也換成新的。
+ * 換掉兩頁切換選單的其中一頁：swap = { alias, name, image（網址，不給就沿用原本的圖）, replace: { 舊按鈕名稱: 新動作 } }。
+ * 新動作可以寫 { type: 'uri', label, page: 'repair' }，會換成這個 LIFF 的網址（liffUrl_）。
+ * 用原本那一頁的按鈕位置建新選單、上傳圖片，再把別名指到新選單；原本是預設選單的話也換成新的。
  */
 function swapRichMenuPage_(swap) {
   const al = lineApi_('richmenu/alias/' + swap.alias, null, 'get');
@@ -7541,16 +7553,24 @@ function swapRichMenuPage_(swap) {
     const nw = swap.replace[a.action.label];
     if (!nw) return a;
     changed++;
-    return { bounds: a.bounds, action: nw };
+    if (nw.page === undefined) return { bounds: a.bounds, action: nw };
+    return { bounds: a.bounds, action: { type: 'uri', label: nw.label, uri: liffUrl_(nw.page) } };
   });
   if (!changed) return { ok: false, msg: '原本的選單裡找不到要換的按鈕（' + Object.keys(swap.replace).join('、') + '）' };
-  const img = UrlFetchApp.fetch(swap.image, { muteHttpExceptions: true });
-  if (img.getResponseCode() !== 200) return { ok: false, retry: true, msg: '新圖片還沒上線（HTTP ' + img.getResponseCode() + '），稍後再試' };
+  const img = swap.image ? UrlFetchApp.fetch(swap.image, { muteHttpExceptions: true })
+    : UrlFetchApp.fetch('https://api-data.line.me/v2/bot/richmenu/' + oldId + '/content', {
+      headers: { Authorization: 'Bearer ' + prop_('LINE_CHANNEL_ACCESS_TOKEN') }, muteHttpExceptions: true });
+  if (img.getResponseCode() !== 200) {
+    return swap.image ? { ok: false, retry: true, msg: '新圖片還沒上線（HTTP ' + img.getResponseCode() + '），稍後再試' }
+      : { ok: false, msg: '讀不到原本選單的圖片（HTTP ' + img.getResponseCode() + '）' };
+  }
+  const imgType = swap.image ? (/\.png$/i.test(swap.image) ? 'image/png' : 'image/jpeg')
+    : (/png/i.test(String(img.getBlob().getContentType())) ? 'image/png' : 'image/jpeg');
   const created = lineApi_('richmenu', { size: m.size, selected: m.selected, name: swap.name, chatBarText: m.chatBarText, areas });
   if (!created.ok) return { ok: false, msg: '建立新選單失敗：' + created.body.slice(0, 200) };
   const newId = JSON.parse(created.body).richMenuId;
   const up = UrlFetchApp.fetch('https://api-data.line.me/v2/bot/richmenu/' + newId + '/content', {
-    method: 'post', contentType: /\.png$/i.test(swap.image) ? 'image/png' : 'image/jpeg',
+    method: 'post', contentType: imgType,
     headers: { Authorization: 'Bearer ' + prop_('LINE_CHANNEL_ACCESS_TOKEN') }, payload: img.getBlob().getBytes(), muteHttpExceptions: true,
   });
   if (up.getResponseCode() >= 300) {
