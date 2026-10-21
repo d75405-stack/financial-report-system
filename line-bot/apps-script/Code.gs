@@ -1661,6 +1661,11 @@ function mgmtGroupCommand_(cmd, c) {
  * 網站公告指令（里長 10/13：「網站公告只有我能發」）：發布、更換、撤下只有里長；看目前的公告大家都可以。
  * 管理群和里長私訊官方帳號都可以用；不是網站公告的指令回傳 null。
  */
+/** 網站公告裡的「[名稱](/路徑)」在 LINE 裡顯示成「名稱 完整網址」。 */
+function noticeLineText_(text) {
+  return String(text || '').replace(/\[([^\]\n]{1,20})\]\(((?:https?:\/\/|\/)[^\s)]*)\)/g, (m, label, url) => label + ' ' + (url[0] === '/' ? CCS_BASE + url : url));
+}
+
 function siteNoticeCommand_(cmd, uid) {
   const clear = NOTICE_CLEAR_RE.test(cmd), m = clear ? null : cmd.match(NOTICE_SET_RE);
   if (!clear && !m) return null;
@@ -1668,18 +1673,18 @@ function siteNoticeCommand_(cmd, uid) {
   if (m && (!text || (SHOP_QUESTION_RE.test(text) && text.length <= 12))) {
     let r;
     try { r = ccsApi_('/api/site-info', { action: 'getNotice' }); } catch (err) { return '網站忙線中，請稍後再試一次：' + err.message; }
-    return (r.notice ? `📢 網站目前的公告（${String(r.notice.at).slice(5)} 發布）：\n${r.notice.text}\n\n` : '網站目前沒有公告。\n\n') + NOTICE_HELP_TEXT;
+    return (r.notice ? `📢 網站目前的公告（${String(r.notice.at).slice(5)} 發布）：\n${noticeLineText_(r.notice.text)}\n\n` : '網站目前沒有公告。\n\n') + NOTICE_HELP_TEXT;
   }
   if (!isOwnerUser_(uid)) return '網站公告只有里長可以發布或撤下 🙏\n要公告什麼請跟里長說。看目前的公告：全全 網站公告';
   let r;
   if (clear) {
     try { r = ccsApi_('/api/site-info', { action: 'clearNotice' }); } catch (err) { return '網站忙線中，請稍後再試一次：' + err.message; }
-    return r.ok ? `✅ 已撤下網站公告「${String(r.cleared.text).slice(0, 40)}」` : '⚠️ ' + r.error;
+    return r.ok ? `✅ 已撤下網站公告「${noticeLineText_(r.cleared.text).slice(0, 40)}」` : '⚠️ ' + r.error;
   }
   try { r = ccsApi_('/api/site-info', { action: 'setNotice', text, by: lineDisplayName_(uid) }); } catch (err) { return '網站忙線中，沒有發布成功，請稍後再試一次：' + err.message; }
   if (!r.ok) return '⚠️ ' + r.error;
-  return ['✅ 網站公告已上線（每一頁最上面都看得到，看過的人可以按 ✕ 收起）', '', '📢 ' + r.notice.text, '', '👉 ' + CCS_BASE]
-    .concat(r.replaced ? ['', `（原本的公告「${String(r.replaced.text).slice(0, 30)}」已換掉）`] : [])
+  return ['✅ 網站公告已上線（每一頁最上面都看得到，看過的人可以按 ✕ 收起）', '', '📢 ' + noticeLineText_(r.notice.text), '', '👉 ' + CCS_BASE]
+    .concat(r.replaced ? ['', `（原本的公告「${noticeLineText_(r.replaced.text).slice(0, 30)}」已換掉）`] : [])
     .concat(['', '要換內容：再傳一次「全全 網站公告 新內容」', '撤下：全全 撤下網站公告']).join('\n');
 }
 
@@ -4268,6 +4273,9 @@ SCHEDULED_BROADCASTS.push({ id: 'mgmt-onsite-qr-1018', at: '2026-10-18T08:25:00+
 // 里長 10/17 16:10 更正：賴順仁議員的印章是在惠宇開朗（換掉上面那則網站公告）
 SCHEDULED_BROADCASTS.push({ id: 'notice-lai-stamp-1017b', at: '2026-10-17T16:10:00+08:00', title: '網站公告更正：賴順仁議員印章在惠宇開朗', kind: 'siteNotice',
   text: '🤝 更正：賴順仁議員的集章印章（曬死鬼）在「惠宇開朗」（太原路三段1299號），今天 10/17 16:00–21:00，粉專按讚分享就能蓋章送萬聖小禮物！集章地圖 👉 ' + CCS_BASE + '/map/' });
+// 里長 10/21：網站公告的「賴順仁議員印章」那則取消，改為萬聖節回顧、免費法律諮詢、快速報修（三個連結各有名稱）
+SCHEDULED_BROADCASTS.push({ id: 'notice-services-1021', at: '2026-10-21T13:00:00+08:00', title: '網站公告：萬聖節回顧、法律諮詢、快速報修', kind: 'siteNotice',
+  text: '🎃 萬聖節活動圓滿結束，謝謝大家！[看成績・活動回顧](/halloween/)　⚖️ 免費律師諮詢，律師 1 對 1、絕對隱私 [立即預約](/lawyer/)　🔧 路燈、水溝、坑洞 [快速報修](/repair/)' });
 // 里長 10/17 13:55 指示：開放組成績發到管理群（網站陀螺賽頁也已公布）
 SCHEDULED_BROADCASTS.push({ id: 'mgmt-results-open-1017', at: '2026-10-17T13:50:00+08:00', title: '開放組成績', kind: 'mgmtGroup',
   text: [
@@ -5904,8 +5912,8 @@ function runScheduledBroadcasts() {
         const r = ccsApi_('/api/site-info', { action: 'setNotice', text: b.text, by: '里長' });
         if (!r.ok) throw new Error(r.error || '網站沒有回應');
         props.setProperty(key, 'sent ' + now_());
-        notifyOwner_(['✅ 網站公告已上線（每一頁最上面都看得到）', '', '📢 ' + r.notice.text]
-          .concat(r.replaced ? ['', `（原本的公告「${String(r.replaced.text).slice(0, 30)}」已換掉）`] : [])
+        notifyOwner_(['✅ 網站公告已上線（每一頁最上面都看得到）', '', '📢 ' + noticeLineText_(r.notice.text)]
+          .concat(r.replaced ? ['', `（原本的公告「${noticeLineText_(r.replaced.text).slice(0, 30)}」已換掉）`] : [])
           .concat(['', '撤下：私訊官方帳號「撤下網站公告」']).join('\n'));
         return;
       }
