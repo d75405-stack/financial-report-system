@@ -4,11 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>里辦公處服務</title>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
-<!-- 快速報修的地圖（可以拖曳定位點）：Leaflet＋OpenStreetMap -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<!-- 里長 10/21「載入時間能加快嗎」：不載網路字型（手機內建的中文字型就很好看）；報修地圖（Leaflet）等畫面出來後才載 -->
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script src="config.js"></script>
 <script src="common.js"></script>
@@ -179,6 +176,74 @@ let selectedSlot = null;
 
 const call = (action, data) => api(action, Object.assign({ idToken, accessToken }, data));
 
+// 里長 10/21「載入時間能加快嗎」：
+// 1. 打開時，「我是誰」和這一頁要的資料一起跟系統拿（少跑一趟）
+// 2. 記住上次的「我是誰」，再打開時畫面先出來，背景再更新
+const PAGE_DATA = { repair: ['myRepairs'], work: ['workRepairs'], booking: ['listSlots', 'myBookings', 'listLawyers'], news: ['announcements'] };
+const prefetched = {};
+function load(action) {
+  const p = prefetched[action];
+  delete prefetched[action];
+  return p || call(action);
+}
+function fetchMe(page) {
+  const want = PAGE_DATA[page] || [];
+  const p = call('me', want.length ? { with: want } : {});
+  want.forEach(a => {
+    const q = p.then(m => {
+      const x = (m.pre || {})[a];
+      if (!x) return call(a);
+      if (x.error) throw new Error(x.error);
+      return x.data;
+    });
+    q.catch(() => {});
+    prefetched[a] = q;
+  });
+  return p.then(m => { delete m.pre; saveMe(m); return m; });
+}
+const ME_CACHE = 'liffMe:' + APP_CONFIG.LIFF_ID;
+function cachedMe(uid) {
+  try {
+    const c = JSON.parse(localStorage.getItem(ME_CACHE) || 'null');
+    return c && uid && c.uid === uid && Date.now() - c.at < 7 * 86400000 ? c.me : null;
+  } catch (e) {
+    return null;
+  }
+}
+function saveMe(m) {
+  try { localStorage.setItem(ME_CACHE, JSON.stringify({ uid: m.userId, at: Date.now(), me: m })); } catch (e) {}
+}
+const defaultName = m => (m ? (m.member ? m.member.name : (m.displayName || '')) : '');
+function applyMe(prev) {
+  $('#hello').textContent = me.member ? `${me.member.name} 您好（${me.member.role}）` : `${me.displayName} 您好`;
+  if (!prev || JSON.stringify(prev.categories) !== JSON.stringify(me.categories)) {
+    $('#category').innerHTML = me.categories.map(c => `<option>${esc(c)}</option>`).join('');
+  }
+  if (!prev || JSON.stringify(prev.repairCategories) !== JSON.stringify(me.repairCategories)) {
+    $('#repair-category').innerHTML = (me.repairCategories || []).map(c => `<option>${esc(c)}</option>`).join('');
+  }
+  if (!prev || $('#repair-name').value === defaultName(prev)) $('#repair-name').value = defaultName(me);
+}
+
+let leafletLoading = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve();
+  if (!leafletLoading) {
+    leafletLoading = new Promise((resolve, reject) => {
+      const css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
+      document.head.appendChild(css);
+      const js = document.createElement('script');
+      js.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
+      js.onload = () => (window.L ? resolve() : reject(new Error('地圖載入失敗')));
+      js.onerror = () => { leafletLoading = null; reject(new Error('地圖載入失敗')); };
+      document.head.appendChild(js);
+    });
+  }
+  return leafletLoading;
+}
+
 // 里長 10/21 截圖「無法載入：請從 LINE 開啟此頁面」：LINE 有時候沒給登入資料（頁面放在背景很久、被重新載入），
 // 自動從 LINE 重新開一次這個頁面拿新的登入；1 分鐘內只試一次，避免一直跳
 function reopenFromLine() {
@@ -197,16 +262,26 @@ function reopenFromLine() {
 }
 
 async function init() {
+  let fresh = null;
   try {
     await liff.init({ liffId: APP_CONFIG.LIFF_ID });
     if (!liff.isLoggedIn()) {
       liff.login({ redirectUri: location.href });
       return;
     }
+    // LINE 第一次打開會帶 liff.state，接著自己轉到真正的網址；轉址前不用開始抓資料（萬一沒轉，2.5 秒後照常）
+    if (new URLSearchParams(location.search).has('liff.state')) await new Promise(r => setTimeout(r, 2500));
     idToken = liff.getIDToken() || '';
     accessToken = liff.getAccessToken() || '';
     if (!idToken && !accessToken && reopenFromLine()) return;
-    me = await call('me');
+    let uid = '';
+    try { uid = (liff.getDecodedIDToken() || {}).sub || ''; } catch (e) {}
+    fresh = fetchMe(new URLSearchParams(location.search).get('page'));
+    me = cachedMe(uid);
+    if (!me) {
+      me = await fresh;
+      fresh = null;
+    }
   } catch (err) {
     if (/登入已過期|請從 LINE 開啟/.test(err.message) && reopenFromLine()) return;
     $('#loading').textContent = '無法載入：' + (/登入已過期|請從 LINE 開啟/.test(err.message)
@@ -214,15 +289,26 @@ async function init() {
     return;
   }
   $('#loading').classList.add('hidden');
-  $('#hello').textContent = me.member ? `${me.member.name} 您好（${me.member.role}）` : `${me.displayName} 您好`;
-  $('#category').innerHTML = me.categories.map(c => `<option>${esc(c)}</option>`).join('');
-  $('#repair-category').innerHTML = (me.repairCategories || []).map(c => `<option>${esc(c)}</option>`).join('');
-  $('#repair-name').value = me.member ? me.member.name : (me.displayName || '');
+  applyMe(null);
 
   const page = new URLSearchParams(location.search).get('page');
-  if (page && !location.hash) location.hash = page;
+  // 用 replaceState 換到那一頁，不會觸發 hashchange 再跑一次 route（原本會重複抓一次資料）
+  if (page && !location.hash) history.replaceState(null, '', '#' + page);
   window.addEventListener('hashchange', route);
   route();
+  // 畫面是用上次記住的身分先出來的：背景拿最新的，有變才重畫
+  if (fresh) {
+    fresh.then(m => {
+      const prev = me;
+      me = m;
+      if (JSON.stringify(prev) !== JSON.stringify(m)) {
+        applyMe(prev);
+        route();
+      }
+    }).catch(err => {
+      if (/登入已過期|請從 LINE 開啟/.test(err.message)) reopenFromLine();
+    });
+  }
 }
 
 function route() {
@@ -242,7 +328,10 @@ function route() {
   $('#repair-testing').classList.toggle('hidden', !canRepair || me.repairOpen !== false);
   $('#form-repair').classList.toggle('hidden', !canRepair);
   $('#my-repairs-card').classList.toggle('hidden', !canRepair);
-  if (view === 'repair' && canRepair) loadRepairs();
+  if (view === 'repair' && canRepair) {
+    loadRepairs();
+    setTimeout(() => loadLeaflet().catch(() => {}), 300);
+  }
   if (view === 'booking') loadBooking();
   if (view === 'news') loadNews();
   $('#menu-work').classList.toggle('hidden', !me.repairWork);
@@ -255,6 +344,7 @@ $('#form-register').addEventListener('submit', e => {
   withBusy(e.submitter, async () => {
     await call('register', formData(e.target));
     me = await call('me');
+    saveMe(me);
     toast('綁定完成');
     location.hash = 'report';
     route();
@@ -362,9 +452,11 @@ function setRepairGps(lat, lng, how) {
 function showRepairMap(lat, lng, zoom) {
   $('#repair-map').classList.remove('hidden');
   $('#repair-map-hint').classList.remove('hidden');
-  if (!window.L) {   // 地圖載不到（網路慢）：還是附上 GPS
-    $('#repair-map').classList.add('hidden');
-    $('#repair-map-hint').classList.add('hidden');
+  if (!window.L) {   // 地圖還沒載好就等一下；載不到（網路慢）：還是附上 GPS
+    loadLeaflet().then(() => showRepairMap(lat, lng, zoom)).catch(() => {
+      $('#repair-map').classList.add('hidden');
+      $('#repair-map-hint').classList.add('hidden');
+    });
     return;
   }
   if (!repairMap) {
@@ -429,7 +521,7 @@ async function loadRepairs() {
   const ul = $('#my-repairs');
   ul.innerHTML = '<li class="muted">載入中…</li>';
   try {
-    const list = await call('myRepairs');
+    const list = await load('myRepairs');
     ul.innerHTML = list.length ? list.map(r => `
       <li>
         <div class="row" style="justify-content:space-between">
@@ -451,8 +543,10 @@ async function loadBooking() {
   selectedSlot = null;
   $('#form-booking').classList.add('hidden');
   $('#slots').innerHTML = '<p class="muted">載入中…</p>';
+  loadMyBookings();
+  loadLawyers();
   try {
-    const slots = await call('listSlots');
+    const slots = await load('listSlots');
     $('#slots').innerHTML = slots.length ? slots.map(s => `
       <div class="slot" data-id="${esc(s.slotId)}">
         <div>
@@ -476,13 +570,11 @@ async function loadBooking() {
   } catch (err) {
     $('#slots').innerHTML = `<p class="muted">${esc(err.message)}</p>`;
   }
-  loadMyBookings();
-  loadLawyers();
 }
 
 async function loadLawyers() {
   try {
-    const list = await call('listLawyers');
+    const list = await load('listLawyers');
     $('#lawyers').innerHTML = list.map(l => `
       <div class="lawyer">
         ${l.photo ? `<img src="${esc(l.photo)}" alt="${esc(l.name)}">` : '<div class="lawyer-ph">⚖️</div>'}
@@ -516,7 +608,7 @@ $('#form-booking').addEventListener('submit', e => {
 async function loadMyBookings() {
   const ul = $('#my-bookings');
   try {
-    const list = await call('myBookings');
+    const list = await load('myBookings');
     ul.innerHTML = list.length ? list.map(b => `
       <li>
         <div class="row" style="justify-content:space-between">
@@ -544,7 +636,7 @@ async function loadNews() {
   const ul = $('#news');
   ul.innerHTML = '<li class="muted">載入中…</li>';
   try {
-    const list = await call('announcements');
+    const list = await load('announcements');
     ul.innerHTML = list.length ? list.map(a => `
       <li>
         <b>${esc(a.title)}</b>
@@ -562,7 +654,7 @@ const workPhotos = {};   // 每件還沒上傳的處理照片（縮好的 data U
 async function loadWork() {
   $('#work-list').innerHTML = '<div class="card center muted">載入中…</div>';
   try {
-    workData = await call('workRepairs');
+    workData = await load('workRepairs');
   } catch (err) {
     $('#work-main').classList.add('hidden');
     $('#work-denied').classList.remove('hidden');

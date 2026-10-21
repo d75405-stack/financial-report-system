@@ -6333,6 +6333,10 @@ function handleApi_(req) {
     return withLock_(() => adminApi_(action.slice(6), req));
   }
   const user = verifyLiffUser_(req);
+  if (LIFF_READ_ONLY.indexOf(action) >= 0) {
+    readMemo_ = {};
+    try { return liffApi_(action, req, user); } finally { readMemo_ = null; }
+  }
   if (LIFF_NO_OUTER_LOCK.indexOf(action) >= 0) return liffApi_(action, req, user);
   return withLock_(() => liffApi_(action, req, user));
 }
@@ -6340,15 +6344,16 @@ function handleApi_(req) {
 // 里長 10/20「轉換網頁太久也會故障」：網頁畫面顯示「鎖定逾時」。原本每個網頁請求都要排隊等全域鎖（20 秒等不到就失敗），
 // 有人在上傳照片、寫入時，只是打開頁面的人也被卡住。只讀資料的請求不用排隊；
 // submitRepair、workUpdate 自己只在寫入的那一下鎖（照片存雲端硬碟在鎖外面做）。
-const LIFF_NO_OUTER_LOCK = ['me', 'myReports', 'myRepairs', 'workRepairs', 'listSlots', 'listLawyers', 'myBookings', 'announcements',
-  'submitRepair', 'workUpdate'];
+const LIFF_READ_ONLY = ['me', 'myReports', 'myRepairs', 'workRepairs', 'listSlots', 'listLawyers', 'myBookings', 'announcements'];
+const LIFF_NO_OUTER_LOCK = LIFF_READ_ONLY.concat(['submitRepair', 'workUpdate']);
+const ME_WITH = ['myRepairs', 'workRepairs', 'listSlots', 'myBookings', 'listLawyers', 'announcements'];
 const ADMIN_READ_ONLY = ['summary', 'options', 'reports', 'repairs', 'repairAudit', 'repairWindows', 'members', 'announcements', 'lawyers', 'slots', 'bookings'];
 
 function liffApi_(action, req, user) {
   const member = findMember_(user.userId);
   switch (action) {
-    case 'me':
-      return {
+    case 'me': {
+      const out = {
         userId: user.userId,
         displayName: user.name,
         member: isActiveMember_(member) ? pick_(member, ['name', 'role', 'group']) : null,
@@ -6359,6 +6364,20 @@ function liffApi_(action, req, user) {
         // 服務處案件網頁（里長 10/20）：報修窗口看到自己服務處的名字，里長看到莊晴全服務團隊；其他人空的
         repairWork: isOwnerUser_(user.userId) ? REPAIR_SELF.name : ((repairWindowOf_(user.userId) || {}).repName || ''),
       };
+      // 里長 10/21「載入時間能加快嗎」：網頁打開時把那一頁要的資料一起帶回去，少跑一趟（只限只讀的資料）
+      const want = (Array.isArray(req.with) ? req.with : []).filter(a => ME_WITH.indexOf(a) >= 0).slice(0, 4);
+      if (want.length) {
+        out.pre = {};
+        want.forEach(a => {
+          try {
+            out.pre[a] = { data: liffApi_(a, req, user) };
+          } catch (err) {
+            out.pre[a] = { error: err.message };
+          }
+        });
+      }
+      return out;
+    }
 
     case 'register': {
       if (String(req.inviteCode || '').trim().toUpperCase() !== String(prop_('INVITE_CODE')).toUpperCase()) {
@@ -7990,16 +8009,21 @@ function sheet_(name) {
   return sh;
 }
 
+// 只讀的網頁請求（例如 me）裡，同一張表只讀一次（里長 10/21「載入時間能加快嗎」）；有寫入的請求不用這個
+let readMemo_ = null;
 function readAll_(name) {
+  if (readMemo_ && readMemo_[name]) return readMemo_[name].map(o => Object.assign({}, o));
   const values = sheet_(name).getDataRange().getValues();
   const header = values.shift() || [];
-  return values
+  const list = values
     .map((row, i) => {
       const o = { _row: i + 2 };
       header.forEach((k, j) => { o[k] = normalize_(k, row[j]); });
       return o;
     })
     .filter(o => header.some(k => o[k] !== ''));
+  if (readMemo_) readMemo_[name] = list.map(o => Object.assign({}, o));
+  return list;
 }
 
 function normalize_(key, v) {
