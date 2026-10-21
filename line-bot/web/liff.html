@@ -174,9 +174,27 @@
 <script>
 let me = null;
 let idToken = '';
+let accessToken = '';
 let selectedSlot = null;
 
-const call = (action, data) => api(action, Object.assign({ idToken }, data));
+const call = (action, data) => api(action, Object.assign({ idToken, accessToken }, data));
+
+// 里長 10/21 截圖「無法載入：請從 LINE 開啟此頁面」：LINE 有時候沒給登入資料（頁面放在背景很久、被重新載入），
+// 自動從 LINE 重新開一次這個頁面拿新的登入；1 分鐘內只試一次，避免一直跳
+function reopenFromLine() {
+  let last = 0;
+  try { last = Number(sessionStorage.getItem('liffReopen') || 0); } catch (e) {}
+  if (Date.now() - last < 60000) return false;
+  try { sessionStorage.setItem('liffReopen', String(Date.now())); } catch (e) {}
+  const page = new URLSearchParams(location.search).get('page');
+  if (liff.isInClient()) {
+    location.replace('https://liff.line.me/' + APP_CONFIG.LIFF_ID + (page ? '?page=' + encodeURIComponent(page) : ''));
+  } else {
+    liff.logout();
+    liff.login({ redirectUri: location.href });
+  }
+  return true;
+}
 
 async function init() {
   try {
@@ -185,10 +203,14 @@ async function init() {
       liff.login({ redirectUri: location.href });
       return;
     }
-    idToken = liff.getIDToken();
+    idToken = liff.getIDToken() || '';
+    accessToken = liff.getAccessToken() || '';
+    if (!idToken && !accessToken && reopenFromLine()) return;
     me = await call('me');
   } catch (err) {
-    $('#loading').textContent = '無法載入：' + err.message;
+    if (/登入已過期|請從 LINE 開啟/.test(err.message) && reopenFromLine()) return;
+    $('#loading').textContent = '無法載入：' + (/登入已過期|請從 LINE 開啟/.test(err.message)
+      ? '請關掉這個頁面，再從官方 LINE 下面的選單重新點開' : err.message);
     return;
   }
   $('#loading').classList.add('hidden');

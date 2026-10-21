@@ -8,7 +8,7 @@ async function api(action, data, retried) {
   const json = await res.json();
   if (!json.ok) {
     // 里長 10/20「轉換網頁太久也會故障」：剛好有人在寫入時會「鎖定逾時」（那次什麼都沒寫進去），等一下自動再試一次
-    if (/鎖定逾時|lock/i.test(json.error || '')) {
+    if (/鎖定逾時|lock timeout|lock timed out/i.test(json.error || '')) {
       if (!retried) {
         await new Promise(r => setTimeout(r, 1500));
         return api(action, data, true);

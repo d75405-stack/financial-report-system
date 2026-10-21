@@ -6332,7 +6332,7 @@ function handleApi_(req) {
     if (ADMIN_READ_ONLY.indexOf(action.slice(6)) >= 0) return adminApi_(action.slice(6), req);
     return withLock_(() => adminApi_(action.slice(6), req));
   }
-  const user = verifyIdToken_(req.idToken);
+  const user = verifyLiffUser_(req);
   if (LIFF_NO_OUTER_LOCK.indexOf(action) >= 0) return liffApi_(action, req, user);
   return withLock_(() => liffApi_(action, req, user));
 }
@@ -7881,6 +7881,51 @@ function messageQuota_() {
   } catch (err) {
     return null;
   }
+}
+
+/**
+ * 驗證 LIFF 使用者：先用 ID token，拿不到或過期就改用 access token（里長 10/21 截圖「無法載入：請從 LINE 開啟此頁面」：
+ * LINE 有時候開頁面時沒給 ID token，例如頁面放在背景很久、LINE 重新載入時）。
+ */
+function verifyLiffUser_(req) {
+  const idToken = String(req.idToken || ''), accessToken = String(req.accessToken || '');
+  if (!idToken && !accessToken) throw new Error('請從 LINE 開啟此頁面');
+  if (idToken) {
+    try {
+      return verifyIdToken_(idToken);
+    } catch (err) {
+      if (!accessToken) throw err;
+    }
+  }
+  return verifyAccessToken_(accessToken);
+}
+
+/** 用 LIFF 的 access token 確認是這個 LIFF 發的，再拿使用者的 userId 和名字。 */
+function verifyAccessToken_(accessToken) {
+  const cache = CacheService.getScriptCache();
+  const key = 'iat_' + Utilities.base64EncodeWebSafe(
+    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, accessToken)).slice(0, 40);
+  const hit = cache.get(key);
+  if (hit) return JSON.parse(hit);
+
+  const v = UrlFetchApp.fetch('https://api.line.me/oauth2/v2.1/verify?access_token=' + encodeURIComponent(accessToken),
+    { muteHttpExceptions: true });
+  if (v.getResponseCode() !== 200) throw new Error('登入已過期，請重新開啟頁面');
+  const info = JSON.parse(v.getContentText());
+  // 一定要是我們這個 LINE Login channel 發的 token，別的 app 的 token 不收
+  if (String(info.client_id) !== String(prop_('LIFF_ID')).split('-')[0] || !(Number(info.expires_in) > 0)) {
+    throw new Error('登入已過期，請重新開啟頁面');
+  }
+  const pr = UrlFetchApp.fetch('https://api.line.me/v2/profile', {
+    headers: { Authorization: 'Bearer ' + accessToken }, muteHttpExceptions: true,
+  });
+  if (pr.getResponseCode() !== 200) throw new Error('登入已過期，請重新開啟頁面');
+  const p = JSON.parse(pr.getContentText());
+  if (!p.userId) throw new Error('登入已過期，請重新開啟頁面');
+  const user = { userId: p.userId, name: p.displayName || '' };
+  const ttl = Math.min(600, Math.floor(Number(info.expires_in)));
+  if (ttl > 0) cache.put(key, JSON.stringify(user), ttl);
+  return user;
 }
 
 /** 驗證 LIFF 的 ID token，回傳 LINE userId 與顯示名稱。 */
