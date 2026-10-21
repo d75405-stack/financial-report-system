@@ -4078,6 +4078,13 @@ SCHEDULED_BROADCASTS.push({ id: 'richmenu-direct-main-1021', at: '2026-10-21T11:
       '特約商店': { type: 'uri', label: '特約商店', uri: CCS_BASE + '/shops/' },
       '里民生活資訊': { type: 'uri', label: '里民生活資訊', uri: CCS_BASE + '/neighbors/' } } } });
 SCHEDULED_BROADCASTS.push({ id: 'richmenu-export-1021b', at: '2026-10-21T11:52:00+08:00', title: '匯出圖文選單（改完確認）', kind: 'richMenuExport' });
+// 里長 10/21「選單萬聖節報名停用」：主分頁左邊大格「萬聖節免費報名・名額有限・點我報名」改成「萬聖節圓滿落幕・看成績・活動回顧」，
+// 點了開活動網站的萬聖節回顧頁（陀螺賽、變裝大賽成績）；其他格子和圖片不變
+SCHEDULED_BROADCASTS.push({ id: 'richmenu-halloween-off-1021', at: '2026-10-21T12:00:00+08:00', title: '主選單：萬聖節報名改成活動回顧', kind: 'richMenuSwap',
+  swap: { alias: 'lizhang-tab-halloween', name: '里辦主選單v6-主分頁(萬聖節回顧)',
+    image: 'https://d75405-stack.github.io/financial-report-system/line-bot/web/richmenu-main-v6.jpg',
+    replace: { '萬聖節免費報名': { type: 'uri', label: '萬聖節活動回顧', uri: CCS_BASE + '/halloween/' } } } });
+SCHEDULED_BROADCASTS.push({ id: 'richmenu-export-1021c', at: '2026-10-21T12:01:00+08:00', title: '匯出圖文選單（萬聖節報名停用後確認）', kind: 'richMenuExport' });
 // 里長 10/14 管理群「全全 查詢社群停車」回「暫時無法回答」：AI 問答紀錄 10/4 之後沒有成功的紀錄 → 部署時檢查一次 Claude API
 SCHEDULED_BROADCASTS.push({ id: 'ai-check-1014', at: '2026-10-14T19:35:00+08:00', title: 'AI 連線檢查', kind: 'aiCheck' });
 // 里長 10/15 早上換了新金鑰 →「換好了，幫我測試」
