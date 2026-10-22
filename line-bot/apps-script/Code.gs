@@ -288,6 +288,11 @@ function handleEvent_(ev) {
   if (handleRepairText_(ev, uid, t)) return;
   // 變裝大賽評審：評審綁定、評分按鈕；里長看評審名單、通知評審
   if (handleJudgeText_(ev, uid, t)) return;
+  // 颱風停班停課：問到就回臺中市政府的公告圖（里長 10/22）
+  if (typhoonQuestion_(t)) {
+    reply_(ev.replyToken, typhoonMessages_());
+    return;
+  }
 
   // 報名者查詢自己的報名與繳費狀態（只會看到自己的資料）
   const lookup = t.match(/^(查詢報名|報名查詢|我的報名|查報名)\s*([\s\S]*)$/) || lookupLike_(t);
@@ -1229,6 +1234,26 @@ function bindRepairWindow_(rep, c) {
     '看所有案件、直接在網頁上修改：' + liffUrl_('work')].join('\n'))]);
   return `✅ 已把「${c.displayName}」綁定為${rep.name}的報修窗口` + (told ? '，也已經用 LINE 通知他了。' : '（LINE 通知沒送出去，請直接告訴他）。') +
     '\n輸入「報修窗口」可以看三個服務處的綁定狀況。';
+}
+
+// 里長 10/22：「若有人問明天颱風有沒有停止上班上課，再請回覆這個圖給他」
+// 臺中市政府 10/22 公告：薔琵颱風，臺中市 10/23（五）停止上班上課。10/23 過完就不再回（避免之後回到過期的公告）
+const TYPHOON_NOTICE = {
+  until: '2026-10-24T00:00:00+08:00',
+  image: 'https://d75405-stack.github.io/financial-report-system/line-bot/web/typhoon-1023.jpg',
+  preview: 'https://d75405-stack.github.io/financial-report-system/line-bot/web/typhoon-1023-s.jpg',
+  text: '🌀 臺中市政府公告（10/22）：薔琵颱風，臺中市 10/23（五）停止上班上課。\n請大家避免非必要外出，災情通報請撥 119 或 1999 市民專線。',
+};
+/** 是不是在問颱風、停班停課（只看短句，長的報修說明之類不算）。 */
+function typhoonQuestion_(t) {
+  if (Date.now() >= Date.parse(TYPHOON_NOTICE.until)) return false;
+  const s = String(t || '');
+  if (!s || s.length > 60) return false;
+  return /停班|停課|停止上班|停止上課|颱風假|放假|上班|上課/.test(s) ||
+    (/颱風/.test(s) && /嗎|呢|\?|？|有沒有|會不會|要不要|放|停/.test(s));
+}
+function typhoonMessages_() {
+  return [text_(TYPHOON_NOTICE.text), { type: 'image', originalContentUrl: TYPHOON_NOTICE.image, previewImageUrl: TYPHOON_NOTICE.preview }];
 }
 
 /** 私訊裡跟報修有關的文字；有處理就回傳 true。 */
@@ -3232,6 +3257,8 @@ const ASSISTANT_NAME = '全全';
  */
 function handleAssistant_(ev, uid, member, text, inGroup) {
   const q = text.slice(ASSISTANT_NAME.length).replace(/^[\s,，:：、!！~]+/, '').trim();
+  // 颱風停班停課：群組裡問全全也回公告圖（里長 10/22）
+  if (typhoonQuestion_(q)) return reply_(ev.replyToken, typhoonMessages_());
   // 群組裡一律當成一般里民，避免把內部資料或個資回覆到群組
   const isAdmin = !inGroup && isActiveMember_(member) && ADMIN_ROLES.indexOf(member.role) >= 0;
   const isStaff = !inGroup && isActiveMember_(member);
