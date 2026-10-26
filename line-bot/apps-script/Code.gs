@@ -58,6 +58,7 @@ const SHEETS = {
   特約上架紀錄: ['at', 'groupName', 'userId', 'displayName', 'command', 'result'],
   系統紀錄: ['at', 'what', 'result'],
   自動回覆: ['id', 'keywords', 'text', 'images', 'until', 'by', 'createdAt', 'status', 'endedAt'],
+  健保院所: ['type', 'name', 'kind', 'tel', 'addr', 'services', 'depts', 'hours', 'note'],
 };
 
 // ───────────────────────── 初始化 ─────────────────────────
@@ -3770,7 +3771,7 @@ const AI_SYSTEM_PROMPT = [
   '- 問題前面如果附了「中央氣象署開放資料」，天氣問題以它為準（說是中央氣象署的預報、哪個時段），不用再上網搜尋天氣。',
   '- 醫療：可以提供公開的就醫資訊（醫院急診即時狀況、附近診所藥局、疫苗與衛生公告），以衛福部、疾管署 cdc.gov.tw、臺中市政府衛生局 health.taichung.gov.tw、健保署、醫院官網為準，並說明資料來源和時間。問題前面附了「急診即時資訊」時以它為準。',
   '- 醫療：不做診斷、不建議吃什麼藥或怎麼治療，請對方就醫或問醫師、藥師；聽起來很緊急（胸痛、呼吸困難、意識不清、中風徵兆、大量出血等）一律請對方立刻撥 119。',
-  '- 診所、藥局：看診時間常會變動，回答時提醒先打電話確認；也可以用健保署「健保快易通」App 查附近院所和看診時段。',
+  '- 診所、藥局：問題前面附了「健保署特約院所名單」時以它為準（不用再上網找），名稱、電話、地址、科別、看診時段照名單說；看診時間常會變動，回答時提醒先打電話確認；也可以用健保署「健保快易通」App 查。',
   '- 查不到、或網路資料不確定時，不要猜，直接說查不到，並請對方在聊天室留言，會由真人回覆。',
   '- 2026 萬聖節活動（10/17–18）已經圓滿結束，不要再邀請報名，也不要問對方想不想知道活動當天的安排。',
   '- 報名截止、現場報名與繳費期限，以知識庫中主題標示「以此為準」的內容為準（即使其他主題的寫法不同）。',
@@ -3820,6 +3821,132 @@ function erContext_() {
     '\n（人數隨時在變，實際以醫院現場為準；危急請直接撥 119）';
   cache.put('er_ctx', ctx, 300);
   return ctx;
+}
+
+// ── 健保署特約院所名單（里長 10/26「要，用健保署官方名單」）──
+// 健保署網站只開放台灣境內連線（Apps Script、GitHub 都連不到），所以由里長從健保署下載診所、藥局名單（CSV），
+// 放到雲端硬碟「健保院所名單（放這裡）」資料夾；每小時檢查一次，有新檔案就只留北屯區、潭子區還在特約的，存到「健保院所」工作表。
+// 問到診所、藥局時，挑出符合的（科別、夜診、路名）附在問題前面給 AI。資料是政府開放資料（政府資料開放授權條款第 1 版）。
+const NHI_FOLDER_ID = '1E5E7B1dSqVkppfNvGQwKrnbKSB17grW0';
+const NHI_AREAS = ['北屯區', '潭子區'];
+const NHI_NEAR_ROADS = ['東山路', '廍子', '太原路', '松竹路', '旱溪', '軍功路', '環中東路', '大坑'];   // 廍子里附近，排前面
+const NHI_TYPES = { 1: '醫院', 2: '醫院', 3: '醫院', 4: '診所', 5: '藥局' };
+const NHI_Q_RE = /診所|藥局|藥房|拿藥|領藥|小兒科|兒科|牙醫|牙科|看牙|眼科|耳鼻喉|皮膚科|家醫|婦產|婦科|骨科|復健|中醫|身心科|精神科|泌尿|夜診|看診|門診|看醫生|看病/;
+const NHI_DEPTS = [
+  [/小兒|兒科|小孩|小朋友|孩子|寶寶/, /兒/], [/牙/, /牙/], [/眼/, /眼/], [/耳鼻喉|鼻子|喉嚨/, /耳鼻喉/], [/皮膚/, /皮膚/],
+  [/家醫|家庭醫/, /家庭醫|家醫/], [/婦|產/, /婦|產/], [/骨科|骨頭|扭傷/, /骨/], [/復健/, /復健/], [/中醫/, /中醫/],
+  [/身心|精神|失眠/, /身心|精神/], [/泌尿/, /泌尿/], [/內科/, /內科/], [/外科/, /外科/],
+];
+
+/** 讀一個雲端硬碟檔案（CSV，或被轉成 Google 試算表的）成文字列；不是健保署名單回 null。 */
+function nhiFileRows_(file) {
+  if (file.getMimeType() === MimeType.GOOGLE_SHEETS) {
+    const v = SpreadsheetApp.openById(file.getId()).getSheets()[0].getDataRange().getValues();
+    return v.length && v[0].indexOf('醫事機構名稱') >= 0 ? v.map(r => r.map(String)) : null;
+  }
+  const text = file.getBlob().getDataAsString('UTF-8').replace(/^\uFEFF/, '');
+  const nl = text.indexOf('\n');
+  const head = text.slice(0, nl < 0 ? text.length : nl);
+  if (head.indexOf('醫事機構名稱') < 0) return null;
+  // 先用地址關鍵字挑出北屯、潭子那幾行再解析（全國兩萬多行，全部解析太慢）
+  const lines = text.slice(nl + 1).split(/\r?\n/).filter(l => /[臺台]中市/.test(l) && NHI_AREAS.some(a => l.indexOf(a) >= 0));
+  return Utilities.parseCsv(head + '\n' + lines.join('\n'));
+}
+
+/** 雲端硬碟資料夾裡有比上次匯入新的檔案才匯入；force 一律重新匯入。回傳結果說明（沒做事回空字串）。 */
+function importNhiIfNew_(force) {
+  let folder;
+  try { folder = DriveApp.getFolderById(NHI_FOLDER_ID); } catch (err) { return ''; }
+  const last = JSON.parse(prop_('NHI_IMPORT') || '{}');
+  const files = [];
+  const it = folder.getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    if (!f.isTrashed()) files.push(f);
+  }
+  if (!files.length) return force ? '資料夾裡還沒有檔案' : '';
+  const newest = Math.max.apply(null, files.map(f => f.getLastUpdated().getTime()));
+  if (!force && last.newest && newest <= last.newest) return '';
+  // 每一種（醫院／診所／藥局）用最新的那個檔案
+  const byType = {};
+  files.sort((a, b) => a.getLastUpdated() - b.getLastUpdated()).forEach(f => {
+    let rows;
+    try { rows = nhiFileRows_(f); } catch (err) { console.error('讀健保名單失敗 ' + f.getName() + '：' + err.message); return; }
+    if (!rows || rows.length < 2) return;
+    const h = rows[0], col = name => h.indexOf(name);
+    const kinds = {};
+    rows.slice(1).forEach(r => { const t = NHI_TYPES[String(r[col('特約類別')]).trim()] || '其他'; kinds[t] = (kinds[t] || []).concat([r]); });
+    Object.keys(kinds).forEach(t => { byType[t] = { file: f.getName(), header: h, rows: kinds[t] }; });
+  });
+  const out = [];
+  Object.keys(byType).forEach(t => {
+    const { header, rows } = byType[t];
+    const c = name => header.indexOf(name);
+    rows.forEach(r => {
+      const g = name => (c(name) >= 0 ? String(r[c(name)] || '').trim() : '');
+      if (g('終止合約或歇業日期')) return;
+      const addr = g('地址').replace(/^台中市/, '臺中市');
+      if (!addr.startsWith('臺中市') || !NHI_AREAS.some(a => addr.indexOf(a) >= 0)) return;
+      out.push([t, g('醫事機構名稱'), g('醫事機構種類'), g('電話'), addr, g('服務項目'), g('診療科別'), g('固定看診時段'), g('備註')]);
+    });
+  });
+  if (!out.length) return '⚠️ 資料夾裡的檔案找不到北屯區、潭子區的院所，請確認放的是健保署的診所／藥局名單';
+  const sh = sheet_('健保院所');
+  sh.getRange(2, 1, Math.max(sh.getLastRow(), 2), SHEETS.健保院所.length).clearContent();
+  sh.getRange(2, 1, out.length, SHEETS.健保院所.length).setNumberFormat('@').setValues(out);
+  const count = t => out.filter(r => r[0] === t).length;
+  const info = { at: now_(), newest, files: Object.keys(byType).map(t => t + '：' + byType[t].file), clinics: count('診所'), pharmacies: count('藥局'), hospitals: count('醫院') };
+  PropertiesService.getScriptProperties().setProperty('NHI_IMPORT', JSON.stringify(info));
+  CacheService.getScriptCache().remove('nhi_rows');
+  const msg = `✅ 健保院所名單已更新（北屯區、潭子區）：診所 ${info.clinics} 家、藥局 ${info.pharmacies} 家` + (info.hospitals ? `、醫院 ${info.hospitals} 家` : '') +
+    '\n之後問全全「北屯哪裡有小兒科」「附近有夜診嗎」就會用健保署的官方名單回答。';
+  try { nhiSampleToDrive_(out); } catch (_) { /* 只是給 Claude 看格式 */ }
+  return msg;
+}
+
+/** 匯入後存幾筆樣本（公開資料）到「系統檢查」，給 Claude 看看診時段的格式。 */
+function nhiSampleToDrive_(out) {
+  let parent;
+  try { parent = prop_('BACKUP_FOLDER_ID') ? backupRoot_() : DriveApp.getRootFolder(); } catch (_) { parent = DriveApp.getRootFolder(); }
+  const it = parent.getFoldersByName('系統檢查');
+  const folder = it.hasNext() ? it.next() : parent.createFolder('系統檢查');
+  const pick = out.filter(r => r[0] === '診所').slice(0, 6).concat(out.filter(r => r[0] === '藥局').slice(0, 2), out.filter(r => /夜|晚/.test(r[7])).slice(0, 3));
+  folder.createFile('nhi-sample_' + Utilities.formatDate(new Date(), TZ, 'MMdd-HHmm') + '.txt',
+    SHEETS.健保院所.join(' | ') + '\n' + pick.map(r => r.join(' | ')).join('\n'), MimeType.PLAIN_TEXT);
+}
+
+/** 試算表選單：馬上匯入。 */
+function importNhiFromMenu() {
+  const ui = SpreadsheetApp.getUi();
+  let r;
+  try { r = importNhiIfNew_(true); } catch (err) { r = '⚠️ 匯入失敗：' + err.message; }
+  ui.alert(r || '沒有新的檔案');
+}
+
+/** 問到診所、藥局時附給 AI 的名單（最多 25 家，廍子里附近的路排前面）；還沒匯入回空字串。 */
+function nhiContext_(question) {
+  const info = JSON.parse(prop_('NHI_IMPORT') || '{}');
+  if (!info.at) return '';
+  let rows;
+  try { rows = readAll_('健保院所'); } catch (err) { return ''; }
+  if (!rows.length) return '';
+  const q = String(question);
+  const wantPharm = /藥局|藥房|拿藥|領藥/.test(q);
+  let list = rows.filter(r => (wantPharm ? r.type === '藥局' : r.type !== '藥局'));
+  const dept = NHI_DEPTS.find(d => d[0].test(q));
+  if (dept) list = list.filter(r => dept[1].test(r.depts) || dept[1].test(r.name));
+  if (/潭子/.test(q) && !/北屯/.test(q)) list = list.filter(r => r.addr.indexOf('潭子區') >= 0);
+  else if (/北屯/.test(q) && !/潭子/.test(q)) list = list.filter(r => r.addr.indexOf('北屯區') >= 0);
+  const road = (q.match(/([\u4e00-\u9fff]{1,4}[路街])/) || [])[1];
+  if (road) { const near = list.filter(r => r.addr.indexOf(road) >= 0); if (near.length) list = near; }
+  if (/夜診|晚上|晚間|夜間/.test(q)) { const night = list.filter(r => /夜|晚/.test(r.hours)); if (night.length) list = night; }
+  const near = r => (NHI_NEAR_ROADS.some(x => r.addr.indexOf(x) >= 0) ? 0 : 1);
+  list = list.slice().sort((a, b) => near(a) - near(b));
+  const total = list.length;
+  const lines = list.slice(0, 25).map(r => `・${r.name}｜${r.depts || r.kind}｜${r.tel}｜${r.addr.replace(/^臺中市/, '')}` +
+    (r.hours ? `｜看診：${r.hours.slice(0, 160)}` : '') + (r.note ? `｜${r.note.slice(0, 60)}` : ''));
+  return `健保署特約院所名單（健保署開放資料，${String(info.at).slice(0, 10)} 匯入，北屯區、潭子區${dept ? '，依科別篩選' : ''}；符合的共 ${total} 家${total > 25 ? '，列出廍子里附近優先的 25 家' : ''}）：\n` +
+    (lines.join('\n') || '（名單裡沒有符合的）');
 }
 
 // ── 中央氣象署開放資料（里長 10/26 選：申請氣象署授權碼，全全直接讀官方預報）──
@@ -3957,7 +4084,8 @@ function aiAnswer_(question, uid, name) {
   ];
   const today = now_().slice(0, 10);
   // 現在時間放在問題前面（不放在 system，知識庫的快取才不會每天失效）；「明天天氣」這類問題才知道是哪一天
-  const extra = [CWA_WEATHER_Q_RE.test(question) ? cwaWeatherContext_() : '', ER_Q_RE.test(question) ? erContext_() : ''].filter(Boolean).join('\n\n');
+  const extra = [CWA_WEATHER_Q_RE.test(question) ? cwaWeatherContext_() : '', ER_Q_RE.test(question) ? erContext_() : '',
+    NHI_Q_RE.test(question) ? nhiContext_(question) : ''].filter(Boolean).join('\n\n');
   const user = { role: 'user', content: `（現在時間：${now_()}（${weekdayOf_(today)}），地點：台中市北屯區廍子里）\n` +
     (extra ? extra + '\n\n里民的問題：' : '') + String(question).slice(0, 500) };
   const call = (tools, asst) => {
@@ -4282,6 +4410,8 @@ const SIGNUP_SYNC_FORMS = [
 
 function syncSignups() {
   checkBroadcasts_();  // 每小時順便檢查預約推播（一次性排程的備援）
+  // 雲端硬碟有新的健保署名單就匯入，匯入好通知里長
+  try { const r = importNhiIfNew_(); if (r) notifyOwner_(r); } catch (err) { console.error('健保院所名單匯入失敗：' + err.message); }
   const n = syncSignupsNow_();
   try { sendPaidNotices_(); } catch (err) { console.error('繳費完成通知失敗：' + err.message); }
   return n;
@@ -7806,6 +7936,7 @@ function onOpen() {
     .addItem('設定訊息轉發（aibus）', 'setupForward')
     .addItem('設定全全 AI 問答', 'setupAI')
     .addItem('設定氣象署授權碼（全全查天氣）', 'setupCwaKey')
+    .addItem('匯入健保院所名單（全全查診所藥局）', 'importNhiFromMenu')
     .addItem('開放／關閉律師諮詢', 'toggleLawyer')
     .addItem('修改私訊罐頭訊息', 'editCannedText')
     .addSeparator()
