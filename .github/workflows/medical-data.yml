@@ -1,0 +1,31 @@
+# 健保署特約診所、藥局（北屯區、潭子區）→ medical-data 分支的 beitun-medical.json，給 LINE 小幫手「全全」查附近診所藥局
+# 里長 10/26「醫療部分有辦法連動嗎」：Apps Script 連不到健保署網站，改由這裡每天抓一次
+name: Medical open data
+on:
+  schedule:
+    - cron: '20 0 * * *'   # 每天 08:20（臺灣時間；健保署大約 07:00 更新）
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths: ['line-bot/tools/medical_data.py', '.github/workflows/medical-data.yml']
+permissions:
+  contents: write
+concurrency:
+  group: medical-data
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 line-bot/tools/medical_data.py /tmp/beitun-medical.json
+      - name: Publish to medical-data branch
+        run: |
+          mkdir /tmp/pub && cd /tmp/pub
+          git init -q -b medical-data
+          cp /tmp/beitun-medical.json .
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add beitun-medical.json
+          git commit -q -m "健保特約診所、藥局（北屯區、潭子區）$(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M')"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" medical-data
