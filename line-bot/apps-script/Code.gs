@@ -4620,6 +4620,16 @@ SCHEDULED_BROADCASTS.push({ id: 'ai-web-check-1026', at: '2026-10-26T21:00:00+08
 // 里長 10/26：「設定好了，幫我確認」（氣象署授權碼）→ 再問一次天氣，確認全全用的是氣象署官方預報
 SCHEDULED_BROADCASTS.push({ id: 'ai-web-check-cwa-10262133', at: '2026-10-26T21:31:00+08:00', title: 'AI 天氣檢查（氣象署授權碼）', kind: 'aiWebCheck',
   question: '明天台中市北屯區天氣如何？會下雨嗎？' });
+// 里長 10/26「醫療部分有辦法連動嗎」（選了：附近診所藥局、醫院急診即時狀況、衛生公告疫苗）→ 先看資料來源長什麼樣子
+SCHEDULED_BROADCASTS.push({ id: 'probe-medical-1026', at: '2026-10-26T21:40:00+08:00', title: '醫療資料來源檢查', kind: 'webProbe', urls: [
+  'https://data.gov.tw/api/v2/rest/dataset/39283',
+  'https://data.gov.tw/api/v2/rest/dataset/39284',
+  'https://data.gov.tw/api/v2/rest/dataset/39282',
+  'https://www.health.taichung.gov.tw/26198/27065/1327490/27128',
+  'https://dep.mohw.gov.tw/DOMA/cp-979-4112-106.html',
+  'https://www.cmuh.cmu.edu.tw/Announce/EmergCurrent',
+  'https://www.vghtc.gov.tw/APIPage/ERInfo?WebMenuID=31873678-d9cd-408a-852a-cc99ac5d374b',
+] });
 // 里長 10/21：網站公告的「賴順仁議員印章」那則取消，改為萬聖節回顧、免費法律諮詢、快速報修（三個連結各有名稱）
 SCHEDULED_BROADCASTS.push({ id: 'notice-services-1021', at: '2026-10-21T13:00:00+08:00', title: '網站公告：萬聖節回顧、法律諮詢、快速報修', kind: 'siteNotice',
   text: '🎃 萬聖節活動圓滿結束，謝謝大家！[看成績・活動回顧](/halloween/)　⚖️ 免費律師諮詢，律師 1 對 1、絕對隱私 [立即預約](/lawyer/)　🔧 路燈、水溝、坑洞 [快速報修](/repair/)' });
@@ -6344,6 +6354,41 @@ function runScheduledBroadcasts() {
         const r = bindRepByIntro_(b.rep, b.intro);
         props.setProperty(key, 'sent ' + now_() + ' ' + String(r).slice(0, 120));
         notifyOwner_('🔧 ' + r);
+        return;
+      }
+      if (b.kind === 'webProbe') {
+        // 部署後去看幾個公開網頁長什麼樣子（Claude 的環境連不到台灣的政府網站），結果存到雲端硬碟「系統檢查」給 Claude 看；不通知里長
+        props.setProperty(key, 'sent ' + now_());
+        const out = [];
+        (b.urls || []).forEach(u => {
+          try {
+            const res = UrlFetchApp.fetch(u, { muteHttpExceptions: true, followRedirects: true, headers: { 'User-Agent': 'Mozilla/5.0' } });
+            const body = res.getContentText();
+            const type = String((res.getHeaders() || {})['Content-Type'] || (res.getHeaders() || {})['content-type'] || '');
+            out.push('════ ' + u, 'HTTP ' + res.getResponseCode() + '｜' + type + '｜' + body.length + ' 字');
+            if (/json/i.test(type) || /^\s*[\[{]/.test(body)) {
+              out.push(body.slice(0, 6000));
+            } else {
+              const title = (body.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '';
+              out.push('標題：' + title.replace(/\s+/g, ' ').trim());
+              const links = [];
+              body.replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (m, href, txt) => {
+                const t = txt.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+                if (/急診|ER|Emerg|醫院|附醫|榮總|慈濟|中山|澄清|童綜合|光田|林新|仁愛|亞洲|臺中醫院|台中醫院|csv|CSV|下載/.test(t + ' ' + href)) links.push(t.slice(0, 40) + ' → ' + href);
+              });
+              out.push('連結（' + links.length + '）：', links.slice(0, 120).join('\n'));
+              out.push('內文：', body.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').slice(0, 4000));
+            }
+          } catch (err) { out.push('════ ' + u, '失敗：' + err.message); }
+          out.push('');
+        });
+        try {
+          let parent;
+          try { parent = prop_('BACKUP_FOLDER_ID') ? backupRoot_() : DriveApp.getRootFolder(); } catch (_) { parent = DriveApp.getRootFolder(); }
+          const it = parent.getFoldersByName('系統檢查');
+          const folder = it.hasNext() ? it.next() : parent.createFolder('系統檢查');
+          folder.createFile(b.id + '_' + Utilities.formatDate(new Date(), TZ, 'MMdd-HHmm') + '.txt', out.join('\n'), MimeType.PLAIN_TEXT);
+        } catch (err) { console.error('存網頁檢查結果失敗：' + err.message); }
         return;
       }
       if (b.kind === 'aiWebCheck') {
