@@ -3771,7 +3771,7 @@ const AI_SYSTEM_PROMPT = [
   '- 問題前面如果附了「中央氣象署開放資料」，天氣問題以它為準（說是中央氣象署的預報、哪個時段），不用再上網搜尋天氣。',
   '- 醫療：可以提供公開的就醫資訊（醫院急診即時狀況、附近診所藥局、疫苗與衛生公告），以衛福部、疾管署 cdc.gov.tw、臺中市政府衛生局 health.taichung.gov.tw、健保署、醫院官網為準，並說明資料來源和時間。問題前面附了「急診即時資訊」時以它為準。',
   '- 醫療：不做診斷、不建議吃什麼藥或怎麼治療，請對方就醫或問醫師、藥師；聽起來很緊急（胸痛、呼吸困難、意識不清、中風徵兆、大量出血等）一律請對方立刻撥 119。',
-  '- 診所、藥局：問題前面附了「健保署特約院所名單」時以它為準（不用再上網找），名稱、電話、地址、科別、看診時段照名單說；看診時間常會變動，回答時提醒先打電話確認；也可以用健保署「健保快易通」App 查。',
+  '- 診所、藥局：問題前面附了「Google 地圖查詢結果」時以它為準（不用再上網找），名稱、電話、地址、營業時間、現在有沒有開照它說，最多介紹 5 家，回答最後一定要寫「（資料來源：Google 地圖）」；可以附上 Google 地圖連結。看診時間常會變動，提醒先打電話確認；也可以用健保署「健保快易通」App 查。',
   '- 查不到、或網路資料不確定時，不要猜，直接說查不到，並請對方在聊天室留言，會由真人回覆。',
   '- 2026 萬聖節活動（10/17–18）已經圓滿結束，不要再邀請報名，也不要問對方想不想知道活動當天的安排。',
   '- 報名截止、現場報名與繳費期限，以知識庫中主題標示「以此為準」的內容為準（即使其他主題的寫法不同）。',
@@ -3949,6 +3949,119 @@ function nhiContext_(question) {
     (lines.join('\n') || '（名單裡沒有符合的）');
 }
 
+// ── Google 地圖查診所、藥局（里長 10/26「有辦法從 Google 地圖抓嗎」→ 選「只用 Google 地圖」）──
+// 問到診所、藥局時，用 Google 地圖 Places API（Text Search，以廍子里為中心）查，把名稱、地址、電話、營業時間、現在有沒有開附給 AI。
+// 金鑰在試算表選單「設定 Google 地圖金鑰」輸入（指令碼屬性 GMAPS_API_KEY）。Google 規定不能把查到的內容存起來，所以每次即時查、不快取。
+// 費用：營業時間屬於 Enterprise 等級，每月前 1,000 次免費；這裡每月最多用 900 次，用完當月改回上網搜尋，不會被收費。
+const GMAPS_MONTHLY_CAP = 900;
+const GMAPS_CENTER = { latitude: 24.1617, longitude: 120.7261 };   // 廍子里（跟報修地圖一樣）
+const GMAPS_FIELDS = 'places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.currentOpeningHours.openNow,' +
+  'places.regularOpeningHours.weekdayDescriptions,places.businessStatus,places.googleMapsUri';
+const GMAPS_DEPTS = [
+  [/小兒|兒科|小孩|小朋友|孩子|寶寶/, '小兒科診所'], [/牙/, '牙醫診所'], [/眼/, '眼科診所'], [/耳鼻喉|鼻子|喉嚨/, '耳鼻喉科診所'],
+  [/皮膚/, '皮膚科診所'], [/家醫|家庭醫/, '家醫科診所'], [/婦|產/, '婦產科診所'], [/骨科|骨頭|扭傷/, '骨科診所'], [/復健/, '復健科診所'],
+  [/中醫/, '中醫診所'], [/身心|精神|失眠/, '身心科診所'], [/泌尿/, '泌尿科診所'], [/內科/, '內科診所'], [/外科/, '外科診所'],
+];
+
+/** 依問題組 Google 地圖的查詢字：「台中市北屯區 小兒科診所」。 */
+function mapsQueryFor_(q) {
+  const area = /潭子/.test(q) && !/北屯/.test(q) ? '台中市潭子區' : '台中市北屯區';
+  // 路名：先拿掉「台中市、北屯、潭子」，不然「潭子崇德路」會整串被當成路名
+  const road = (q.replace(/[臺台]中市|北屯區?|潭子區?|附近|哪裡|哪邊/g, ' ').match(/([\u4e00-\u9fff]{1,4}[路街])/) || [])[1] || '';
+  const what = /藥局|藥房|拿藥|領藥/.test(q) ? '藥局' : ((GMAPS_DEPTS.find(d => d[0].test(q)) || [])[1] || '診所');
+  return [area, road, what].filter(Boolean).join(' ');
+}
+
+/** 這個月還能不能用 Google 地圖（用一次記一次）。 */
+function mapsQuotaTake_() {
+  const month = now_().slice(0, 7);
+  return withLock_(() => {
+    const u = JSON.parse(prop_('GMAPS_USAGE') || '{}');
+    const n = u.month === month ? Number(u.n || 0) : 0;
+    if (n >= GMAPS_MONTHLY_CAP) return false;
+    PropertiesService.getScriptProperties().setProperty('GMAPS_USAGE', JSON.stringify({ month, n: n + 1 }));
+    return true;
+  });
+}
+
+function mapsSearch_(textQuery, openNow) {
+  const key = prop_('GMAPS_API_KEY');
+  if (!key) return null;
+  const res = UrlFetchApp.fetch('https://places.googleapis.com/v1/places:searchText', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': GMAPS_FIELDS },
+    payload: JSON.stringify(Object.assign({ textQuery, languageCode: 'zh-TW', regionCode: 'TW', pageSize: 10,
+      locationBias: { circle: { center: GMAPS_CENTER, radius: 4000 } } }, openNow ? { openNow: true } : {})),
+  });
+  if (res.getResponseCode() !== 200) {
+    let msg = '';
+    try { msg = JSON.parse(res.getContentText()).error.message; } catch (_) { msg = res.getContentText().slice(0, 200); }
+    throw new Error('Google 地圖回應 HTTP ' + res.getResponseCode() + '：' + msg);
+  }
+  return (JSON.parse(res.getContentText()).places || []).filter(p => p.businessStatus !== 'CLOSED_PERMANENTLY');
+}
+
+/** 問到診所、藥局時附給 AI 的 Google 地圖查詢結果；沒有金鑰、額度用完、查不到回空字串。 */
+function mapsContext_(question) {
+  if (!prop_('GMAPS_API_KEY')) return '';
+  const q = String(question);
+  const textQuery = mapsQueryFor_(q);
+  const openNow = /現在|目前|還有開|有開嗎|開著/.test(q);
+  if (!mapsQuotaTake_()) { console.error('Google 地圖本月額度已用完'); return ''; }
+  let places;
+  try { places = mapsSearch_(textQuery, openNow); } catch (err) {
+    try { append_('系統紀錄', { at: now_(), what: 'Google 地圖查詢失敗', result: String(err.message).slice(0, 500) }); } catch (_) { /* 記錄失敗不影響 */ }
+    return '';
+  }
+  if (!places) return '';
+  const lines = places.slice(0, 8).map(p => {
+    const open = p.currentOpeningHours && typeof p.currentOpeningHours.openNow === 'boolean' ? (p.currentOpeningHours.openNow ? '現在有開' : '現在沒開') : '';
+    const hours = ((p.regularOpeningHours || {}).weekdayDescriptions || []).join('；');
+    return `・${(p.displayName || {}).text || ''}｜${(p.formattedAddress || '').replace(/^\d{3,6}\s*/, '').replace(/^台灣/, '')}` +
+      (p.nationalPhoneNumber ? `｜${p.nationalPhoneNumber}` : '') + (open ? `｜${open}` : '') + (hours ? `｜營業時間：${hours}` : '') +
+      (p.googleMapsUri ? `｜${p.googleMapsUri}` : '');
+  });
+  return `Google 地圖查詢結果（${now_()} 查詢「${textQuery}」${openNow ? '，只列現在有開的' : ''}，以廍子里為中心）：\n` +
+    (lines.join('\n') || '（沒有查到）');
+}
+
+/** 試算表選單：輸入 Google 地圖金鑰（AIza 開頭），輸入時先試查一次。 */
+function setupMapsKey() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    checkOwner_(false);
+  } catch (err) {
+    return ui.alert(err.message);
+  }
+  let error = '';
+  for (;;) {
+    const r = ui.prompt('全全查診所藥局：Google 地圖金鑰',
+      (error ? '❌ ' + error + '\n\n' : '') +
+      '到 Google Cloud 啟用「Places API (New)」並建立 API 金鑰（AIza 開頭），貼上。\n輸入「關閉」可停用（全全改回上網搜尋）。',
+      ui.ButtonSet.OK_CANCEL);
+    if (r.getSelectedButton() !== ui.Button.OK) return ui.alert('已取消，沒有變更。');
+    const v = r.getResponseText().trim();
+    const props = PropertiesService.getScriptProperties();
+    if (v === '關閉') {
+      props.deleteProperty('GMAPS_API_KEY');
+      return ui.alert('已停用 Google 地圖，全全問到診所藥局會改用網路搜尋。');
+    }
+    if (!/^AIza[0-9A-Za-z_-]{30,}$/.test(v)) { error = '金鑰的格式不對（應該是 AIza 開頭的一串英文數字）'; continue; }
+    const old = props.getProperty('GMAPS_API_KEY');
+    props.setProperty('GMAPS_API_KEY', v);
+    let places = null;
+    try { places = mapsSearch_('台中市北屯區 小兒科診所', false); } catch (err) { error = err.message; }
+    if (!places || !places.length) {
+      if (old) props.setProperty('GMAPS_API_KEY', old); else props.deleteProperty('GMAPS_API_KEY');
+      error = '這組金鑰查不到資料' + (error ? '（' + error + '）' : '') + '\n請確認已啟用「Places API (New)」、已設定帳單，金鑰的 API 限制有勾 Places API (New)';
+      continue;
+    }
+    return ui.alert('✅ 已設定 Google 地圖金鑰，之後問全全診所、藥局會用 Google 地圖查。\n\n試查「北屯區 小兒科」找到：\n' +
+      places.slice(0, 5).map(p => '・' + ((p.displayName || {}).text || '') + (p.nationalPhoneNumber ? ' ' + p.nationalPhoneNumber : '')).join('\n') +
+      `\n\n每月最多查 ${GMAPS_MONTHLY_CAP} 次（Google 每月前 1,000 次免費），用完當月改回上網搜尋。`);
+  }
+}
+
 // ── 中央氣象署開放資料（里長 10/26 選：申請氣象署授權碼，全全直接讀官方預報）──
 // 網路搜尋讀不到氣象署網頁上的數字（網頁打開後才載入），所以問到天氣時，先用授權碼抓「臺中市 36 小時預報」和「北屯區鄉鎮預報」，
 // 附在問題前面給 AI。授權碼在試算表選單「LINE 系統 → 設定氣象署授權碼」輸入（指令碼屬性 CWA_API_KEY），不經過聊天室。
@@ -4085,7 +4198,7 @@ function aiAnswer_(question, uid, name) {
   const today = now_().slice(0, 10);
   // 現在時間放在問題前面（不放在 system，知識庫的快取才不會每天失效）；「明天天氣」這類問題才知道是哪一天
   const extra = [CWA_WEATHER_Q_RE.test(question) ? cwaWeatherContext_() : '', ER_Q_RE.test(question) ? erContext_() : '',
-    NHI_Q_RE.test(question) ? nhiContext_(question) : ''].filter(Boolean).join('\n\n');
+    NHI_Q_RE.test(question) ? (mapsContext_(question) || nhiContext_(question)) : ''].filter(Boolean).join('\n\n');
   const user = { role: 'user', content: `（現在時間：${now_()}（${weekdayOf_(today)}），地點：台中市北屯區廍子里）\n` +
     (extra ? extra + '\n\n里民的問題：' : '') + String(question).slice(0, 500) };
   const call = (tools, asst) => {
@@ -7936,7 +8049,7 @@ function onOpen() {
     .addItem('設定訊息轉發（aibus）', 'setupForward')
     .addItem('設定全全 AI 問答', 'setupAI')
     .addItem('設定氣象署授權碼（全全查天氣）', 'setupCwaKey')
-    .addItem('匯入健保院所名單（全全查診所藥局）', 'importNhiFromMenu')
+    .addItem('設定 Google 地圖金鑰（全全查診所藥局）', 'setupMapsKey')
     .addItem('開放／關閉律師諮詢', 'toggleLawyer')
     .addItem('修改私訊罐頭訊息', 'editCannedText')
     .addSeparator()
