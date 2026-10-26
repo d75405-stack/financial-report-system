@@ -4617,6 +4617,9 @@ SCHEDULED_BROADCASTS.push({ id: 'notice-lai-stamp-1017b', at: '2026-10-17T16:10:
 // 里長 10/26「查詢公開網站有辦法做到嗎」：部署後實際問一題天氣，確認全全的網路搜尋在正式帳號能用
 SCHEDULED_BROADCASTS.push({ id: 'ai-web-check-1026', at: '2026-10-26T21:00:00+08:00', title: 'AI 網路搜尋檢查', kind: 'aiWebCheck',
   question: '可以幫我查中央氣象署，明天台中市北屯區的天氣嗎？' });
+// 里長 10/26：「設定好了，幫我確認」（氣象署授權碼）→ 再問一次天氣，確認全全用的是氣象署官方預報
+SCHEDULED_BROADCASTS.push({ id: 'ai-web-check-cwa-10262133', at: '2026-10-26T21:31:00+08:00', title: 'AI 天氣檢查（氣象署授權碼）', kind: 'aiWebCheck',
+  question: '明天台中市北屯區天氣如何？會下雨嗎？' });
 // 里長 10/21：網站公告的「賴順仁議員印章」那則取消，改為萬聖節回顧、免費法律諮詢、快速報修（三個連結各有名稱）
 SCHEDULED_BROADCASTS.push({ id: 'notice-services-1021', at: '2026-10-21T13:00:00+08:00', title: '網站公告：萬聖節回顧、法律諮詢、快速報修', kind: 'siteNotice',
   text: '🎃 萬聖節活動圓滿結束，謝謝大家！[看成績・活動回顧](/halloween/)　⚖️ 免費律師諮詢，律師 1 對 1、絕對隱私 [立即預約](/lawyer/)　🔧 路燈、水溝、坑洞 [快速報修](/repair/)' });
@@ -6357,7 +6360,10 @@ function runScheduledBroadcasts() {
           const it = parent.getFoldersByName('系統檢查');
           const folder = it.hasNext() ? it.next() : parent.createFolder('系統檢查');
           folder.createFile(b.id + '_' + Utilities.formatDate(new Date(), TZ, 'MMdd-HHmm') + '.txt',
-            ['問題：' + b.question, '', '回答：' + r].concat(errs.length ? ['', '錯誤紀錄：'].concat(errs) : []).join('\n'), MimeType.PLAIN_TEXT);
+            ['問題：' + b.question, '', '回答：' + r, '',
+              '氣象署授權碼：' + (prop_('CWA_API_KEY') ? '有設定' : '沒有設定'),
+              '氣象署資料：' + (String(cwaWeatherContext_() || '沒抓到').split('【北屯區')[0].slice(0, 600))]
+              .concat(errs.length ? ['', '錯誤紀錄：'].concat(errs) : []).join('\n'), MimeType.PLAIN_TEXT);
         } catch (err) { console.error('存系統檢查結果失敗：' + err.message); }
         return;
       }
