@@ -57,6 +57,7 @@ const SHEETS = {
   報修修改紀錄: ['at', 'id', 'who', 'action', 'before', 'after'],
   特約上架紀錄: ['at', 'groupName', 'userId', 'displayName', 'command', 'result'],
   系統紀錄: ['at', 'what', 'result'],
+  自動回覆: ['id', 'keywords', 'text', 'images', 'until', 'by', 'createdAt', 'status', 'endedAt'],
 };
 
 // ───────────────────────── 初始化 ─────────────────────────
@@ -412,6 +413,12 @@ function handleEvent_(ev) {
     case 'help':
       reply_(ev.replyToken, [text_(privateCannedText_())]);
       return;
+  }
+  // 管理群設定的自動回覆（內建的關鍵字優先，上面都沒處理到才看）
+  const ar = autoReplyFor_(t);
+  if (ar) {
+    reply_(ev.replyToken, ar);
+    return;
   }
   // 其他訊息不自動回覆，留給里辦人員在官方帳號後台以聊天回覆；記到「未回覆訊息」，之後查得到誰沒收到回覆。
   logUnanswered_(uid, t);
@@ -1571,7 +1578,7 @@ function handleShopGroup_(ev, uid) {
   const done = text => { reply_(ev.replyToken, [text_(text)]); logShop_(gid, uid, cmd, text.split('\n')[0]); return true; };
   const quoted = msg.quotedMessageId ? shopCache_('gmsg_' + msg.quotedMessageId, null) : null;
   // 特約以外的網站管理（生活資訊、網站公告、報名人數、評審進度、說明），見 mgmtGroupCommand_
-  const mg = mgmtGroupCommand_(cmd, { gid, uid, isPost, quoted, quotedMissing: !!msg.quotedMessageId && !quoted });
+  const mg = mgmtGroupCommand_(cmd, { gid, uid, isPost, quoted, quotedMissing: !!msg.quotedMessageId && !quoted, quotedId: msg.quotedMessageId || '' });
   if (mg) return done(mg);
   let m;
   if ((m = cmd.match(SHOP_REMOVE_RE))) {
@@ -1662,6 +1669,8 @@ function looksLikePlacePost_(t) {
 /** 管理群的網站管理指令；不是這些指令回傳 null（交給特約商家或全全）。 */
 function mgmtGroupCommand_(cmd, c) {
   let m;
+  // 自動回覆：管理群夥伴自己設定「有人問 OO 就回這段話／這張圖」（里長 10/26）
+  if ((m = cmd.match(AUTO_REPLY_RE))) return autoReplyCommand_(m[1].trim(), c);
   // 查社群聊天紀錄（里長 10/14：管理群每個人都可以查，名字遮一半）
   if ((m = cmd.match(CHAT_QUERY_RE))) return /^(怎麼用|如何用|說明|用法|教學)?[?？]?$/.test(m[1].trim()) ? CHAT_HELP_TEXT : chatQueryText_(m[1], c.uid);
   if (c.isPost && !NB_ADD_RE.test(cmd)) return null;   // 貼特約公告同時 @官方帳號：特約上架
@@ -1682,15 +1691,15 @@ function mgmtGroupCommand_(cmd, c) {
   return null;
 }
 
-/**
- * 網站公告指令（里長 10/13：「網站公告只有我能發」）：發布、更換、撤下只有里長；看目前的公告大家都可以。
- * 管理群和里長私訊官方帳號都可以用；不是網站公告的指令回傳 null。
- */
 /** 網站公告裡的「[名稱](/路徑)」在 LINE 裡顯示成「名稱 完整網址」。 */
 function noticeLineText_(text) {
   return String(text || '').replace(/\[([^\]\n]{1,20})\]\(((?:https?:\/\/|\/)[^\s)]*)\)/g, (m, label, url) => label + ' ' + (url[0] === '/' ? CCS_BASE + url : url));
 }
 
+/**
+ * 網站公告指令（里長 10/13：「網站公告只有我能發」）：發布、更換、撤下只有里長；看目前的公告大家都可以。
+ * 管理群和里長私訊官方帳號都可以用；不是網站公告的指令回傳 null。
+ */
 function siteNoticeCommand_(cmd, uid) {
   const clear = NOTICE_CLEAR_RE.test(cmd), m = clear ? null : cmd.match(NOTICE_SET_RE);
   if (!clear && !m) return null;
@@ -1887,6 +1896,11 @@ const MGMT_HELP_TEXT = [
   '・新增：貼推薦（店名、推薦原因、地址或地圖連結）→「全全 生活資訊新增」',
   '・撤下：全全 撤下生活資訊 店名',
   '',
+  '🤖 自動回覆（有人私訊官方 LINE 問到關鍵字，就自動回）',
+  '・先傳要回的圖片，再打：全全 自動回覆 停班停課、颱風假 到 10/31：要回的文字',
+  '・看全部：全全 自動回覆　刪除：全全 自動回覆 刪除 A001',
+  '・詳細說明：全全 自動回覆 說明',
+  '',
   '📊 查詢（只有數字，沒有個資）',
   '・全全 網站公告：看網站目前的公告',
   '・全全 報名人數：各活動報名人數、剩餘名額、未繳費筆數',
@@ -1900,6 +1914,151 @@ const MGMT_HELP_TEXT = [
   '',
   '只有里長能用：網站公告（發布、撤下）、公告特約（發給所有好友）、通知評審、快速報修開放、查個人報名資料、備份、更新社群聊天紀錄（私訊傳檔案給全全）。',
 ].join('\n');
+
+// ───────────────────────── 自動回覆 ─────────────────────────
+// 里長 10/26：「要怎樣才有辦法在管理群增加剛剛的功能」（10/22 颱風停班停課：有人問就回公告圖）→ 管理群夥伴自己設定：
+//   先在管理群傳要回的圖片（或長按圖片按「回覆」），再打「全全 自動回覆 關鍵字、關鍵字 到 10/31：要回的文字」
+// 里民私訊官方 LINE 的短句（60 字以內）有包含關鍵字就回；內建的關鍵字（快速報修、律師諮詢、公告…）優先。
+// 群組裡要叫全全才回。圖片存在活動網站（/api/reply-img），刪除時一起刪。設定的人、時間記在「自動回覆」工作表。
+const AUTO_REPLY_RE = /^自動回覆\s*([\s\S]*)$/;
+const AUTO_REPLY_MAX_IMAGES = 4;          // LINE 一次回覆最多 5 則：文字 1 則＋圖 4 張
+const AUTO_REPLY_IMG_WINDOW = 600000;     // 下指令前 10 分鐘內，同一個人在群組傳的圖
+const AUTO_REPLY_HELP_TEXT = [
+  '🤖 自動回覆：有人私訊官方 LINE 問到關鍵字，就自動回您設定的文字、圖片',
+  '',
+  '① 設定（文字＋圖片）',
+  '先在群組傳要回的圖片（最多 4 張），10 分鐘內再打：',
+  '全全 自動回覆 停班停課、颱風假 到 10/31：明天照常上班上課',
+  '・「、」隔開幾個關鍵字，里民的訊息有包含其中一個就回',
+  '・「到 10/31」可以不寫；寫了過完那天就自動停止',
+  '・「：」後面是要回的文字，只回圖片就不用寫',
+  '・也可以長按某張圖片按「回覆」，再打指令，就用那一張',
+  '',
+  '② 看目前有哪些：全全 自動回覆',
+  '③ 刪除：全全 自動回覆 刪除 A001（或寫關鍵字）',
+  '',
+  '💡 快速報修、律師諮詢、公告這些官方帳號本來就會回的字，還是照原本的回。',
+  '💡 群組裡要叫全全才會回（例：全全 停班停課），不會在群組亂插話。',
+].join('\n');
+
+/** 目前有效的自動回覆（新設定的排前面）。 */
+function autoReplyRules_() {
+  const today = now_().slice(0, 10);
+  return readAll_('自動回覆').filter(r => r.status === '啟用' && (!r.until || r.until >= today)).reverse();
+}
+
+const autoReplyNorm_ = s => String(s || '').replace(/\s+/g, '').toLowerCase();
+
+/** 這則訊息要不要自動回覆：回傳要回的訊息（沒有就 null）。 */
+function autoReplyFor_(t) {
+  const s = autoReplyNorm_(t);
+  if (!s || String(t).length > 60) return null;
+  let rules;
+  try { rules = autoReplyRules_(); } catch (err) { console.error('讀自動回覆失敗：' + err.message); return null; }
+  const r = rules.find(x => String(x.keywords).split('、').some(k => autoReplyNorm_(k).length >= 2 && s.indexOf(autoReplyNorm_(k)) >= 0));
+  return r ? autoReplyMessages_(r) : null;
+}
+
+function autoReplyMessages_(r) {
+  const imgs = String(r.images || '').split(',').filter(Boolean).slice(0, AUTO_REPLY_MAX_IMAGES)
+    .map(id => ({ type: 'image', originalContentUrl: CCS_BASE + '/api/reply-img?id=' + id, previewImageUrl: CCS_BASE + '/api/reply-img?id=' + id }));
+  return (r.text ? [text_(r.text)] : []).concat(imgs);
+}
+
+function autoReplyListText_() {
+  const rules = autoReplyRules_();
+  if (!rules.length) return '目前沒有自動回覆。\n\n' + AUTO_REPLY_HELP_TEXT;
+  return ['🤖 目前的自動回覆（' + rules.length + ' 個，新設定的優先）'].concat(rules.map(r => [
+    '', `${r.id}｜🔑 ${r.keywords}`,
+    r.text ? '💬 ' + String(r.text).replace(/\n/g, ' ').slice(0, 40) + (String(r.text).length > 40 ? '…' : '') : '',
+    r.images ? `📷 圖片 ${String(r.images).split(',').length} 張` : '',
+    '⏰ ' + (r.until ? r.until.slice(5).replace('-', '/') + ' 為止' : '沒有結束日期') + `｜${r.by}`,
+  ].filter(Boolean).join('\n')), ['', '刪除：全全 自動回覆 刪除 編號']).join('\n').slice(0, 4900);
+}
+
+/** 停用一條（圖片也從網站刪掉）。 */
+function endAutoReply_(r, status) {
+  update_('自動回覆', r._row, { status, endedAt: now_() });
+  const ids = String(r.images || '').split(',').filter(Boolean).map(Number);
+  if (ids.length) {
+    try { ccsApi_('/api/reply-img', { action: 'remove', ids }); } catch (err) { console.error('刪自動回覆圖片失敗：' + err.message); }
+  }
+}
+
+/** 「全全 自動回覆 …」：看、說明、刪除、設定。 */
+function autoReplyCommand_(arg, c) {
+  let m;
+  if (!arg || /^(列表|清單|有哪些|查詢|查看|目前)$/.test(arg)) return autoReplyListText_();
+  if (/^(說明|怎麼用|如何用|用法|教學|[?？])$/.test(arg)) return AUTO_REPLY_HELP_TEXT;
+  if ((m = arg.match(/^(?:刪除|取消|撤下|停用|停止)\s*(.+)$/))) {
+    const key = m[1].trim();
+    return withLock_(() => {
+      const rules = autoReplyRules_();
+      const hit = /^A\d{3,}$/i.test(key) ? rules.filter(r => r.id.toUpperCase() === key.toUpperCase())
+        : rules.filter(r => String(r.keywords).split('、').some(k => autoReplyNorm_(k) === autoReplyNorm_(key)));
+      if (!hit.length) return `找不到「${key}」這個自動回覆 🙏\n\n` + autoReplyListText_();
+      hit.forEach(r => endAutoReply_(r, '已刪除'));
+      return `✅ 已刪除自動回覆：` + hit.map(r => `${r.id}（${r.keywords}）`).join('、') + '\n之後里民問到這些字就不會自動回了。';
+    });
+  }
+  // 設定：關鍵字（、隔開）［到 10/31］［：要回的文字］
+  const cut = arg.search(/[：:]/);
+  let head = cut >= 0 ? arg.slice(0, cut) : arg;
+  const text = cut >= 0 ? arg.slice(cut + 1).trim().slice(0, 1000) : '';
+  let until = '';
+  const um = head.match(/(?:到|至)\s*(\d{1,2})\s*[\/／月.\-]\s*(\d{1,2})\s*日?/);
+  if (um) {
+    const today = now_().slice(0, 10);
+    let y = Number(today.slice(0, 4));
+    const md = ('0' + um[1]).slice(-2) + '-' + ('0' + um[2]).slice(-2);
+    if (y + '-' + md < today) y++;   // 寫的日期今年已經過了：當成明年
+    until = y + '-' + md;
+    if (isNaN(Date.parse(until + 'T00:00:00+08:00'))) return `⚠️ 看不懂「${um[0]}」這個日期，請寫成「到 10/31」。`;
+    head = head.replace(um[0], ' ');
+  }
+  const keywords = head.split(/[、,，;；\/／|]+|\s+/).map(k => k.replace(/^[「『"'“]+|[」』"'”]+$/g, '').trim()).filter(Boolean);
+  if (!keywords.length) return AUTO_REPLY_HELP_TEXT;
+  const bad = keywords.filter(k => k.length < 2 || k.length > 20);
+  if (bad.length) return `⚠️ 關鍵字要 2～20 個字：${bad.join('、')}\n\n` + AUTO_REPLY_HELP_TEXT;
+  if (keywords.length > 8) return '⚠️ 關鍵字最多 8 個。';
+  // 圖片：長按某張圖按「回覆」就用那張；不然用這個人 10 分鐘內在群組傳的圖
+  let shots = [];
+  if (c.quotedId) shots = [{ id: c.quotedId }];
+  else if (c.gid) {
+    shots = shopCache_('shop_img_' + c.gid, []).filter(x => x.uid === c.uid && Date.now() - x.at < AUTO_REPLY_IMG_WINDOW).slice(-AUTO_REPLY_MAX_IMAGES);
+  }
+  const by = lineDisplayName_(c.uid) || '管理群';
+  const ids = [], warn = [];
+  shots.forEach((x, i) => {
+    const img = lineImageData_(x.id);
+    const no = shots.length > 1 ? `第 ${i + 1} 張圖` : '圖片';
+    if (!img) return warn.push(c.quotedId ? '回覆的那則不是圖片（或已經讀不到了）' : `${no}讀不到（可能太大，請改傳一般畫質）`);
+    if (!/^image\/(jpeg|png)$/.test(img.mime)) return warn.push(`${no}不是 JPG／PNG`);
+    let r;
+    try { r = ccsApi_('/api/reply-img', { action: 'add', mime: img.mime, data: img.data, by }); } catch (err) { return warn.push(`${no}存不進網站：${err.message}`); }
+    if (!r.ok) return warn.push(`${no}：${r.error}`);
+    ids.push(r.id);
+  });
+  if (!text && !ids.length) {
+    return (warn.length ? '⚠️ ' + warn.join('\n⚠️ ') + '\n\n' : '⚠️ 沒有要回的內容：請在「：」後面寫要回的文字，或先在群組傳圖片（10 分鐘內）再下指令。\n\n') + AUTO_REPLY_HELP_TEXT;
+  }
+  const saved = withLock_(() => {
+    const all = readAll_('自動回覆');
+    const id = 'A' + ('00' + (all.reduce((mx, r) => Math.max(mx, parseInt(String(r.id).slice(1), 10) || 0), 0) + 1)).slice(-3);
+    // 舊的那條關鍵字都被新的包含：換成新的（舊的停用、圖片刪掉）
+    const norm = keywords.map(autoReplyNorm_);
+    const replaced = autoReplyRules_().filter(r => String(r.keywords).split('、').every(k => norm.indexOf(autoReplyNorm_(k)) >= 0));
+    replaced.forEach(r => endAutoReply_(r, '已換新'));
+    append_('自動回覆', { id, keywords: keywords.join('、'), text, images: ids.join(','), until, by, createdAt: now_(), status: '啟用', endedAt: '' });
+    return { id, replaced };
+  });
+  return [`✅ 已設定自動回覆 ${saved.id}`, '', '🔑 里民問到：' + keywords.join('、')]
+    .concat(text ? ['💬 回覆：' + text] : []).concat(ids.length ? [`📷 圖片 ${ids.length} 張`] : [])
+    .concat(['⏰ ' + (until ? until.slice(5).replace('-', '/') + ' 過完就自動停止' : `沒有結束日期（不用時記得刪除：全全 自動回覆 刪除 ${saved.id}）`)])
+    .concat(saved.replaced.length ? ['', '（原本的 ' + saved.replaced.map(r => `${r.id}（${r.keywords}）`).join('、') + ' 已換成這個）'] : [])
+    .concat(warn.length ? ['', '⚠️ ' + warn.join('\n⚠️ ')] : [])
+    .concat(['', `測試：私訊官方 LINE「${keywords[0]}」看看（群組裡要叫全全：全全 ${keywords[0]}）`]).join('\n');
+}
 
 // ───────────────────────── 社群聊天紀錄查詢 ─────────────────────────
 // 里長 10/14：「如何在管理群直接查社群對話紀錄」→ 管理群每個人都可以「全全 查社群 關鍵字」，里民名字遮一半。
@@ -3259,6 +3418,8 @@ function handleAssistant_(ev, uid, member, text, inGroup) {
   const q = text.slice(ASSISTANT_NAME.length).replace(/^[\s,，:：、!！~]+/, '').trim();
   // 颱風停班停課：群組裡問全全也回公告圖（里長 10/22）
   if (typhoonQuestion_(q)) return reply_(ev.replyToken, typhoonMessages_());
+  const ar = autoReplyFor_(q);
+  if (ar) return reply_(ev.replyToken, ar);
   // 群組裡一律當成一般里民，避免把內部資料或個資回覆到群組
   const isAdmin = !inGroup && isActiveMember_(member) && ADMIN_ROLES.indexOf(member.role) >= 0;
   const isStaff = !inGroup && isActiveMember_(member);
