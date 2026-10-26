@@ -4630,6 +4630,23 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-medical-1026', at: '2026-10-26T21:40:00+0
   'https://www.cmuh.cmu.edu.tw/Announce/EmergCurrent',
   'https://www.vghtc.gov.tw/APIPage/ERInfo?WebMenuID=31873678-d9cd-408a-852a-cc99ac5d374b',
 ] });
+SCHEDULED_BROADCASTS.push({ id: 'probe-er-1026b', at: '2026-10-26T21:43:00+08:00', title: '急診即時資訊頁檢查', kind: 'webProbe',
+  grep: '等候|等待|候診|推床|住院|加護|滿床|更新時間|資料時間', urls: [
+  'https://www.cmuh.cmu.edu.tw/Announce/EmergCurrent',
+  'https://emrcount.cmuh.org.tw/EmrCount/Default.aspx?HospCMUH',
+  'https://www.vghtc.gov.tw/APIPage/ERInfo?WebMenuID=26f9f73c-c400-414a-b032-0abc9e6ee990',
+  'https://app.tzuchi.com.tw/tchw/tchis5webbedinfo/erbedinfo.aspx',
+  'https://sysint.csh.org.tw/ER/index.aspx',
+  'https://ck.ccgh.com.tw/first_aid.htm',
+  'https://pt.ccgh.com.tw/first_aid.htm',
+  'https://www03.taic.mohw.gov.tw/EmgBoardWeb/BoardWebPageLoby.aspx',
+  'https://web-reg-server.803.org.tw/803/erinfo_803.html',
+  'http://www.cmuch.org.tw/Announce/CurrentBedAvailability',
+] });
+SCHEDULED_BROADCASTS.push({ id: 'probe-clinic-1026b', at: '2026-10-26T21:43:00+08:00', title: '健保診所藥局資料檢查', kind: 'webProbe', csvMatch: '北屯區', urls: [
+  'https://info.nhi.gov.tw/api/iode0000s01/Dataset?rId=A21030000I-D21004-009',
+  'https://info.nhi.gov.tw/api/iode0000s01/Dataset?rId=A21030000I-D21005-001',
+] });
 // 里長 10/21：網站公告的「賴順仁議員印章」那則取消，改為萬聖節回顧、免費法律諮詢、快速報修（三個連結各有名稱）
 SCHEDULED_BROADCASTS.push({ id: 'notice-services-1021', at: '2026-10-21T13:00:00+08:00', title: '網站公告：萬聖節回顧、法律諮詢、快速報修', kind: 'siteNotice',
   text: '🎃 萬聖節活動圓滿結束，謝謝大家！[看成績・活動回顧](/halloween/)　⚖️ 免費律師諮詢，律師 1 對 1、絕對隱私 [立即預約](/lawyer/)　🔧 路燈、水溝、坑洞 [快速報修](/repair/)' });
@@ -6366,8 +6383,24 @@ function runScheduledBroadcasts() {
             const body = res.getContentText();
             const type = String((res.getHeaders() || {})['Content-Type'] || (res.getHeaders() || {})['content-type'] || '');
             out.push('════ ' + u, 'HTTP ' + res.getResponseCode() + '｜' + type + '｜' + body.length + ' 字');
-            if (/json/i.test(type) || /^\s*[\[{]/.test(body)) {
+            if (b.csvMatch && (/csv|octet|text\/plain/i.test(type) || /Dataset\?rId=/.test(u))) {
+              const lines = body.split(/\r?\n/);
+              const hits = lines.filter(l => l.indexOf(b.csvMatch) >= 0);
+              out.push('欄位：' + lines[0], '共 ' + lines.length + ' 行，含「' + b.csvMatch + '」' + hits.length + ' 行；前 8 行：', hits.slice(0, 8).join('\n'));
+            } else if (/json/i.test(type) || /^\s*[\[{]/.test(body)) {
               out.push(body.slice(0, 6000));
+            } else if (b.grep) {
+              const text = body.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+              const re = new RegExp(b.grep, 'g'), snips = [];
+              let m, last = -1000;
+              while ((m = re.exec(text)) && snips.length < 12) { if (m.index - last > 150) { snips.push(text.slice(Math.max(0, m.index - 60), m.index + 160)); last = m.index; } }
+              out.push('內文 ' + text.length + ' 字；相關片段：', snips.join('\n…\n') || '（沒有）');
+              if (!snips.length) {
+                const scripts = [];
+                body.replace(/<script[^>]*src=["']([^"']+)["']/gi, (x, src) => scripts.push(src));
+                body.replace(/(?:url|ajax|fetch)\s*[:(]\s*["']([^"']+)["']/gi, (x, src) => scripts.push('ajax ' + src));
+                out.push('script／ajax：', scripts.slice(0, 30).join('\n'));
+              }
             } else {
               const title = (body.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '';
               out.push('標題：' + title.replace(/\s+/g, ' ').trim());
