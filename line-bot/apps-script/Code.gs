@@ -4528,6 +4528,7 @@ const SIGNUP_SYNC_FORMS = [
 
 function syncSignups() {
   checkBroadcasts_();  // 每小時順便檢查預約推播（一次性排程的備援）
+  try { flushLawyerNotices_(false); } catch (err) { console.error('律師通知補發失敗：' + err.message); }
   // 雲端硬碟有新的健保署名單就匯入，匯入好通知里長
   try { const r = importNhiIfNew_(); if (r) notifyOwner_(r); } catch (err) { console.error('健保院所名單匯入失敗：' + err.message); }
   const n = syncSignupsNow_();
@@ -7273,11 +7274,8 @@ function liffApi_(action, req, user) {
         reminded: '',
       };
       append_('諮詢預約', b);
-      // 隱密性（里長 10/11 指示）：群組和管理員只看到時段＋遮住的姓名，完整資料只私訊給該時段的律師本人
-      notifyAdmins_(`新律師諮詢預約\n${slot.date} ${slot.start}-${slot.end}\n${maskName_(b.name)}`);
-      notifyLawyerGroup_(['📅 新的律師諮詢預約', slotLabel_(slot), `👤 ${maskName_(b.name)}`,
-        `此時段還剩 ${Math.max(0, slot.remaining - 1)} 位`, LAWYER_GROUP_PRIVACY_NOTE].join('\n'));
-      notifyLawyerPrivately_(slot.lawyer, ['📅 新的律師諮詢預約（只發給您本人）', slotLabel_(slot), bookingDetail_(b)].join('\n'));
+      // 通知律師、律師群組、里長：先排隊，30 分鐘內沒有再改才整理成一則發出（里長 11/2，見 queueLawyerNotice_）
+      queueLawyerNotice_(b, '');
       return { id: b.id, slot };
     }
 
@@ -7602,6 +7600,7 @@ function sendBookingReminders() {
       (s.note ? `\n📍 ${s.note}` + (/^https:\/\//.test(map || '') ? '\n' + map : '') : '') + '\n如需取消請輸入「我的預約」或「律師諮詢」進入頁面取消。')]);
     update_('諮詢預約', b._row, { reminded: now_() });
   });
+  try { flushLawyerNotices_(false); } catch (err) { console.error('律師通知補發失敗：' + err.message); }
   try { lawyerCutoffCheck_(); } catch (err) { console.error('律師諮詢截止確認失敗：' + err.message); }
   const digest = lawyerDigest_(tomorrow);
   if (digest) notifyLawyerGroup_(digest);
@@ -7810,8 +7809,166 @@ function lawyerConfirmReply_(uid, word, id) {
 
 function notifyBookingCancelled_(b, who) {
   const s = indexBy_(readAll_('律師時段'), 'slotId')[b.slotId] || {};
+  // 當天的時段取消：律師可能已經在等，馬上通知；其他先排隊，30 分鐘內改約別的時段就合成「改時段」一則
+  if (s.date && s.date > ymdAfter_(0)) return queueLawyerNotice_(b, who);
   notifyLawyerGroup_(['❌ 律師諮詢預約取消（' + who + '）', slotLabel_(s), `👤 ${maskName_(b.name)}`].join('\n'));
   notifyLawyerPrivately_(s.lawyer, ['❌ 律師諮詢預約取消（' + who + '）', slotLabel_(s), `👤 ${b.name}（${b.phone}）｜${b.topic}`].join('\n'));
+}
+
+// ── 律師通知整理（里長 11/2：「不要預約人原本先預約一個時段過不了 30 分鐘又改時間，變成通知多次，律師看訊息會亂掉」）──
+// 新預約、取消不馬上發給律師／律師群組／里長，先排隊（指令碼屬性 LAWYER_NOTICE_Q）；
+// 同一位里民 30 分鐘內沒有再改，才整理成一則發出：
+//   ・預約後 30 分鐘內又取消 → 不通知（律師從頭到尾不會看到）
+//   ・取消舊的、又約了新的 → 合成一則「🔄 改時段：原… → 改為…」
+//   ・同一次到期的好幾筆 → 合成一則
+// 一直改來改去最多壓 2 小時。當天時段的取消照舊馬上通知（notifyBookingCancelled_）。
+// 到期時由一次性排程 flushLawyerNotices 發出；每小時同步、每天 18:00 預約提醒時也會檢查（備援）。
+// 隱私規定不變：群組、里長只看到時段＋遮住的姓名，完整資料只私訊給該時段的律師本人。
+const LAWYER_NOTICE_DELAY_MIN = 30;
+const LAWYER_NOTICE_MAX_MIN = 120;
+const LAWYER_NOTICE_QUEUE_MAX = 60;   // 指令碼屬性一格最多 9KB，太多筆就直接全部發出
+
+function lawyerNoticeQueue_() {
+  try { return JSON.parse(prop_('LAWYER_NOTICE_Q') || '[]'); } catch (err) { return []; }
+}
+
+/** 排一筆律師通知。who 空白＝新預約；有值＝取消（誰取消的，例「本人取消」）。 */
+function queueLawyerNotice_(b, who) {
+  const props = PropertiesService.getScriptProperties();
+  const q = lawyerNoticeQueue_();
+  const t = Date.now();
+  let e = q.find(x => x.id === b.id);
+  // a：之前已經通知過律師（佇列裡沒有的取消＝早就通知過的預約；佇列裡還沒發的新預約又取消＝律師根本不知道）
+  if (!e) { e = { id: b.id, uid: b.userId, f: t, a: !!who }; q.push(e); }
+  if (who) e.who = who;
+  q.forEach(x => { if (x.uid === b.userId) x.t = t; });   // 同一位里民又有動作：重新等 30 分鐘
+  props.setProperty('LAWYER_NOTICE_Q', JSON.stringify(q));
+  if (q.length > LAWYER_NOTICE_QUEUE_MAX) return flushLawyerNotices_(true);
+  scheduleLawyerNotices_(q, 'queue');
+}
+
+/** 每位里民的到期時間（毫秒）：最後一次動作後 30 分鐘，或第一次動作後 2 小時，取早的。 */
+function lawyerNoticeDueAt_(q) {
+  const last = {}, first = {};
+  q.forEach(e => {
+    last[e.uid] = Math.max(last[e.uid] || 0, e.t || e.f);
+    first[e.uid] = Math.min(first[e.uid] || Infinity, e.f);
+  });
+  const due = {};
+  Object.keys(last).forEach(u => { due[u] = Math.min(last[u] + LAWYER_NOTICE_DELAY_MIN * 60e3, first[u] + LAWYER_NOTICE_MAX_MIN * 60e3); });
+  return due;
+}
+
+/**
+ * 替佇列排一次性排程（一次只留一個）。mode：
+ *   'queue'：新排一筆時，已經有更早的排程就不動（到時會順便重排剩下的）
+ *   'check'：每小時備援檢查，時間一樣就不動
+ *   'fired'：排程剛執行完，一定重排（用掉的清掉）
+ */
+function scheduleLawyerNotices_(q, mode) {
+  const props = PropertiesService.getScriptProperties();
+  const cur = mode === 'fired' ? 0 : Number(prop_('LAWYER_NOTICE_AT') || 0);
+  try {
+    if (!q.length) {
+      if (!cur && mode !== 'fired') return;
+      ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'flushLawyerNotices').forEach(t => ScriptApp.deleteTrigger(t));
+      props.deleteProperty('LAWYER_NOTICE_AT');
+      return;
+    }
+    const dues = lawyerNoticeDueAt_(q);
+    const at = Math.min.apply(null, Object.keys(dues).map(u => dues[u])) + 60e3;
+    if (cur && cur > Date.now() - 15 * 60e3 && (mode === 'queue' ? cur <= at : cur === at)) return;
+    ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'flushLawyerNotices').forEach(t => ScriptApp.deleteTrigger(t));
+    ScriptApp.newTrigger('flushLawyerNotices').timeBased().at(new Date(at)).create();
+    props.setProperty('LAWYER_NOTICE_AT', String(at));
+  } catch (err) {
+    console.error('律師通知排程失敗（每小時同步時會補發）：' + err.message);
+  }
+}
+
+/** 一次性排程執行：把到期的律師通知整理發出。 */
+function flushLawyerNotices() {
+  return flushLawyerNotices_(false, true);
+}
+
+/** all=true：不管有沒有到期，全部發出；fired=true：一次性排程執行。回傳發出的筆數。 */
+function flushLawyerNotices_(all, fired) {
+  const due = withLock_(() => {
+    const q = lawyerNoticeQueue_();
+    const dues = lawyerNoticeDueAt_(q);
+    const now = Date.now();
+    const isDue = e => all || dues[e.uid] <= now + 2 * 60e3;
+    const take = q.filter(isDue), rest = q.filter(e => !isDue(e));
+    const props = PropertiesService.getScriptProperties();
+    if (take.length) rest.length ? props.setProperty('LAWYER_NOTICE_Q', JSON.stringify(rest)) : props.deleteProperty('LAWYER_NOTICE_Q');
+    scheduleLawyerNotices_(rest, fired ? 'fired' : 'check');
+    return take;
+  });
+  if (!due.length) return 0;
+  try { sendLawyerNotices_(due); } catch (err) { console.error('律師通知發送失敗：' + err.message); }
+  return due.length;
+}
+
+/** 把排隊的異動算成最後結果再發：新預約、取消、改時段。 */
+function sendLawyerNotices_(entries) {
+  const bookings = readAll_('諮詢預約');
+  const byId = indexBy_(bookings, 'id');
+  const slots = indexBy_(readAll_('律師時段'), 'slotId');
+  const counts = countBy_(bookings.filter(b => b.status === '已預約' || b.status === '已完成'), 'slotId');
+  const adds = [], cancels = [];
+  entries.forEach(e => {
+    const b = byId[e.id];
+    if (!b) return;
+    if (!e.a && b.status === '已預約') adds.push(b);
+    else if (e.a && b.status === '已取消') cancels.push({ b, who: e.who || '取消' });
+    // 沒通知過又取消了、或取消後又恢復：律師看到的跟現在一樣，不用發
+  });
+  const items = [];
+  cancels.forEach(c => {
+    // 本人取消一筆、又約了一筆 → 改時段
+    const i = /^本人/.test(c.who) ? adds.findIndex(b => b.userId === c.b.userId) : -1;
+    if (i >= 0) items.push({ kind: 'move', from: c.b, b: adds.splice(i, 1)[0] });
+    else items.push({ kind: 'cancel', b: c.b, who: c.who });
+  });
+  adds.forEach(b => items.push({ kind: 'new', b }));
+  if (!items.length) return;
+  const slotOf = b => slots[b.slotId] || {};
+  items.sort((x, y) => (slotOf(x.b).date + slotOf(x.b).start).localeCompare(slotOf(y.b).date + slotOf(y.b).start));
+  const left = s => `此時段還剩 ${Math.max(0, Number(s.capacity || 1) - (counts[s.slotId] || 0))} 位`;
+  const join = (blocks, header) => (blocks.length > 1 ? [header].concat(blocks) : blocks).join('\n\n');
+
+  // 律師群組、里長：時段＋遮住的姓名
+  const masked = it => {
+    const s = slotOf(it.b), who = `👤 ${maskName_(it.b.name)}`;
+    if (it.kind === 'new') return ['📅 新的律師諮詢預約', slotLabel_(s), who + '｜' + left(s)].join('\n');
+    if (it.kind === 'cancel') return ['❌ 律師諮詢預約取消（' + it.who + '）', slotLabel_(s), who].join('\n');
+    return ['🔄 律師諮詢改時段', who, '原：' + slotLabel_(slotOf(it.from)), '改為：' + slotLabel_(s), left(s)].join('\n');
+  };
+  const head = n => `⚖️ 律師諮詢預約異動 ${n} 筆（${Utilities.formatDate(new Date(), TZ, 'MM/dd HH:mm')} 整理）`;
+  notifyLawyerGroup_(join(items.map(masked), head(items.length)) + '\n\n' + LAWYER_GROUP_PRIVACY_NOTE);
+  const forAdmins = items.filter(it => it.kind !== 'cancel');   // 里長本來就只收新預約；改時段算新預約
+  if (forAdmins.length) notifyAdmins_(join(forAdmins.map(masked), head(forAdmins.length)));
+
+  // 律師本人：完整資料，只發自己時段的
+  const perLawyer = {};
+  const add = (lawyer, text) => { if (lawyer) (perLawyer[lawyer] = perLawyer[lawyer] || []).push(text); };
+  const cancelText = (b, who) => ['❌ 律師諮詢預約取消（' + who + '）', slotLabel_(slotOf(b)), `👤 ${b.name}（${b.phone}）｜${b.topic}`].join('\n');
+  const newText = b => ['📅 新的律師諮詢預約', slotLabel_(slotOf(b)), bookingDetail_(b)].join('\n');
+  items.forEach(it => {
+    const s = slotOf(it.b);
+    if (it.kind === 'new') return add(s.lawyer, newText(it.b));
+    if (it.kind === 'cancel') return add(s.lawyer, cancelText(it.b, it.who));
+    const from = slotOf(it.from);
+    if (from.lawyer === s.lawyer) {
+      return add(s.lawyer, ['🔄 律師諮詢改時段', '原：' + slotLabel_(from), '改為：' + slotLabel_(s), bookingDetail_(it.b)].join('\n'));
+    }
+    add(from.lawyer, cancelText(it.from, '本人改約其他時段'));
+    add(s.lawyer, newText(it.b));
+  });
+  Object.keys(perLawyer).forEach(n => {
+    const list = perLawyer[n];
+    notifyLawyerPrivately_(n, join(list, `⚖️ 律師諮詢預約異動 ${list.length} 筆（只發給您本人）`) + (list.length > 1 ? '' : '\n\n🔒 只發給您本人'));
+  });
 }
 
 function isLawyerGroup_(source) {
