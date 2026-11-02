@@ -1698,25 +1698,47 @@ function mapPlaceFromUrl_(u) {
   return t.slice(0, 200);
 }
 
-/** Google 地圖短網址 → 店名、地址（跟著轉址看最後的網址）；查不到回傳空字串。結果記 6 小時。 */
-function mapLinkPlace_(url) {
+/** 地圖網頁本身寫的地點（og:title「店名 · 地址」）；一般的「Google 地圖」標題不算。 */
+function mapPlaceFromHtml_(html) {
+  const s = String(html || '');
+  const m = s.match(/<meta[^>]+(?:property|itemprop)=["'](?:og:title|name)["'][^>]*content=["']([^"']+)["']/i) ||
+    s.match(/<meta[^>]+content=["']([^"']+)["'][^>]*(?:property|itemprop)=["'](?:og:title|name)["']/i);
+  let t = m ? m[1] : '';
+  t = t.replace(/&amp;/g, '&').replace(/&#39;|&#x27;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
+  if (!t || /^(Google\s*(Maps|地圖)|Google)$/i.test(t)) return '';
+  return t.slice(0, 200);
+}
+
+/** Google 地圖短網址 → 店名、地址（跟著轉址看最後的網址，再不行看網頁標題）；查不到回傳空字串。結果記 6 小時。trace 有給時記下每一步。 */
+function mapLinkPlace_(url, trace) {
   const cache = CacheService.getScriptCache();
   const key = 'mapl_' + String(url).replace(/^https?:\/\//, '').slice(0, 200);
-  const hit = cache.get(key);
+  const hit = trace ? null : cache.get(key);
   if (hit !== null && hit !== undefined) return hit === '-' ? '' : hit;
   let u = String(url), out = '';
   try {
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       out = mapPlaceFromUrl_(u);
       if (out) break;
-      const res = UrlFetchApp.fetch(u, { followRedirects: false, muteHttpExceptions: true, headers: { 'User-Agent': 'Mozilla/5.0' } });
+      const res = UrlFetchApp.fetch(u, { followRedirects: false, muteHttpExceptions: true,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36', 'Accept-Language': 'zh-TW,zh;q=0.9' } });
       const h = (res.getHeaders && res.getHeaders()) || {};
       const loc = h.Location || h.location;
       const code = res.getResponseCode();
-      if (!(code >= 300 && code < 400 && loc)) break;
-      u = /^https?:/.test(loc) ? loc : 'https://www.google.com' + loc;
+      if (trace) trace.push(code + ' ' + u.slice(0, 300) + (loc ? '\n  → ' + String(loc).slice(0, 300) : ''));
+      if (code >= 300 && code < 400 && loc) { u = /^https?:/.test(loc) ? loc : 'https://www.google.com' + loc; continue; }
+      if (code === 200) {
+        const html = res.getContentText();
+        out = mapPlaceFromHtml_(html);
+        // 網頁裡寫的下一個網址（meta refresh、canonical）
+        const next = !out && (html.match(/<meta[^>]+http-equiv=["']refresh["'][^>]*url=([^"'>]+)/i) || html.match(/<link[^>]+rel=["']canonical["'][^>]*href=["']([^"']+)["']/i) || [])[1];
+        if (trace) trace.push('  標題：' + (out || '（沒有）') + (next ? '｜下一個：' + next.slice(0, 200) : '') + '｜<title>' + ((html.match(/<title[^>]*>([^<]*)/i) || [])[1] || '').slice(0, 80));
+        if (!out && next && next !== u) { u = next.replace(/&amp;/g, '&'); continue; }
+      }
+      break;
     }
   } catch (err) {
+    if (trace) trace.push('失敗：' + err.message);
     console.error('查地圖連結失敗：' + err.message);
   }
   cache.put(key, out || '-', out ? 21600 : 600);   // 查不到的 10 分鐘後可以再試
@@ -5048,6 +5070,8 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-clinic-1026b', at: '2026-10-26T21:43:00+0
 // 里長 11/2 特約新增：部署後確認 Apps Script 查得到地圖連結的店名、地址（結果在雲端硬碟「系統檢查」）
 SCHEDULED_BROADCASTS.push({ id: 'probe-maplink-1102', at: '2026-11-02T17:50:00+08:00', title: '地圖連結查店名檢查', kind: 'webProbe',
   mapLinks: ['https://maps.app.goo.gl/Qw7KAod5yxXM9Yzyi8?g_st=ic', 'https://maps.app.goo.gl/xTdXo1E4dU4dAhj69'] });
+SCHEDULED_BROADCASTS.push({ id: 'probe-maplink-1102b', at: '2026-11-02T17:55:00+08:00', title: '地圖連結查店名檢查（每一步）', kind: 'webProbe',
+  mapLinks: ['https://maps.app.goo.gl/Qw7KAod5yxXM9Yzyi8?g_st=ic', 'https://maps.app.goo.gl/Qw7KAod5yxXM9Yzyi8', 'https://maps.app.goo.gl/xTdXo1E4dU4dAhj69'] });
 SCHEDULED_BROADCASTS.push({ id: 'ai-med-check-er-10262156', at: '2026-10-26T21:54:00+08:00', title: 'AI 醫療檢查（急診）', kind: 'aiWebCheck', question: '現在附近哪間醫院急診人比較少？' });
 SCHEDULED_BROADCASTS.push({ id: 'ai-med-check-clinic-10262156', at: '2026-10-26T21:54:00+08:00', title: 'AI 醫療檢查（診所）', kind: 'aiWebCheck', question: '北屯區有晚上看診的小兒科診所嗎？' });
 SCHEDULED_BROADCASTS.push({ id: 'ai-med-check-vaccine-10262156', at: '2026-10-26T21:54:00+08:00', title: 'AI 醫療檢查（疫苗）', kind: 'aiWebCheck', question: '今年的公費流感疫苗什麼時候開打？台中哪裡可以打？' });
@@ -6782,7 +6806,7 @@ function runScheduledBroadcasts() {
         props.setProperty(key, 'sent ' + now_());
         const out = [];
         // 地圖短網址：看 mapLinkPlace_ 在 Apps Script 查不查得到店名、地址
-        (b.mapLinks || []).forEach(u => { out.push('════ 地圖連結 ' + u, '查到：' + (mapLinkPlace_(u) || '（查不到）'), ''); });
+        (b.mapLinks || []).forEach(u => { const tr = []; const got = mapLinkPlace_(u, tr); out.push('════ 地圖連結 ' + u, '查到：' + (got || '（查不到）'), tr.join('\n'), ''); });
         (b.urls || []).forEach(u => {
           try {
             const res = UrlFetchApp.fetch(u, { muteHttpExceptions: true, followRedirects: true, headers: { 'User-Agent': 'Mozilla/5.0' } });
