@@ -1502,6 +1502,11 @@ function clearRepairCache_() {
 const SHOP_POST_TTL = 7200;
 const SHOP_IMG_TTL = 1800;
 const SHOP_ADD_RE = /(新增|上架|加入|更新).{0,4}特約|特約.{0,4}(新增|上架|加入|更新)/;
+// 里長 11/2（試了兩次都不行）：地圖連結、照片、「全全 特約商店9折 鴨大爺」分開傳。
+// 同一個人 30 分鐘內在管理群傳的文字都記著（SHOP_RECENT_TTL），叫全全新增時湊成一則公告；
+// 叫全全那一句本身有寫優惠（9折、優惠、免費…）也算新增。地圖短網址會查出店名和地址（mapLinkPlace_）。
+const SHOP_RECENT_TTL = 1800;
+const SHOP_OFFER_RE = /[0-9０-９一二三四五六七八九]+(?:[.．][0-9０-９]+)?\s*折|折扣|打折|優惠|免費|贈送|招待|現折|折抵|折價|買.{0,4}送|[0-9０-９]+\s*元/;
 // 問句（「全全 如何新增特約商家」）：回覆做法，不要真的去上架（里長 10/13：問如何新增，系統卻把上一則公告又上架一次）
 const SHOP_QUESTION_RE = /如何|怎麼|怎樣|要怎|方法|步驟|程序|流程|教學|說明|請問|可以嗎|[?？]|嗎$/;
 // 撤下：「撤下特約 店名」「取消特約 店名」「特約撤下 店名」「下架 店名」都可以
@@ -1575,6 +1580,7 @@ function handleShopGroup_(ev, uid) {
   let cmd = stripMentions_(msg);
   if (cmd.indexOf(ASSISTANT_NAME) === 0) cmd = cmd.slice(ASSISTANT_NAME.length).trim();
   const isPost = looksLikeShopPost_(cmd);
+  if (!called || /特約/.test(cmd) || SHOP_OFFER_RE.test(cmd) || looksLikePlacePost_(cmd)) rememberShopText_(gid, uid, cmd);
   const saved = JSON.stringify({ text: cmd.slice(0, 3000), uid, at: Date.now() });
   if (isPost) cache.put('shop_post_' + gid, saved, SHOP_POST_TTL);
   if (looksLikePlacePost_(cmd)) cache.put('nb_post_' + gid, saved, SHOP_POST_TTL);
@@ -1599,19 +1605,32 @@ function handleShopGroup_(ev, uid) {
     return done(announceShop_(m[1].trim()));
   }
   if (!isPost && SHOP_QUESTION_RE.test(cmd) && /特約/.test(cmd)) return done(SHOP_HELP_TEXT);
-  if (!(isPost || (SHOP_ADD_RE.test(cmd) && cmd.length <= 15))) {
+  // 「全全 特約商店9折 鴨大爺」：同一句有寫優惠，也算新增（用這個人剛剛傳的地圖連結）
+  const inline = !isPost && /特約/.test(cmd) && SHOP_OFFER_RE.test(cmd);
+  if (!(isPost || inline || (SHOP_ADD_RE.test(cmd) && cmd.length <= 15))) {
     if (!/特約/.test(cmd)) return false;   // 不是特約的事：交給全全（「全全…」）或不處理
     return done(SHOP_HELP_TEXT);
   }
   if (!isPost && msg.quotedMessageId && !quoted) return done(QUOTE_MISSING_TEXT.replace('{cmd}', '全全 特約新增'));
-  const post = isPost ? { text: cmd, uid, at: Date.now() } : quoted || shopCache_('shop_post_' + gid, null);
+  let post = isPost ? { text: cmd, uid, at: Date.now() } : quoted;
+  if (!post) {
+    // 一則完整的公告（2 小時內，誰貼的都可以）或這個人 30 分鐘內分開傳的，用比較新的那個
+    const mine = shopAssembledPost_(gid, uid);
+    const last = shopCache_('shop_post_' + gid, null);
+    if (mine && mine.place && (inline || !last || mine.contentAt > last.at)) post = mine;
+    else if (!inline) post = last;
+    if (!post && mine && SHOP_OFFER_RE.test(mine.text)) {
+      return done('有看到優惠內容，但還缺店家的地址或 Google 地圖連結 🙏\n請貼上 Google 地圖連結（或地址），再傳「全全 特約新增」。');
+    }
+  }
   if (!post) return done('找不到要上架的特約公告 🙏\n請先在群組貼公告（店名、地址、優惠內容…，可以接著傳菜單照片），再傳「全全 特約新增」。\n（公告貼出後 2 小時內有效；也可以長按那則公告按「回覆」，再打「全全 特約新增」）');
   const shop = parseShopPost_(post.text, uid);
   if (!shop || shop.notShop) return done('⚠️ 看不出這則是特約商家公告，請確認有寫店名和優惠內容。');
   if (!shop.n || !shop.o) return done('⚠️ 公告裡找不到' + (!shop.n ? '店名' : '優惠內容') + '，請補上後重貼，再傳「全全 特約新增」。');
   // 照片：發公告的人在公告前 1 分鐘到之後 30 分鐘內傳的
-  const imgs = shopCache_('shop_img_' + gid, []).filter(x => x.uid === post.uid && x.at >= post.at - 60000).slice(0, 4);
-  const images = imgs.map(x => lineImageData_(x.id)).filter(Boolean);
+  const imgs = shopCache_('shop_img_' + gid, []).filter(x => x.uid === post.uid && x.at >= post.at - 60000);
+  // 同一張照片傳了兩次只留一張
+  const images = imgs.map(x => lineImageData_(x.id)).filter((x, i, a) => x && a.findIndex(y => y && y.data === x.data) === i).slice(0, 4);
   let r;
   try {
     r = ccsApi_('/api/shops', { action: 'add', shop, images, by: lineDisplayName_(uid) });
@@ -1619,6 +1638,7 @@ function handleShopGroup_(ev, uid) {
     return done('網站忙線中，沒有上架成功，請稍後再傳一次「全全 特約新增」：' + err.message);
   }
   if (!r.ok) return done('⚠️ ' + r.error + (r.url ? '\n' + r.url : ''));
+  cache.remove(shopRecentKey_(gid, uid));   // 用過了：下一家店不要混到這家的訊息
   if (r.restored) return done(`✅ 已恢復網站上的「${r.name}」（現在共 ${r.total} 家）\n👉 ${r.url}`);
   const s = r.shop;
   return done([
@@ -1631,6 +1651,78 @@ function handleShopGroup_(ev, uid) {
     .join('\n'));
 }
 
+function shopRecentKey_(gid, uid) {
+  return 'shop_recent_' + gid + '_' + uid;
+}
+
+/** 記下這個人在管理群最近 30 分鐘傳的文字（地圖連結、店名、優惠分開傳也湊得起來）。 */
+function rememberShopText_(gid, uid, text) {
+  if (!uid || !String(text || '').trim()) return;
+  const key = shopRecentKey_(gid, uid);
+  const list = shopCache_(key, []).filter(x => Date.now() - x.at < SHOP_RECENT_TTL * 1000).slice(-7);
+  list.push({ text: String(text).slice(0, 1500), at: Date.now() });
+  CacheService.getScriptCache().put(key, JSON.stringify(list), SHOP_RECENT_TTL);
+}
+
+/**
+ * 把同一個人 30 分鐘內分開傳的訊息湊成一則公告（去掉「特約新增」這類指令字、重複的句子）。
+ * place：有地址或地圖連結；at：第一句的時間（照片從這時候開始算）；contentAt：最後一句有內容的時間。
+ */
+function shopAssembledPost_(gid, uid) {
+  const list = shopCache_(shopRecentKey_(gid, uid), []).filter(x => Date.now() - x.at < SHOP_RECENT_TTL * 1000);
+  const lines = [];
+  let first = 0, last = 0;
+  list.forEach(x => {
+    const got = String(x.text).split(/\r?\n/)
+      .map(l => l.replace(SHOP_ADD_RE, ' ').replace(/^\s*(?:特約)?(?:商店|商家|店家)?\s*$/, '').trim())
+      .filter(l => l && lines.indexOf(l) < 0);
+    if (!got.length) return;
+    got.forEach(l => lines.push(l));
+    first = first || x.at;
+    last = x.at;
+  });
+  if (!lines.length) return null;
+  const text = lines.join('\n');
+  return { text, uid, at: first, contentAt: last, place: looksLikePlacePost_(text), assembled: true };
+}
+
+const MAP_SHORT_RE = /https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl\/maps|g\.co\/kgs)\/[^\s]+/;
+
+/** 地圖網址本身寫的地點（/maps/place/店名/… 或 ?q=店名, 地址）；只有座標或查不出來回傳空字串。 */
+function mapPlaceFromUrl_(u) {
+  const m = String(u).match(/\/maps\/place\/([^/@?#]+)/) || String(u).match(/[?&]q=([^&#]+)/);
+  if (!m) return '';
+  let t = '';
+  try { t = decodeURIComponent(m[1].replace(/\+/g, ' ')).trim(); } catch (err) { return ''; }
+  if (!t || /^-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?$/.test(t) || /^place_id:/i.test(t)) return '';
+  return t.slice(0, 200);
+}
+
+/** Google 地圖短網址 → 店名、地址（跟著轉址看最後的網址）；查不到回傳空字串。結果記 6 小時。 */
+function mapLinkPlace_(url) {
+  const cache = CacheService.getScriptCache();
+  const key = 'mapl_' + String(url).replace(/^https?:\/\//, '').slice(0, 200);
+  const hit = cache.get(key);
+  if (hit !== null && hit !== undefined) return hit === '-' ? '' : hit;
+  let u = String(url), out = '';
+  try {
+    for (let i = 0; i < 5; i++) {
+      out = mapPlaceFromUrl_(u);
+      if (out) break;
+      const res = UrlFetchApp.fetch(u, { followRedirects: false, muteHttpExceptions: true, headers: { 'User-Agent': 'Mozilla/5.0' } });
+      const h = (res.getHeaders && res.getHeaders()) || {};
+      const loc = h.Location || h.location;
+      const code = res.getResponseCode();
+      if (!(code >= 300 && code < 400 && loc)) break;
+      u = /^https?:/.test(loc) ? loc : 'https://www.google.com' + loc;
+    }
+  } catch (err) {
+    console.error('查地圖連結失敗：' + err.message);
+  }
+  cache.put(key, out || '-', out ? 21600 : 600);   // 查不到的 10 分鐘後可以再試
+  return out;
+}
+
 const SHOP_HELP_TEXT = [
   '🛍 如何新增特約商家（在管理群）',
   '',
@@ -1638,6 +1730,8 @@ const SHOP_HELP_TEXT = [
   '② 有菜單照片的話，同一個人接著傳（30 分鐘內，最多 4 張）',
   '③ 再傳一句：全全 特約新增',
   '④ 官方 LINE 回覆「✅ 已上架」和網站連結，就完成了',
+  '',
+  '也可以分開傳：店家的 Google 地圖連結 → 照片 → 「全全 特約新增 優惠內容」（例：全全 特約新增 9折），系統會從地圖連結查店名和地址',
   '',
   '寫錯了：改好公告重貼，再傳一次「全全 特約新增」',
   '撤下：全全 撤下特約 店名',
@@ -2334,6 +2428,10 @@ function lineImageData_(id) {
 
 /** 公告 → 網站特約商家欄位。先用 Claude，失敗或沒設定金鑰就用固定格式解析；網址、電話、LINE ID 只採用公告裡有的。 */
 function parseShopPost_(text, uid) {
+  // 公告裡有 Google 地圖短網址：查出店名和地址附在後面（LINE 預覽卡上的店名、地址，系統收到的只有網址）
+  const link = (String(text).match(MAP_SHORT_RE) || [''])[0];
+  const place = link ? mapLinkPlace_(link) : '';
+  text = place ? String(text) + '\n（Google 地圖：' + place + '）' : String(text);
   const s = aiShopParse_(text, uid) || regexShopParse_(text);
   if (!s || s.notShop) return s;
   const raw = String(text);
@@ -2370,6 +2468,8 @@ const SHOP_PARSE_PROMPT = [
   '- category：food＝餐飲、飲料、烘焙、小吃；car＝汽機車、交通、接送；resident＝出示里民證件才有的優惠（例如醫院、溫泉）；其他都是 life（醫療、美容、教育、居家、寵物、洗衣…）。',
   '- emoji：一個代表這家店的 emoji。',
   '- is_shop：這則訊息是不是在公告特約商家；不是就 false。',
+  '- 訊息可能是同一個人分開傳的幾句話湊起來的（地圖連結、店名、優惠各一句），也可能夾雜無關的話；只取跟這家店有關的。優惠很短（例如「9折」）也算。',
+  '- 最後如果有「（Google 地圖：…）」，是系統從公告裡的地圖連結查到的店名和地址：店名以地圖上的為準（含分店），地址沒寫就用它。',
 ].join('\n');
 
 function aiShopParse_(text, uid) {
@@ -4945,6 +5045,9 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-clinic-1026b', at: '2026-10-26T21:43:00+0
   'https://info.nhi.gov.tw/api/iode0000s01/Dataset?rId=A21030000I-D21005-001',
 ] });
 // 里長 10/26「醫療部分有辦法連動嗎」（急診即時、診所藥局、衛生公告疫苗）：部署後實際問三題，結果存到雲端硬碟「系統檢查」
+// 里長 11/2 特約新增：部署後確認 Apps Script 查得到地圖連結的店名、地址（結果在雲端硬碟「系統檢查」）
+SCHEDULED_BROADCASTS.push({ id: 'probe-maplink-1102', at: '2026-11-02T17:50:00+08:00', title: '地圖連結查店名檢查', kind: 'webProbe',
+  mapLinks: ['https://maps.app.goo.gl/Qw7KAod5yxXM9Yzyi8?g_st=ic', 'https://maps.app.goo.gl/xTdXo1E4dU4dAhj69'] });
 SCHEDULED_BROADCASTS.push({ id: 'ai-med-check-er-10262156', at: '2026-10-26T21:54:00+08:00', title: 'AI 醫療檢查（急診）', kind: 'aiWebCheck', question: '現在附近哪間醫院急診人比較少？' });
 SCHEDULED_BROADCASTS.push({ id: 'ai-med-check-clinic-10262156', at: '2026-10-26T21:54:00+08:00', title: 'AI 醫療檢查（診所）', kind: 'aiWebCheck', question: '北屯區有晚上看診的小兒科診所嗎？' });
 SCHEDULED_BROADCASTS.push({ id: 'ai-med-check-vaccine-10262156', at: '2026-10-26T21:54:00+08:00', title: 'AI 醫療檢查（疫苗）', kind: 'aiWebCheck', question: '今年的公費流感疫苗什麼時候開打？台中哪裡可以打？' });
@@ -6678,6 +6781,8 @@ function runScheduledBroadcasts() {
         // 部署後去看幾個公開網頁長什麼樣子（Claude 的環境連不到台灣的政府網站），結果存到雲端硬碟「系統檢查」給 Claude 看；不通知里長
         props.setProperty(key, 'sent ' + now_());
         const out = [];
+        // 地圖短網址：看 mapLinkPlace_ 在 Apps Script 查不查得到店名、地址
+        (b.mapLinks || []).forEach(u => { out.push('════ 地圖連結 ' + u, '查到：' + (mapLinkPlace_(u) || '（查不到）'), ''); });
         (b.urls || []).forEach(u => {
           try {
             const res = UrlFetchApp.fetch(u, { muteHttpExceptions: true, followRedirects: true, headers: { 'User-Agent': 'Mozilla/5.0' } });
