@@ -5070,6 +5070,8 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-clinic-1026b', at: '2026-10-26T21:43:00+0
 // 里長 11/2 特約新增：部署後確認 Apps Script 查得到地圖連結的店名、地址（結果在雲端硬碟「系統檢查」）
 SCHEDULED_BROADCASTS.push({ id: 'probe-maplink-1102', at: '2026-11-02T17:50:00+08:00', title: '地圖連結查店名檢查', kind: 'webProbe',
   mapLinks: ['https://maps.app.goo.gl/Qw7KAod5yxXM9Yzyi8?g_st=ic', 'https://maps.app.goo.gl/xTdXo1E4dU4dAhj69'] });
+// 里長 11/2「上架成功了，幫我確認一下」：看網站上的鴨大哥資料、照片打不打得開
+SCHEDULED_BROADCASTS.push({ id: 'probe-shop-duck-1102', at: '2026-11-02T18:05:00+08:00', title: '特約商家上架確認', kind: 'webProbe', shopFind: '鴨' });
 SCHEDULED_BROADCASTS.push({ id: 'probe-maplink-1102b', at: '2026-11-02T17:55:00+08:00', title: '地圖連結查店名檢查（每一步）', kind: 'webProbe',
   mapLinks: ['https://maps.app.goo.gl/Qw7KAod5yxXM9Yzyi8?g_st=ic', 'https://maps.app.goo.gl/Qw7KAod5yxXM9Yzyi8', 'https://maps.app.goo.gl/xTdXo1E4dU4dAhj69'] });
 SCHEDULED_BROADCASTS.push({ id: 'ai-med-check-er-10262156', at: '2026-10-26T21:54:00+08:00', title: 'AI 醫療檢查（急診）', kind: 'aiWebCheck', question: '現在附近哪間醫院急診人比較少？' });
@@ -6806,6 +6808,20 @@ function runScheduledBroadcasts() {
         props.setProperty(key, 'sent ' + now_());
         const out = [];
         // 地圖短網址：看 mapLinkPlace_ 在 Apps Script 查不查得到店名、地址
+        // 網站特約商家：找名稱有 shopFind 的，列出完整資料，照片連結看打不打得開
+        if (b.shopFind) {
+          try {
+            const d = JSON.parse(UrlFetchApp.fetch(CCS_BASE + '/api/shops', { muteHttpExceptions: true, headers: { 'User-Agent': 'Mozilla/5.0' } }).getContentText());
+            const hits = (d.shops || []).filter(x => String(x.n || '').indexOf(b.shopFind) >= 0);
+            out.push('════ 網站特約商家 共 ' + d.total + ' 家，從 LINE 新增的 ' + (d.shops || []).length + ' 家；最後 3 家：' + (d.shops || []).slice(-3).map(x => x.n).join('、'),
+              '名稱有「' + b.shopFind + '」的 ' + hits.length + ' 家：', JSON.stringify(hits, null, 1));
+            hits.forEach(x => (x.links || []).filter(l => /^\/api\/shop-img/.test(l[1])).forEach(l => {
+              const r = UrlFetchApp.fetch(CCS_BASE + l[1], { muteHttpExceptions: true });
+              out.push(l[0] + ' ' + l[1] + '：HTTP ' + r.getResponseCode() + '｜' + ((r.getHeaders() || {})['Content-Type'] || '') + '｜' + r.getBlob().getBytes().length + ' bytes');
+            }));
+          } catch (err) { out.push('════ 網站特約商家', '失敗：' + err.message); }
+          out.push('');
+        }
         (b.mapLinks || []).forEach(u => { const tr = []; const got = mapLinkPlace_(u, tr); out.push('════ 地圖連結 ' + u, '查到：' + (got || '（查不到）'), tr.join('\n'), ''); });
         (b.urls || []).forEach(u => {
           try {
