@@ -5611,6 +5611,8 @@ SCHEDULED_BROADCASTS.push({ id: 'bind-rep-z-1016', at: '2026-10-16T12:55:00+08:0
   rep: 'Z', intro: '曾咨耀|曾朝榮|曾議員' });
 // 里長 11/3 指示：段體佩的助理（加官方 LINE 後傳「段體佩助理」）綁成快速報修窗口
 // 里長 11/3 16:16 截圖：律師在律師群組問「請問今天晚上是不是沒有諮詢呢？」→ 部署後補回答今天的預約狀況（之後問就自動回）
+// 里長 11/3 16:2x 問「今天有沒有人預約」：把今天的律師諮詢預約（遮名）存到系統檢查給 Claude 看
+SCHEDULED_BROADCASTS.push({ id: 'probe-lawyer-today-1103', at: '2026-11-03T16:21:00+08:00', title: '今天律師諮詢預約檢查', kind: 'webProbe', lawyerDay: '2026-11-03' });
 SCHEDULED_BROADCASTS.push({ id: 'lawyer-today-1103', at: '2026-11-03T16:19:00+08:00', title: '律師群組：回答今天有沒有諮詢', kind: 'lawyerDayAnswer',
   date: '2026-11-03', prefix: '回覆剛剛的問題 👇\n' });
 SCHEDULED_BROADCASTS.push({ id: 'bind-rep-d-1103', at: '2026-11-03T09:13:00+08:00', title: '綁定段體佩服務處報修窗口', kind: 'bindRepIntro',
@@ -6835,6 +6837,8 @@ function runScheduledBroadcasts() {
         props.setProperty(key, 'sent ' + now_());
         const out = [];
         // 地圖短網址：看 mapLinkPlace_ 在 Apps Script 查不查得到店名、地址
+        // 律師諮詢某天的預約（跟律師群組看到的一樣：姓名遮一半）
+        if (b.lawyerDay) out.push('════ 律師諮詢', lawyerDayAnswerText_(b.lawyerDay), '');
         // 網站特約商家：找名稱有 shopFind 的，列出完整資料，照片連結看打不打得開
         if (b.shopFind) {
           try {
