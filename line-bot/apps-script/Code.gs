@@ -223,6 +223,12 @@ function handleEvent_(ev) {
       reply_(ev.replyToken, [text_(lawyerBookingStatusText_(status[2]))]);
       return;
     }
+    // 律師群組有人問「今天晚上是不是沒有諮詢？」「明天有人預約嗎」：直接回答那天的預約（里長 11/3）
+    const dayQ = ev.type === 'message' && ev.message.type === 'text' && isLawyerGroup_(ev.source) && lawyerDayQuestion_(ev.message.text);
+    if (dayQ) {
+      reply_(ev.replyToken, [text_(dayQ.date ? lawyerDayAnswerText_(dayQ.date) : lawyerBookingStatusText_(''))]);
+      return;
+    }
     // 管理群：特約公告／照片先記著；@官方帳號或「全全」說「特約新增」就上架到網站（見 handleShopGroup_）；
     // 群組每個人也都可以管理生活資訊、網站公告，查報名人數、評審進度（見 mgmtGroupCommand_）
     if (ev.type === 'message' && handleShopGroup_(ev, uid)) return;
@@ -3569,6 +3575,9 @@ function handleAssistant_(ev, uid, member, text, inGroup) {
     return say('✅ 已設為律師群組。之後有人預約或取消律師諮詢，以及每次諮詢前一天晚上 6 點的預約名單，都會發到這個群組（姓名遮住；完整資料只私訊給當天的律師）。\n' +
       '隨時查詢：在群組輸入「預約狀況」（只看某天：「預約狀況 10/20」）。\n要停止請輸入「全全 取消律師群組」。');
   }
+  if (inGroup && isLawyerGroup_(ev.source) && lawyerDayQuestion_(q) && lawyerDayQuestion_(q).date) {
+    return say(lawyerDayAnswerText_(lawyerDayQuestion_(q).date));
+  }
   if (inGroup && isLawyerGroup_(ev.source) && /預約|名單/.test(q)) {
     return say(lawyerBookingStatusText_((q.match(/\d{1,2}\s*[\/／月.-]\s*\d{1,2}/) || [''])[0]));
   }
@@ -5601,6 +5610,9 @@ SCHEDULED_BROADCASTS.push({ id: 'unpaid-list-1016', at: '2026-10-16T09:00:00+08:
 SCHEDULED_BROADCASTS.push({ id: 'bind-rep-z-1016', at: '2026-10-16T12:55:00+08:00', title: '綁定曾朝榮議員服務處報修窗口', kind: 'bindRepIntro',
   rep: 'Z', intro: '曾咨耀|曾朝榮|曾議員' });
 // 里長 11/3 指示：段體佩的助理（加官方 LINE 後傳「段體佩助理」）綁成快速報修窗口
+// 里長 11/3 16:16 截圖：律師在律師群組問「請問今天晚上是不是沒有諮詢呢？」→ 部署後補回答今天的預約狀況（之後問就自動回）
+SCHEDULED_BROADCASTS.push({ id: 'lawyer-today-1103', at: '2026-11-03T16:19:00+08:00', title: '律師群組：回答今天有沒有諮詢', kind: 'lawyerDayAnswer',
+  date: '2026-11-03', prefix: '回覆剛剛的問題 👇\n' });
 SCHEDULED_BROADCASTS.push({ id: 'bind-rep-d-1103', at: '2026-11-03T09:13:00+08:00', title: '綁定段體佩服務處報修窗口', kind: 'bindRepIntro',
   rep: 'D', intro: '段體佩' });
 SCHEDULED_BROADCASTS.push({ id: 'overdue-cancel-1016', at: '2026-10-16T12:00:00+08:00', title: '逾期未繳取消＋候補通知', kind: 'overdueCancel' });
@@ -6804,6 +6816,12 @@ function runScheduledBroadcasts() {
         const msg = setRepairOpen_(true);
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_('🔧 ' + msg + '\n\n要暫停：私訊輸入「關閉快速報修」。');
+        return;
+      }
+      if (b.kind === 'lawyerDayAnswer') {
+        // 律師群組有人問了、當時還沒有自動回覆：補回答一次
+        const ok = notifyLawyerGroup_((b.prefix || '') + lawyerDayAnswerText_(b.date || ymdAfter_(0)));
+        props.setProperty(key, (ok ? 'sent ' : 'failed ') + now_());
         return;
       }
       if (b.kind === 'bindRepIntro') {
@@ -8128,6 +8146,71 @@ function sendLawyerNotices_(entries) {
 function isLawyerGroup_(source) {
   const gid = prop_('LAWYER_GROUP_ID');
   return !!gid && !!source && (source.groupId || source.roomId) === gid;
+}
+
+// ── 律師群組問「今天有沒有諮詢」（里長 11/3：律師在群組問「請問今天晚上是不是沒有諮詢呢？」→「自動回覆今日是否有法律諮詢」）──
+// 短句、有提到諮詢／預約／律師、而且是問句，就回答那一天：有沒有排時段、幾位預約（姓名遮一半）、沒人預約時下一次有人預約是哪天。
+// 沒寫哪一天（「有人預約嗎」）就回全部的預約狀況。全全開頭的也一樣。
+const LAWYER_WEEKDAYS = '日一二三四五六';
+
+/** 是不是在問某天有沒有律師諮詢；是的話回傳 { date }（沒寫哪天：{ date: '' }），不是回傳 null。 */
+function lawyerDayQuestion_(text) {
+  const s = String(text || '').replace(/\s+/g, '').replace(new RegExp('^' + ASSISTANT_NAME), '');
+  if (!s || s.length > 40) return null;
+  if (!/諮詢|預約|有人約|律師/.test(s)) return null;
+  if (!/嗎|呢|[?？]|是不是|有沒有|有人|幾位|幾個|幾點/.test(s)) return null;
+  if (LAWYER_STATUS_RE.test(s) || /律師群組/.test(s)) return null;
+  let m;
+  if (/今天|今日|今晚|今夜/.test(s)) return { date: ymdAfter_(0) };
+  if (/明天|明日|明晚/.test(s)) return { date: ymdAfter_(1) };
+  if (/後天/.test(s)) return { date: ymdAfter_(2) };
+  if ((m = s.match(/(\d{1,2})[\/／月.](\d{1,2})/))) {
+    const today = ymdAfter_(0), pad = n => ('0' + n).slice(-2);
+    let d = today.slice(0, 4) + '-' + pad(m[1]) + '-' + pad(m[2]);
+    if (d < ymdAfter_(-180)) d = (+today.slice(0, 4) + 1) + d.slice(4);
+    return { date: d };
+  }
+  if ((m = s.match(/(下)?(?:星期|週|周|禮拜)([一二三四五六日天])/))) {
+    const tw = new Date(ymdAfter_(0) + 'T12:00:00+08:00').getUTCDay();
+    const w = m[2] === '天' ? 0 : LAWYER_WEEKDAYS.indexOf(m[2]);
+    const monBased = d => (d + 6) % 7;
+    const diff = m[1] ? (7 - monBased(tw)) + monBased(w) : (w - tw + 7) % 7;
+    return { date: ymdAfter_(diff) };
+  }
+  return { date: '' };
+}
+
+/** 某一天的律師諮詢：時段、預約幾位（群組用，姓名遮一半）。 */
+function lawyerDayAnswerText_(date) {
+  const today = ymdAfter_(0);
+  const md = d => d.slice(5).replace('-', '/') + '（' + weekdayOf_(d) + '）';
+  const label = (date === today ? '今天 ' : date === ymdAfter_(1) ? '明天 ' : date === ymdAfter_(2) ? '後天 ' : '') + md(date);
+  const allSlots = readAll_('律師時段');
+  const bookings = readAll_('諮詢預約').filter(b => b.status === '已預約');
+  const byTime = (a, b) => (a.date + a.start).localeCompare(b.date + b.start);
+  const slots = allSlots.filter(s => s.date === date).sort(byTime);
+  // 下一次有人預約（這天之後、今天以後）
+  const later = allSlots.filter(s => s.date > date && s.date >= today && bookings.some(b => b.slotId === s.slotId)).sort(byTime);
+  const nextLine = () => {
+    if (!later.length) return '之後的時段也還沒有人預約。';
+    const d = later[0].date;
+    const n = bookings.filter(b => later.some(s => s.date === d && s.slotId === b.slotId)).length;
+    return `下一次有人預約：${md(d)}${later[0].lawyer ? later[0].lawyer + ' 律師' : ''}（${n} 位）`;
+  };
+  if (!slots.length) return [`⚖️ ${label}沒有安排律師諮詢。`, nextLine()].join('\n');
+  const rows = slots.map(s => ({ s, bs: bookings.filter(b => b.slotId === s.slotId) }));
+  const total = rows.reduce((n, x) => n + x.bs.length, 0);
+  const lines = [`⚖️ ${label}律師諮詢：${total ? total + ' 位預約' : '沒有人預約'}`];
+  const lawyers = slots.map(s => s.lawyer || '').filter((n, i, a) => a.indexOf(n) === i);
+  lawyers.forEach(n => {
+    const mine = rows.filter(x => (x.s.lawyer || '') === n);
+    const s0 = mine[0].s, s1 = mine[mine.length - 1].s;
+    lines.push(`🗓 ${s0.start}–${s1.end}${n ? '｜' + n + ' 律師' : ''}${s0.note ? '｜📍' + s0.note : ''}`);
+    mine.forEach(x => x.bs.forEach(b => lines.push(`・${x.s.start}–${x.s.end}　${maskName_(b.name)}${confirmMark_(b)}`)));
+  });
+  if (!total) lines.push('', nextLine());
+  else lines.push('', LAWYER_GROUP_PRIVACY_NOTE);
+  return lines.join('\n').slice(0, 4900);
 }
 
 const LAWYER_STATUS_RE = /^(預約狀況|預約名單|預約查詢|查詢預約|查預約)\s*(.*)$/;
