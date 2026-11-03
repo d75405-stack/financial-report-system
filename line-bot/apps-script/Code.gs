@@ -476,7 +476,13 @@ const REPAIR_REPS = [
   { key: 'H', name: '黃健豪立委服務處', short: '黃健豪立委', re: /黃健豪|黃立委/ },
   { key: 'Z', name: '曾朝榮議員服務處', short: '曾朝榮議員', re: /曾朝榮|曾議員/ },
   { key: 'L', name: '賴順仁議員服務處', short: '賴順仁議員', re: /賴順仁|賴議員/ },
+  // 里長 11/3：「快速報修增加服務民意代表參選人段體佩」
+  { key: 'D', name: '段體佩服務處', short: '段體佩', re: /段體佩/ },
 ];
+// 綁定碼開頭的英文字（H-、Z-、L-、D-…）
+const REPAIR_CODE_RE = new RegExp('[' + REPAIR_REPS.map(r => r.key).join('') + ']\\s*[-－–]?\\s*[A-Z0-9]{5}', 'g');
+// 「報修窗口 同意 名字 服務處」：去掉後面的服務處名稱
+const REPAIR_REP_SUFFIX_RE = new RegExp('(' + REPAIR_REPS.map(r => r.re.source).join('|') + ')(立委|議員|參選人)?(服務處)?\\s*$');
 // 不交給民意代表、自己的團隊處理（例如志工剪草）
 const REPAIR_SELF = { key: 'S', name: '莊晴全服務團隊', short: '莊晴全團隊', re: /莊晴全|自己|團隊/ };
 const REPAIR_PAGE_URL = 'https://ccs2024taiwan.pages.dev/repair/';
@@ -559,7 +565,7 @@ function repairWindowOf_(uid) {
   return readAll_('報修窗口').find(w => w.userId === uid && repairWindowActive_(w)) || null;
 }
 
-/** 三個服務處的綁定碼（第一次用到時產生，存在指令碼屬性 REPAIR_BIND_CODES）。 */
+/** 每個服務處的綁定碼（第一次用到時產生，存在指令碼屬性 REPAIR_BIND_CODES；新增服務處時自動補上）。 */
 function repairBindCodes_(renewKey) {
   let codes = {};
   try { codes = JSON.parse(prop_('REPAIR_BIND_CODES') || '{}') || {}; } catch (_) { codes = {}; }
@@ -765,7 +771,7 @@ function notifyRepairOwner_(r, extra) {
     // 里民附的照片直接公開在網站（里長 10/20）：不適合公開的，里長點「🙈 照片不公開」收起來
     const hide = repairPhotoIds_(r).length ? [{ label: '🙈 照片不公開', text: `報修照片 ${r.id} 不公開` }] : [];
     pushRepair_(ownerIds_(), repairFlex_(r, title + (extra ? extra : ''), repairAssignButtons_(r).concat(hide), true),
-      repairText_(r, title, true) + (extra ? '\n' + extra : '') + `\n\n分派：輸入「報修分派 ${r.id} 曾朝榮議員」（或黃健豪立委、賴順仁議員、莊晴全團隊）` +
+      repairText_(r, title, true) + (extra ? '\n' + extra : '') + `\n\n分派：輸入「報修分派 ${r.id} ${REPAIR_REPS[1].short}」（或${REPAIR_REPS.filter((x, i) => i !== 1).concat([REPAIR_SELF]).map(x => x.short).join('、')}）` +
       (hide.length ? `\n照片會直接公開在網站，不適合公開：輸入「報修照片 ${r.id} 不公開」` : ''));
   } catch (err) {
     console.error('通知里長報修失敗：' + err.message);
@@ -1161,7 +1167,7 @@ function repairListText_(uid) {
     .concat(['', '網站進度：' + REPAIR_PAGE_URL]).join('\n');
 }
 
-/** 里長私訊「報修窗口」：三個服務處的綁定碼與目前綁定的人。 */
+/** 里長私訊「報修窗口」：每個服務處的綁定碼與目前綁定的人。 */
 function repairWindowsText_() {
   const codes = repairBindCodes_();
   const rows = readAll_('報修窗口');
@@ -1184,7 +1190,7 @@ function repairWindowsText_() {
  */
 function approveRepairWindow_(arg) {
   const repArg = REPAIR_REPS.find(r => r.re.test(arg));
-  const name = arg.replace(/(黃健豪|黃立委|曾朝榮|曾議員|賴順仁|賴議員)(立委|議員)?(服務處)?\s*$/, '').trim() || arg;
+  const name = arg.replace(REPAIR_REP_SUFFIX_RE, '').trim() || arg;
   const same = dn => { const a = String(dn || '').trim(), b = name.trim(); return !!a && (a === b || a.indexOf(b) >= 0); };
   const rows = readAll_('報修窗口');
   let cands = rows.filter(w => w.status === 'pending' && same(w.displayName)).map(w => ({ userId: w.userId, displayName: w.displayName, row: w, text: w.repName }));
@@ -1246,7 +1252,7 @@ function bindRepairWindow_(rep, c) {
     '看目前交給您們的案件：報修案件',
     '看所有案件、直接在網頁上修改：' + liffUrl_('work')].join('\n'))]);
   return `✅ 已把「${c.displayName}」綁定為${rep.name}的報修窗口` + (told ? '，也已經用 LINE 通知他了。' : '（LINE 通知沒送出去，請直接告訴他）。') +
-    '\n輸入「報修窗口」可以看三個服務處的綁定狀況。';
+    '\n輸入「報修窗口」可以看每個服務處的綁定狀況。';
 }
 
 // 里長 10/22：「若有人問明天颱風有沒有停止上班上課，再請回覆這個圖給他」
@@ -1312,11 +1318,11 @@ function handleRepairText_(ev, uid, t) {
   // 原本整則沒被認出來、也沒有回覆。現在訊息裡任何地方有「報修綁定」都會處理；綁定碼不對就說清楚，並請里長同意。
   if (t.length <= 120 && /報修綁定/.test(t)) {
     const codes = repairBindCodes_();
-    const tokens = (t.toUpperCase().match(/[HZL]\s*[-－–]?\s*[A-Z0-9]{5}/g) || []).map(x => x.replace(/[^A-Z0-9]/g, ''));
+    const tokens = (t.toUpperCase().match(REPAIR_CODE_RE) || []).map(x => x.replace(/[^A-Z0-9]/g, ''));
     const rep = REPAIR_REPS.find(r => tokens.indexOf(String(codes[r.key]).replace(/[^A-Z0-9]/g, '')) >= 0);
     if (!rep) {
       if (isOwnerUser_(uid)) {
-        reply_(ev.replyToken, [text_('綁定碼不正確。要看三個服務處的綁定碼，請輸入「報修窗口」。')]);
+        reply_(ev.replyToken, [text_('綁定碼不正確。要看各服務處的綁定碼，請輸入「報修窗口」。')]);
         return true;
       }
       const guess = repairRep_(t.replace(/報修綁定[\s\S]*$/, '')) || repairRep_(t);
@@ -1462,7 +1468,7 @@ function setRepairOpen_(open) {
   const missing = REPAIR_REPS.filter(rep => !ws.some(w => w.repKey === rep.key)).map(rep => rep.name);
   return ['✅ 快速報修已開放！里民點選單「快速報修」或輸入「報修」就能報修，網站進度：' + REPAIR_PAGE_URL]
     .concat(tests.length ? [`開放前測試的 ${tests.length} 件（${tests[0].id}${tests.length > 1 ? '–' + tests[tests.length - 1].id : ''}）已設為不處理，網站不會顯示。`] : [])
-    .concat(missing.length ? ['⚠️ 還沒綁定窗口：' + missing.join('、') + '（交給他們時系統會給您一段文字轉傳）'] : ['三個服務處都已綁定窗口 👍'])
+    .concat(missing.length ? ['⚠️ 還沒綁定窗口：' + missing.join('、') + '（交給他們時系統會給您一段文字轉傳）'] : ['每個服務處都已綁定窗口 👍'])
     .join('\n');
 }
 
@@ -3878,7 +3884,7 @@ function knowledgeExtra_() {
 }
 
 const KNOWLEDGE_EXTRA = [
-  ['快速報修（最新，以此為準）', '快速報修：路燈故障、剪草、修剪樹木、道路坑洞、水溝清理、環境清潔等，在官方 LINE 點選單「快速報修」或輸入「報修」，填類別、地點、狀況說明，可以附照片和定位。送出後由莊晴全分派給黃健豪立委服務處、曾朝榮議員服務處、賴順仁議員服務處或莊晴全服務團隊處理，處理完成會用 LINE 通知報修人。處理進度公開在 https://ccs2024taiwan.pages.dev/repair/ （顯示類別、地點、處理單位、進度，也公開里民附的照片和服務處處理完成的照片，讓大家看處理前後的差別；不顯示報修人姓名電話）。輸入「我的報修」可以看自己報修的進度。'],
+  ['快速報修（最新，以此為準）', '快速報修：路燈故障、剪草、修剪樹木、道路坑洞、水溝清理、環境清潔等，在官方 LINE 點選單「快速報修」或輸入「報修」，填類別、地點、狀況說明，可以附照片和定位。送出後由莊晴全分派給黃健豪立委服務處、曾朝榮議員服務處、賴順仁議員服務處、段體佩服務處或莊晴全服務團隊處理，處理完成會用 LINE 通知報修人。處理進度公開在 https://ccs2024taiwan.pages.dev/repair/ （顯示類別、地點、處理單位、進度，也公開里民附的照片和服務處處理完成的照片，讓大家看處理前後的差別；不顯示報修人姓名電話）。輸入「我的報修」可以看自己報修的進度。'],
   ['集章兌換規則（最新，以此為準）', '集印章活動：集滿 5 顆印章可以換一種獎品，集滿 10 顆印章可以再換一種獎品（兩種都集到就能換兩次），5、10 顆的獎品在惠宇開朗兌換，10/18(日) 14:00–16:00，換完為止。集滿 15 顆印章可以換抽獎券，抽獎券也是在惠宇開朗換。抽獎在 10/18(日) 晚上裕國豐展的變裝大賽進行中開獎（變裝大賽 18:00 開始），抽獎券請保管好。'],
   ['集章地圖卡發放位置（最新，以此為準）', '紙本「集章地圖卡」（集章圖紙）10/12（一）起開始發放，限量 500 份，發完為止；共 15 處發放，任一處都可以拿：裕國豐展、惠宇開朗、總太聚作、總太2020、總太悅來、總太共好、總太美樂地、八月小確幸、敬甜點、簇新美學、全家太順店、臥野、御脊傳統整復推拿、中醫大市立醫院、全聯建和店。在官方 LINE 輸入「集章」也查得到。集章點與路線：https://ccs2024taiwan.pages.dev/map/'],
   ['查詢報名（最新，以此為準）', '想知道有沒有報名成功、繳費了沒：① 活動網站查詢報名頁 https://ccs2024taiwan.pages.dev/signup/check/ ，填報名時的姓名和電話，四個活動一次查；② 在官方 LINE 私訊輸入「查詢報名 姓名 電話」，綁定後繳費提醒和報名完成通知都會用 LINE 發送。'],
@@ -5594,6 +5600,9 @@ SCHEDULED_BROADCASTS.push({ id: 'unpaid-list-1016', at: '2026-10-16T09:00:00+08:
 // 里長 10/16 指示：曾朝榮議員服務處的人（10/13 加官方 LINE、自我介紹是曾咨耀的助理）綁成快速報修窗口
 SCHEDULED_BROADCASTS.push({ id: 'bind-rep-z-1016', at: '2026-10-16T12:55:00+08:00', title: '綁定曾朝榮議員服務處報修窗口', kind: 'bindRepIntro',
   rep: 'Z', intro: '曾咨耀|曾朝榮|曾議員' });
+// 里長 11/3 指示：段體佩的助理（加官方 LINE 後傳「段體佩助理」）綁成快速報修窗口
+SCHEDULED_BROADCASTS.push({ id: 'bind-rep-d-1103', at: '2026-11-03T09:13:00+08:00', title: '綁定段體佩服務處報修窗口', kind: 'bindRepIntro',
+  rep: 'D', intro: '段體佩' });
 SCHEDULED_BROADCASTS.push({ id: 'overdue-cancel-1016', at: '2026-10-16T12:00:00+08:00', title: '逾期未繳取消＋候補通知', kind: 'overdueCancel' });
 // 里長 10/14：「禮拜五中午 12 點通知已繳費名單」→ 名單私訊里長＋LINE 通知已繳費的報名者本人（不發管理群、聯辦群）
 SCHEDULED_BROADCASTS.push({ id: 'paid-list-1016', at: '2026-10-16T12:00:00+08:00', title: '10/16 已繳費名單', kind: 'paidList', notify: true });
