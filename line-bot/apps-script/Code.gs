@@ -5669,6 +5669,8 @@ SCHEDULED_BROADCASTS.push({ id: 'bind-rep-z-1016', at: '2026-10-16T12:55:00+08:0
 // 里長 11/3 16:16 截圖：律師在律師群組問「請問今天晚上是不是沒有諮詢呢？」→ 部署後補回答今天的預約狀況（之後問就自動回）
 // 里長 11/3 16:2x 問「今天有沒有人預約」：把今天的律師諮詢預約（遮名）存到系統檢查給 Claude 看
 // 里長 11/4 17:50（官方 LINE 聊天截圖）：工作人員跟里民約好改到今晚（週三）19:30–20:00 裕國豐展，「再請幫我通知，且取消下周預約」
+// 里長 11/4：「F0013 幫我交給黃健豪和賴順仁」
+SCHEDULED_BROADCASTS.push({ id: 'repair-assign-f0013', at: '2026-11-04T20:53:00+08:00', title: 'F0013 交給黃健豪立委、賴順仁議員', kind: 'repairAssign', repair: 'F0013', reps: ['H', 'L'] });
 SCHEDULED_BROADCASTS.push({ id: 'probe-lawyer-today-1104', at: '2026-11-04T17:52:00+08:00', title: '今晚律師諮詢預約檢查', kind: 'webProbe', lawyerDay: '2026-11-04' });
 SCHEDULED_BROADCASTS.push({ id: 'lawyer-move-1104', at: '2026-11-04T17:49:00+08:00', title: '律師諮詢改到今晚 19:30', kind: 'lawyerMove',
   texts: ['我直接到大廳就可以嗎', '那地點在哪裡呢', '我把事情排開', '好的沒問題，謝謝您的幫忙'], toDate: '2026-11-04', toStart: '19:30', label: '工作人員在官方 LINE 聯繫' });
@@ -6878,6 +6880,23 @@ function runScheduledBroadcasts() {
         const msg = setRepairOpen_(true);
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_('🔧 ' + msg + '\n\n要暫停：私訊輸入「關閉快速報修」。');
+        return;
+      }
+      if (b.kind === 'repairAssign') {
+        // 里長請 Claude 分派（跟在 LINE 按「交給 ○○」一樣；已經處理中就加上去）
+        const msgs = [];
+        (b.reps || []).forEach(k => {
+          const rep = REPAIR_REPS.concat([REPAIR_SELF]).find(x => x.key === k);
+          const r = findRepair_(b.repair);
+          if (!rep || !r) return msgs.push(text_(`⚠️ 找不到報修 ${b.repair} 或服務處 ${k}`));
+          if (r.status === '已完成') return msgs.push(text_(`${r.id} 已經處理完成了（${r.rep}），沒有再分派。`));
+          if (r.status === '處理中' && repairHasRep_(r, rep.name)) return msgs.push(text_(`${r.id} 已經交給 ${rep.name} 了。`));
+          const add = r.status === '處理中' && !!r.rep;
+          assignRepair_(r, rep).forEach(m => msgs.push(m));
+          auditRepair_(r.id, '', add ? '加派' : '分派', r.rep ? `${r.status}｜${r.rep}` : r.status, `處理中｜${add ? repairRepNames_(r).concat([rep.name]).join('、') : rep.name}`);
+        });
+        props.setProperty(key, 'sent ' + now_() + ' ' + String((findRepair_(b.repair) || {}).rep || '').slice(0, 80));
+        try { multicast_(ownerIds_(), msgs.slice(0, 5)); } catch (err) { console.error('通知里長分派結果失敗：' + err.message); }
         return;
       }
       if (b.kind === 'lawyerMove') {
