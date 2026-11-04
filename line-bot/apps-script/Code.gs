@@ -5613,6 +5613,7 @@ SCHEDULED_BROADCASTS.push({ id: 'bind-rep-z-1016', at: '2026-10-16T12:55:00+08:0
 // 里長 11/3 16:16 截圖：律師在律師群組問「請問今天晚上是不是沒有諮詢呢？」→ 部署後補回答今天的預約狀況（之後問就自動回）
 // 里長 11/3 16:2x 問「今天有沒有人預約」：把今天的律師諮詢預約（遮名）存到系統檢查給 Claude 看
 // 里長 11/4 17:50（官方 LINE 聊天截圖）：工作人員跟里民約好改到今晚（週三）19:30–20:00 裕國豐展，「再請幫我通知，且取消下周預約」
+SCHEDULED_BROADCASTS.push({ id: 'probe-lawyer-today-1104', at: '2026-11-04T17:52:00+08:00', title: '今晚律師諮詢預約檢查', kind: 'webProbe', lawyerDay: '2026-11-04' });
 SCHEDULED_BROADCASTS.push({ id: 'lawyer-move-1104', at: '2026-11-04T17:49:00+08:00', title: '律師諮詢改到今晚 19:30', kind: 'lawyerMove',
   texts: ['我直接到大廳就可以嗎', '那地點在哪裡呢', '我把事情排開', '好的沒問題，謝謝您的幫忙'], toDate: '2026-11-04', toStart: '19:30', label: '工作人員在官方 LINE 聯繫' });
 SCHEDULED_BROADCASTS.push({ id: 'probe-lawyer-today-1103', at: '2026-11-03T16:21:00+08:00', title: '今天律師諮詢預約檢查', kind: 'webProbe', lawyerDay: '2026-11-03' });
@@ -6906,7 +6907,8 @@ function runScheduledBroadcasts() {
           try { parent = prop_('BACKUP_FOLDER_ID') ? backupRoot_() : DriveApp.getRootFolder(); } catch (_) { parent = DriveApp.getRootFolder(); }
           const it = parent.getFoldersByName('系統檢查');
           const folder = it.hasNext() ? it.next() : parent.createFolder('系統檢查');
-          folder.createFile(b.id + '_' + Utilities.formatDate(new Date(), TZ, 'MMdd-HHmm') + '.txt', out.join('\n'), MimeType.PLAIN_TEXT);
+          // 用 Blob（UTF-8）存：直接傳字串時中文會被截掉後半段
+          folder.createFile(Utilities.newBlob(out.join('\n'), 'text/plain; charset=utf-8', b.id + '_' + Utilities.formatDate(new Date(), TZ, 'MMdd-HHmm') + '.txt'));
         } catch (err) { console.error('存網頁檢查結果失敗：' + err.message); }
         return;
       }
