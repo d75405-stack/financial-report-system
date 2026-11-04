@@ -5612,6 +5612,9 @@ SCHEDULED_BROADCASTS.push({ id: 'bind-rep-z-1016', at: '2026-10-16T12:55:00+08:0
 // 里長 11/3 指示：段體佩的助理（加官方 LINE 後傳「段體佩助理」）綁成快速報修窗口
 // 里長 11/3 16:16 截圖：律師在律師群組問「請問今天晚上是不是沒有諮詢呢？」→ 部署後補回答今天的預約狀況（之後問就自動回）
 // 里長 11/3 16:2x 問「今天有沒有人預約」：把今天的律師諮詢預約（遮名）存到系統檢查給 Claude 看
+// 里長 11/4 17:50（官方 LINE 聊天截圖）：工作人員跟里民約好改到今晚（週三）19:30–20:00 裕國豐展，「再請幫我通知，且取消下周預約」
+SCHEDULED_BROADCASTS.push({ id: 'lawyer-move-1104', at: '2026-11-04T17:49:00+08:00', title: '律師諮詢改到今晚 19:30', kind: 'lawyerMove',
+  texts: ['我直接到大廳就可以嗎', '那地點在哪裡呢', '我把事情排開', '好的沒問題，謝謝您的幫忙'], toDate: '2026-11-04', toStart: '19:30', label: '工作人員在官方 LINE 聯繫' });
 SCHEDULED_BROADCASTS.push({ id: 'probe-lawyer-today-1103', at: '2026-11-03T16:21:00+08:00', title: '今天律師諮詢預約檢查', kind: 'webProbe', lawyerDay: '2026-11-03' });
 SCHEDULED_BROADCASTS.push({ id: 'lawyer-today-1103', at: '2026-11-03T16:19:00+08:00', title: '律師群組：回答今天有沒有諮詢', kind: 'lawyerDayAnswer',
   date: '2026-11-03', prefix: '回覆剛剛的問題 👇\n' });
@@ -6818,6 +6821,12 @@ function runScheduledBroadcasts() {
         const msg = setRepairOpen_(true);
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_('🔧 ' + msg + '\n\n要暫停：私訊輸入「關閉快速報修」。');
+        return;
+      }
+      if (b.kind === 'lawyerMove') {
+        const r = moveBookingByChat_(b);
+        props.setProperty(key, 'sent ' + now_() + ' ' + String(r).slice(0, 120));
+        notifyOwner_(r);
         return;
       }
       if (b.kind === 'lawyerDayAnswer') {
@@ -8144,6 +8153,41 @@ function sendLawyerNotices_(entries) {
   Object.keys(perLawyer).forEach(n => {
     const list = perLawyer[n];
     notifyLawyerPrivately_(n, join(list, `⚖️ 律師諮詢預約異動 ${list.length} 筆（只發給您本人）`) + (list.length > 1 ? '' : '\n\n🔒 只發給您本人'));
+  });
+}
+
+/**
+ * 工作人員在官方 LINE 聊天室跟里民約好改時段（系統外談好的）→ 系統照著改：取消原本的預約、改約到指定日期時段，
+ * 用「改時段」一則通知律師（完整資料私訊）、律師群組和里長（遮名）。
+ * 程式裡不寫里民的名字或 LINE ID：用他在官方 LINE 傳過的話（m.texts，3 天內）找人，再找他還沒到的預約。
+ * m：{ texts: [...], toDate, toStart, onlyAfter（原本的預約要在這天之後）, label }
+ */
+function moveBookingByChat_(m) {
+  return withLock_(() => {
+    const since = Utilities.formatDate(new Date(Date.now() - 3 * 864e5), TZ, 'yyyy-MM-dd HH:mm');
+    const uids = readAll_('未回覆訊息').filter(x => String(x.at) >= since && x.userId && (m.texts || []).indexOf(String(x.text || '').trim()) >= 0)
+      .map(x => x.userId).filter((u, i, a) => a.indexOf(u) === i);
+    const slots = indexBy_(readAll_('律師時段'), 'slotId');
+    const all = readAll_('諮詢預約');
+    const future = uid => all.filter(b => b.userId === uid && b.status === '已預約' && slots[b.slotId] && slots[b.slotId].date > (m.onlyAfter || m.toDate));
+    const hits = uids.filter(u => future(u).length);
+    if (hits.length !== 1) return `⚠️ 律師諮詢改時段沒有自動處理：找到 ${uids.length} 位傳過那幾句話的人，其中 ${hits.length} 位有之後的預約。請直接告訴 Claude 預約編號，或在後台修改。`;
+    const olds = future(hits[0]);
+    if (olds.length !== 1) return `⚠️ 律師諮詢改時段沒有自動處理：這位里民之後有 ${olds.length} 筆預約，不知道要取消哪一筆。`;
+    const old = olds[0];
+    const to = readAll_('律師時段').find(x => x.date === m.toDate && String(x.start) === m.toStart);
+    if (!to) return `⚠️ 律師諮詢改時段沒有自動處理：${m.toDate} ${m.toStart} 沒有律師諮詢時段。`;
+    const taken = all.filter(b => b.slotId === to.slotId && (b.status === '已預約' || b.status === '已完成')).length;
+    if (taken >= Number(to.capacity || 1)) return `⚠️ 律師諮詢改時段沒有自動處理：${m.toDate} ${m.toStart} 已經有人預約了。`;
+    ensureBookingHeader_();
+    update_('諮詢預約', old._row, { status: '已取消', confirm: '取消 ' + now_() + ' 改到 ' + m.toDate + ' ' + m.toStart });
+    const nb = { id: newId_('B'), createdAt: now_(), slotId: to.slotId, userId: old.userId, name: old.name, phone: old.phone,
+      topic: old.topic, detail: old.detail, status: '已預約', reminded: now_(), confirm: '出席 ' + now_() + '（' + (m.label || '工作人員聯繫') + '）' };
+    append_('諮詢預約', nb);
+    sendLawyerNotices_([{ id: old.id, uid: old.userId, a: true, who: '本人改時段' }, { id: nb.id, uid: old.userId, a: false }]);
+    const s0 = slots[old.slotId];
+    return `✅ 律師諮詢已改時段：${maskName_(old.name)}\n原：${s0.date}（${weekdayOf_(s0.date)}）${s0.start}–${s0.end}（已取消）\n` +
+      `改為：${to.date}（${weekdayOf_(to.date)}）${to.start}–${to.end}${to.lawyer ? '｜' + to.lawyer + ' 律師' : ''}\n已通知律師（完整資料私訊）和律師群組（遮名）。`;
   });
 }
 
