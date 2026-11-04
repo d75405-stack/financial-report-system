@@ -511,6 +511,11 @@ const REPAIR_DONE_PHOTO_TTL = 1800;
 const REPAIR_NOTE_TTL = 600;
 const REPAIR_LOG_MAX = 20;
 const repairDonePhotoIds_ = r => String((r && r.donePhotoId) || '').split(',').map(x => x.trim()).filter(Boolean);
+// 里長 11/4：「我能重複派給其他人嗎」→ 同一件可以同時交給好幾個服務處：rep 欄用「、」串起來（例：黃健豪立委服務處、段體佩服務處）。
+// 已經處理中再按「交給 ○○」是加上去（不是轉走）；每個服務處都收到案件、都能更新進度和傳照片，任一個標記完成就算完成。
+// 拿掉：「報修分派 F0013 取消 黃健豪」；整件改給別人：「報修分派 F0013 改交 段體佩」（後台改處理單位也是整件改）。
+const repairRepNames_ = r => String((r && r.rep) || '').split('、').map(x => x.trim()).filter(Boolean);
+const repairHasRep_ = (r, name) => !!name && repairRepNames_(r).indexOf(name) >= 0;
 
 /** 這件報修的處理進度紀錄。舊資料只有 repNote（沒有紀錄）的，把那句當成第一筆。 */
 function repairLog_(r) {
@@ -784,15 +789,22 @@ function notifyRepairOwner_(r, extra) {
   }
 }
 
-/** 里長分派：改成處理中、記下處理單位，傳給該服務處的窗口。回傳要回覆給里長的訊息。 */
-function assignRepair_(r, rep) {
-  update_('報修', r._row, { status: '處理中', rep: rep.name, assignedAt: now_(), updatedAt: now_() });
+/**
+ * 里長分派：改成處理中、記下處理單位，傳給該服務處的窗口。回傳要回覆給里長的訊息。
+ * 已經處理中：加上這個服務處（一起處理）；replace=true（後台改處理單位、「改交」）：整件改給這個服務處。
+ */
+function assignRepair_(r, rep, replace) {
+  const before = r.status === '處理中' && !replace ? repairRepNames_(r) : [];
+  const names = before.concat([rep.name]);
+  const joined = names.join('、');
+  update_('報修', r._row, Object.assign({ status: '處理中', rep: joined, updatedAt: now_() }, before.length ? {} : { assignedAt: now_() }));
   clearRepairCache_();
-  const nr = Object.assign({}, r, { status: '處理中', rep: rep.name });
-  const head = `✅ ${r.id} 已交給 ${rep.name}，網站進度顯示「處理中｜${rep.name}」。`;
+  const nr = Object.assign({}, r, { status: '處理中', rep: joined });
+  const head = before.length ? `✅ ${r.id} 也交給 ${rep.name}，現在由 ${joined} 一起處理，網站進度顯示「處理中｜${joined}」。`
+    : `✅ ${r.id} 已交給 ${rep.name}，網站進度顯示「處理中｜${rep.name}」。`;
   if (rep === REPAIR_SELF) return [text_(head + `\n更新進度：報修進度 ${r.id}\n處理完請輸入：報修完成 ${r.id} 處理說明\n（完成後可以直接傳處理照片，會放在網站給里民看）`)];
   const ws = repairWindows_(rep.key);
-  const title = `🔧 ${rep.short}您好，莊晴全轉交報修`;
+  const title = `🔧 ${rep.short}您好，莊晴全轉交報修` + (before.length ? `（和${before.join('、')}一起處理）` : '');
   const sent = pushRepair_(ws.map(w => w.userId),
     repairFlex_(nr, title, [{ label: '📝 更新進度', text: `報修進度 ${r.id}` }, { label: '✅ 已處理完成', text: `報修完成 ${r.id}` },
       { label: '📷 傳處理照片', text: `報修照片 ${r.id}` }], true, prop_('LIFF_ID') ? [{ label: '📋 我的案件（網頁）', uri: liffUrl_('work') }] : []),
@@ -803,6 +815,21 @@ function assignRepair_(r, rep) {
       `\n之後請服務處人員加官方 LINE 好友、傳「報修綁定 ${repairBindCodes_()[rep.key]}」，案件就會直接傳過去。`),
     text_(repairText_(nr, `🔧 莊晴全轉交報修（${rep.name}）`, true) + '\n\n處理完請回覆莊晴全，謝謝！'),
   ];
+}
+
+/** 拿掉一個一起處理的服務處（通知被拿掉的窗口不用處理了）；拿光了就回到待分派。回傳給里長的訊息。 */
+function unassignRepair_(r, rep, uid) {
+  if (r.status !== '處理中' || !repairHasRep_(r, rep.name)) return `${r.id} 沒有交給 ${rep.name}。` + (r.rep ? `（現在：${r.rep}）` : '');
+  const left = repairRepNames_(r).filter(n => n !== rep.name);
+  update_('報修', r._row, Object.assign({ rep: left.join('、'), updatedAt: now_() }, left.length ? {} : { status: '待分派' }));
+  clearRepairCache_();
+  auditRepair_(r.id, uid, '取消分派', `處理中｜${r.rep}`, left.length ? `處理中｜${left.join('、')}` : '待分派');
+  const ids = rep === REPAIR_SELF ? [] : repairWindows_(rep.key).map(w => w.userId);
+  if (ids.length) {
+    try { multicast_(ids, [text_(`ℹ️ 報修 ${r.id} 改由其他單位處理，您們不用處理了，謝謝！\n${r.category}｜${r.location}`)]); } catch (err) { console.error('通知取消分派失敗：' + err.message); }
+  }
+  return `✅ ${r.id} 已拿掉 ${rep.name}` + (left.length ? `，現在由 ${left.join('、')} 處理。` : '，回到「待分派」，請再選要交給誰。') +
+    (ids.length ? `\n也已經告訴${rep.name}的窗口不用處理了。` : '');
 }
 
 /** 標記完成：通知報修的里民；不是里長本人按的也通知里長。 */
@@ -830,6 +857,20 @@ function completeRepair_(r, note, actorUid, quietOwner) {
   auditRepair_(r.id, actorUid || (quietOwner ? 'admin' : ''), '標記已完成', r.status,
     '已完成' + (note ? '：' + note.slice(0, 300) : '') + (told ? '｜已用 LINE 通知里民' : '｜⚠️ 里民的 LINE 通知沒送出'));
   const owners = ownerIds_();
+  // 一起處理的其他服務處：告訴他們已經完成了，不用再處理
+  if (repairRepNames_(r).length > 1) {
+    const mine = (repairWindowOf_(actorUid) || {}).repName;
+    const ids = repairRepNames_(r).filter(n => n !== mine).map(n => REPAIR_REPS.find(x => x.name === n)).filter(Boolean)
+      .reduce((a, x) => a.concat(repairWindows_(x.key).map(w => w.userId)), []).filter(id => id !== actorUid && owners.indexOf(id) < 0);
+    if (ids.length) {
+      try {
+        multicast_(ids, [text_(`✅ 報修 ${r.id} 已處理完成，不用再處理了，謝謝！\n${r.category}｜${r.location}` + (repNote ? '\n說明：' + repNote : '') +
+          `\n（這件是 ${rep} 一起處理的）`)]);
+      } catch (err) {
+        console.error('通知一起處理的服務處失敗：' + err.message);
+      }
+    }
+  }
   if (!quietOwner && owners.indexOf(actorUid) < 0) {
     const w = repairWindowOf_(actorUid);
     try {
@@ -910,7 +951,7 @@ function repairNoteSuggest_(ev, uid, t) {
   if (String(t).length < 6 || isOwnerUser_(uid)) return false;
   const w = repairWindowOf_(uid);
   if (!w) return false;
-  const open = readAll_('報修').filter(r => r.status === '處理中' && r.rep === w.repName).slice(-12).reverse();
+  const open = readAll_('報修').filter(r => r.status === '處理中' && repairHasRep_(r, w.repName)).slice(-12).reverse();
   if (!open.length) return false;
   CacheService.getScriptCache().put('rnote_text_' + uid, String(t).slice(0, 300), REPAIR_NOTE_TTL);
   const items = open.map(r => ({ type: 'action', action: { type: 'message', label: `寫進 ${r.id}`.slice(0, 20), text: `報修進度 ${r.id} 剛剛那段` } }));
@@ -945,7 +986,7 @@ function handleRepairNoteText_(ev, uid, t) {
   }
   const r = findRepair_(id);
   const owner = isOwnerUser_(uid), w = owner ? null : repairWindowOf_(uid);
-  if (!r || r.status === '不處理' || (!owner && !(w && r.rep === w.repName))) return false;
+  if (!r || r.status === '不處理' || (!owner && !(w && repairHasRep_(r, w.repName)))) return false;
   const { note, told } = addRepairProgress_(r.id, t, uid);
   reply_(ev.replyToken, [text_(`✅ 已更新 ${r.id} 的處理進度（${repairToldText_(told)}）：\n${note}` +
     `\n\n打錯了：報修進度 ${r.id} 刪除`)]);
@@ -1071,7 +1112,7 @@ function handleRepairImage_(ev, uid) {
     return true;
   }
   const r = findRepair_(id);
-  if (!r || r.status === '不處理' || (!owner && !(w && r.rep === w.repName))) return false;
+  if (!r || r.status === '不處理' || (!owner && !(w && repairHasRep_(r, w.repName)))) return false;
   const set = ev.message.imageSet;
   const last = !set || !set.total || Number(set.index) === Number(set.total);   // 一次傳好幾張：只回最後一張
   const say = t => { if (last) reply_(ev.replyToken, [text_(t)]); return true; };
@@ -1158,7 +1199,7 @@ function repairListText_(uid) {
   }
   const w = repairWindowOf_(uid);
   if (w) {
-    const mine = all.filter(r => r.status === '處理中' && r.rep === w.repName);
+    const mine = all.filter(r => r.status === '處理中' && repairHasRep_(r, w.repName));
     if (!mine.length) return `${w.repName}目前沒有處理中的報修案件 👍\n所有案件（網頁）：${liffUrl_('work')}`;
     return [`🔧 交給${w.repName}的報修（${mine.length} 件處理中）`, '']
       .concat(mine.map(r => repairLines_(r, true).concat([`🗺 ${repairMapUrl_(r)}`]).concat(r.repNote ? [`📝 最新進度：${r.repNote}`] : []).join('\n') +
@@ -1386,21 +1427,36 @@ function handleRepairText_(ev, uid, t) {
     reply_(ev.replyToken, [text_(`找不到報修 ${repairId_(m[2]) || m[2]}，請確認編號。`)]);
     return true;
   }
-  if (w && r.rep !== w.repName) {
+  if (w && !repairHasRep_(r, w.repName)) {
     reply_(ev.replyToken, [text_(`${r.id} 不是交給${w.repName}的案件喔。輸入「報修案件」可以看交給您們的案件。`)]);
     return true;
   }
   if (cmd === '分派' || cmd === '交給') {
-    const rep = repairRep_(rest);
+    // 「報修分派 F0013 取消 黃健豪」：拿掉一個服務處；「改交 段體佩」：整件改給他
+    const rm = rest.match(/^(?:取消|移除|拿掉|不要|撤回)\s*(.+)$/), mv = rest.match(/^(?:改交給?|改給|只交給?|只給)\s*(.+)$/);
+    const rep = repairRep_(rm ? rm[1] : mv ? mv[1] : rest);
+    if (rm) {
+      reply_(ev.replyToken, [text_(rep ? unassignRepair_(r, rep, uid) : `要拿掉哪一個？例如：報修分派 ${r.id} 取消 ${REPAIR_REPS[0].short}`)]);
+      return true;
+    }
     if (r.status === '已完成') {
       reply_(ev.replyToken, [text_(`${r.id} 已經處理完成了（${r.rep || REPAIR_SELF.name}）。`)]);
     } else if (!rep) {
       reply_(ev.replyToken, [repairFlex_(r, '要交給哪一位？', repairAssignButtons_(r), true)]);
-    } else if (r.status === '處理中' && r.rep === rep.name) {
-      reply_(ev.replyToken, [text_(`${r.id} 已經交給 ${rep.name} 了。`)]);
+    } else if (mv && r.status === '處理中' && r.rep) {
+      // 整件改給 rep：還沒交給他就先加上去，再把其他的拿掉（各自通知）
+      const msgs = repairHasRep_(r, rep.name) ? [] : assignRepair_(r, rep);
+      repairRepNames_(findRepair_(r.id)).filter(n => n !== rep.name)
+        .forEach(n => msgs.push(text_(unassignRepair_(findRepair_(r.id), repairRep_(n), uid))));
+      reply_(ev.replyToken, msgs.length ? msgs.slice(0, 5) : [text_(`${r.id} 本來就只交給 ${rep.name}。`)]);
+    } else if (r.status === '處理中' && repairHasRep_(r, rep.name)) {
+      reply_(ev.replyToken, [text_(`${r.id} 已經交給 ${rep.name} 了。` + (repairRepNames_(r).length > 1 ? `（現在由 ${r.rep} 一起處理）` : '') +
+        `\n要拿掉：報修分派 ${r.id} 取消 ${rep.short}`)]);
     } else {
+      const add = r.status === '處理中' && !!r.rep;
       reply_(ev.replyToken, assignRepair_(r, rep));
-      auditRepair_(r.id, uid, '分派', r.rep ? `${r.status}｜${r.rep}` : r.status, `處理中｜${rep.name}`);
+      auditRepair_(r.id, uid, add ? '加派' : '分派', r.rep ? `${r.status}｜${r.rep}` : r.status,
+        `處理中｜${add ? repairRepNames_(r).concat([rep.name]).join('、') : rep.name}`);
     }
     return true;
   }
@@ -7383,7 +7439,7 @@ function liffApi_(action, req, user) {
       const who = repairWorker_(user.userId);
       const from = ymdAfter_(-90);
       const list = readAll_('報修').filter(r => r.status !== '不處理' && String(r.createdAt).slice(0, 10) >= from &&
-        (who.owner || (r.rep === who.rep && r.status !== '待分派'))).reverse().slice(0, 100).map(repairWorkView_);
+        (who.owner || (repairHasRep_(r, who.rep) && r.status !== '待分派'))).reverse().slice(0, 100).map(repairWorkView_);
       return { rep: who.owner ? REPAIR_SELF.name + '（全部案件）' : who.rep, owner: who.owner, maxPhotos: REPAIR_MAX_PHOTOS, page: REPAIR_PAGE_URL, list };
     }
 
@@ -7391,7 +7447,7 @@ function liffApi_(action, req, user) {
       const who = repairWorker_(user.userId);
       const r = findRepair_(req.id);
       if (!r || r.status === '不處理') throw new Error('找不到這件報修');
-      if (!who.owner && r.rep !== who.rep) throw new Error('這件不是交給您們的案件');
+      if (!who.owner && !repairHasRep_(r, who.rep)) throw new Error('這件不是交給您們的案件');
       const uid = user.userId;
       let msg = '';
       if (req.op === 'progress') {
@@ -7562,7 +7618,7 @@ function adminApi_(action, req) {
       const rep = REPAIR_REPS.concat([REPAIR_SELF]).find(x => x.key === req.repKey);
       if (req.status === '處理中' && !rep && !r.rep) throw new Error('改成處理中，請先選處理單位');
       if (rep && rep.name !== r.rep && r.status !== '已完成' && req.status !== '已完成' && req.status !== '不處理') {
-        messages = assignRepair_(cur, rep).map(m => m.text);
+        messages = assignRepair_(cur, rep, true).map(m => m.text);   // 後台改處理單位：整件改給選的那個
         auditRepair_(r.id, 'admin', '分派', r.rep ? `${r.status}｜${r.rep}` : r.status, `處理中｜${rep.name}`);
         Object.assign(cur, { status: '處理中', rep: rep.name });
       }

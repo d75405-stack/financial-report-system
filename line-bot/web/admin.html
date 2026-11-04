@@ -447,7 +447,8 @@ function openRepair(id) {
   $('#dlg-repair-content').textContent = `📍 ${r.location}\n${r.content}\n👤 ${r.name}${r.phone ? '（' + r.phone + '）' : ''}`;
   const reps = state.options.repairReps || [];
   const cur = reps.find(x => x.name === r.rep);
-  $('#dlg-repair-rep').innerHTML = '<option value="">（還沒分派）</option>' +
+  // 一起處理的（「、」串起來）：不動處理單位；選了別的才整件改給那個
+  $('#dlg-repair-rep').innerHTML = '<option value="">' + (r.rep && !cur ? '（維持：' + esc(r.rep) + '）' : '（還沒分派）') + '</option>' +
     reps.map(x => `<option value="${esc(x.key)}"${cur && cur.key === x.key ? ' selected' : ''}>${esc(x.name)}</option>`).join('');
   $('#dlg-repair-status').innerHTML = options(state.options.repairStatuses, r.status);
   f.note.value = r.repNote || '';
