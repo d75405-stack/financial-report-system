@@ -5865,6 +5865,7 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-cny-dm-1106', at: '2026-11-06T16:42:00+08
 SCHEDULED_BROADCASTS.push({ id: 'probe-cny-1106', at: '2026-11-06T15:49:00+08:00', title: '春節懶人包上線檢查', kind: 'webProbe', cnyCheck: true });
 // 里長 11/6：F0014（修剪樹木｜軍福十三路與祥順路二段）「完成照片補上」，3 張（修剪前、修剪中、修剪後）
 // F0014 原本 18:01 已經從案件網頁傳了同樣 3 張處理照片，上面補的第 1 張重複了 → 拿掉
+SCHEDULED_BROADCASTS.push({ id: 'probe-repair-f14-f15', at: '2026-11-06T18:22:00+08:00', title: 'F0014、F0015 處理照片檢查', kind: 'webProbe', repairCheck: ['F0014', 'F0015'] });
 SCHEDULED_BROADCASTS.push({ id: 'repair-drop-dup-f0014', at: '2026-11-06T18:19:00+08:00', title: 'F0014 拿掉重複的處理照片', kind: 'repairDropDonePhoto', repair: 'F0014',
   fileId: '1div6F9doAwmN3bpLBQuI__0vgUZiHVIb', message: '📷 更正：F0014 在 18:01 已經從案件網頁傳過這 3 張處理照片了，剛剛重複補上的 1 張已經拿掉，現在共 {n} 張，網站看得到：' + REPAIR_PAGE_URL + '#F0014' });
 SCHEDULED_BROADCASTS.push({ id: 'repair-done-photos-f0014', at: '2026-11-06T18:17:00+08:00', title: 'F0014 補上處理照片', kind: 'repairDonePhotos', repair: 'F0014',
@@ -7182,6 +7183,13 @@ function runScheduledBroadcasts() {
             try { out.push('cnyRead 不存在的編號：' + JSON.stringify(cnyReadEntry_(987654))); } catch (err) { out.push('cnyRead 失敗：' + err.message); }
             out.push('AI 金鑰：' + (prop_('ANTHROPIC_API_KEY') ? '有設定' : '沒有'), '');
           }
+        }
+        // 報修：網站公開資料裡這幾件的狀態、報修照片和處理照片張數（不含個資）
+        if (b.repairCheck) {
+          clearRepairCache_();
+          const list = (publicRepairs_().list || []);
+          b.repairCheck.forEach(id => { const x = list.find(r => r.id === id); out.push('════ ' + id + '：' + (x ? JSON.stringify({ status: x.status, rep: x.rep, photos: x.photos, donePhotos: x.donePhotos, log: (x.log || []).length }) : '網站上沒有')); });
+          out.push('');
         }
         // 律師諮詢某天的預約（跟律師群組看到的一樣：姓名遮一半）
         if (b.lawyerDay) out.push('════ 律師諮詢', lawyerDayAnswerText_(b.lawyerDay), '');
