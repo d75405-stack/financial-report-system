@@ -1341,6 +1341,12 @@ function handleRepairText_(ev, uid, t) {
     reply_(ev.replyToken, [text_(setRepairOpen_(t === '開放快速報修'))]);
     return true;
   }
+  // 春節商家懶人包（里長 11/6）：開放／關閉登記、看聯絡人（不公開的資料只給里長）、看狀況
+  if ((m = t.match(CNY_OWNER_RE))) {
+    if (!isOwnerUser_(uid)) return false;
+    reply_(ev.replyToken, [text_(cnyOwnerCommand_(m))]);
+    return true;
+  }
   if ((m = t.match(/^報修窗口\s*(?:同意|綁定|核准)\s*(.+)$/))) {
     if (!isOwnerUser_(uid)) return false;
     reply_(ev.replyToken, [text_(approveRepairWindow_(m[1].trim()))]);
@@ -1863,6 +1869,9 @@ function mgmtGroupCommand_(cmd, c) {
   if ((m = cmd.match(AUTO_REPLY_RE))) return autoReplyCommand_(m[1].trim(), c);
   // 查社群聊天紀錄（里長 10/14：管理群每個人都可以查，名字遮一半）
   if ((m = cmd.match(CHAT_QUERY_RE))) return /^(怎麼用|如何用|說明|用法|教學)?[?？]?$/.test(m[1].trim()) ? CHAT_HELP_TEXT : chatQueryText_(m[1], c.uid);
+  // 春節商家懶人包：網站推來的新登記按「✅ 上架」「❌ 不上架」、撤下、拿測試連結（管理群每個人都可以）
+  if ((m = cmd.match(CNY_REVIEW_RE))) return cnyReviewCommand_(m[1], m[2].trim(), c.uid);
+  if (CNY_INFO_RE.test(cmd)) return cnyInfoText_();
   if (c.isPost && !NB_ADD_RE.test(cmd)) return null;   // 貼特約公告同時 @官方帳號：特約上架
   if ((m = cmd.match(NB_REMOVE_RE))) {
     let r;
@@ -2073,6 +2082,78 @@ const NOTICE_HELP_TEXT = [
   '（里長在管理群或私訊官方帳號都可以下這兩個指令）',
 ].join('\n');
 
+// ───────────────────────── 2027 春節商家懶人包（里長 11/6）─────────────────────────
+// 管理群夥伴提議：春節期間有營業、年菜預購的店家整理成懶人包。網站 /cny/：店家登記（A 春節開門營業／B 年菜預購）、里民推薦，
+// 附 DM 照片；送出後網站直接推到管理群（內容、照片、「✅ 上架」「❌ 不上架」按鈕），按了在群組送出「全全 春節上架 12」，這裡處理。
+// 里長決定：管理群確認才上網；先做好給里長看，里長私訊「開放春節登記」才開放；開放前管理群大家都能用測試連結試填（開放時清掉）。
+// 網站 API：/api/cny-admin（匯出密碼）review、removeByName、preview、setOpen、contact
+const CNY_REVIEW_RE = /^春節\s*(上架|不上架|撤下|下架)\s*#?\s*(\S.*)$/;
+const CNY_INFO_RE = /^春節(?:商家)?(?:懶人包|登記|測試)(?:測試|連結|網址|狀況|說明)?[?？]?$/;
+const CNY_OWNER_RE = /^(開放春節登記|關閉春節登記|春節懶人包|春節聯絡)\s*#?\s*(\d*)$/;
+
+function cnyApi_(payload) {
+  return ccsApi_('/api/cny-admin', payload);
+}
+
+/** 管理群：上架／不上架／撤下（編號或店名）。 */
+function cnyReviewCommand_(verb, arg, uid) {
+  const by = lineDisplayName_(uid) || '管理群';
+  let r;
+  try {
+    if (/^\d+$/.test(arg)) r = cnyApi_({ action: 'review', id: +arg, act: verb === '上架' ? 'approve' : verb === '不上架' ? 'reject' : 'remove', by });
+    else if (verb === '撤下' || verb === '下架') r = cnyApi_({ action: 'removeByName', name: arg, by });
+    else return `請寫編號，例如：全全 春節${verb} 12`;
+  } catch (err) {
+    return '網站忙線中，請稍後再按一次：' + err.message;
+  }
+  if (!r.ok) return '⚠️ ' + (r.error || '沒有處理成功');
+  const e = r.entry, head = `#${e.id} ${e.name}${e.test ? '（測試）' : ''}`;
+  if (e.status === 'approved') return `✅ 已上架春節懶人包：${head}\n👉 ${e.url}`;
+  if (e.status === 'rejected') return `已設為不上架：${head}（不會公開）\n要改回上架：全全 春節上架 ${e.id}`;
+  return `✅ 已從春節懶人包撤下：${head}\n要再上架：全全 春節上架 ${e.id}`;
+}
+
+/** 管理群「全全 春節懶人包」：狀況、測試連結（還沒開放時）。 */
+function cnyInfoText_() {
+  let r;
+  try { r = cnyApi_({ action: 'preview' }); } catch (err) { return '網站忙線中，請稍後再試：' + err.message; }
+  if (!r.ok) return '⚠️ ' + (r.error || '讀不到春節懶人包');
+  const c = r.counts || {};
+  const lines = ['🧧 2027 廍子生活圈春節商家懶人包', '狀態：' + (r.open ? '✅ 已開放登記' : '🧪 還沒開放（測試中）'), '懶人包：' + r.page];
+  if (!r.open) lines.push('', '🧪 測試連結（管理群大家都可以試填店家登記、里民推薦；開放前填的都是測試，開放時會自動清掉）：', r.test);
+  lines.push('', `待審核 ${c.pending || 0}｜已上架 ${c.approved || 0}｜不上架 ${c.rejected || 0}｜已撤下 ${c.removed || 0}`,
+    '新登記會推到這個群組，按「✅ 上架」才會出現在網站。撤下：全全 春節撤下 編號或店名');
+  if (!r.open) lines.push('開放登記：里長私訊官方 LINE「開放春節登記」');
+  return lines.join('\n');
+}
+
+/** 里長私訊：開放春節登記／關閉春節登記／春節懶人包／春節聯絡 12。 */
+function cnyOwnerCommand_(m) {
+  const cmd = m[1], id = m[2];
+  try {
+    if (cmd === '春節懶人包') return cnyInfoText_().replace('（管理群大家都可以試填', '（可以轉給管理群大家試填');
+    if (cmd === '春節聯絡') {
+      if (!id) return '請寫編號，例如：春節聯絡 12';
+      const r = cnyApi_({ action: 'contact', id: +id });
+      if (!r.ok) return '⚠️ ' + (r.error || '找不到');
+      return [`🧧 春節懶人包 #${r.id} ${r.name}（${r.kind}｜${r.status_label}）`, `${r.kind === '店家登記' ? '填表聯絡人' : '推薦人'}：${r.contact || '（沒填）'}`,
+        `手機：${r.phone || '（沒填）'}`].concat(r.tel ? ['店家電話：' + r.tel] : []).concat(['', '🔒 這是不公開的資料，只給您核對用']).join('\n');
+    }
+    const open = cmd === '開放春節登記';
+    const r = cnyApi_({ action: 'setOpen', open });
+    if (!r.ok) return '⚠️ ' + (r.error || '沒有處理成功');
+    if (!open) return '已關閉春節懶人包登記。懶人包頁面還在，已上架的照常顯示；要再開放：開放春節登記';
+    return [`✅ 已開放春節懶人包登記！${r.hidden ? `開放前測試的 ${r.hidden} 筆已清掉。` : ''}`, '懶人包：' + r.page, '登記表單：' + r.join, '',
+      '可以把下面這段轉貼到社群和管理群 👇'].join('\n') + '\n\n' + [
+      '🧧【2027 廍子生活圈春節商家懶人包｜店家資訊登記】',
+      '春節期間有營業、有年菜預購的店家，歡迎免費登記！里民也可以推薦喜歡的店家 👍',
+      '👉 線上登記：' + r.join,
+      '管理員確認後就會放上懶人包：' + r.page].join('\n');
+  } catch (err) {
+    return '網站忙線中，請稍後再試：' + err.message;
+  }
+}
+
 const MGMT_HELP_TEXT = [
   '🛠 管理群可以用的網站功能',
   '群組每個人都可以用，前面加「全全」或 @官方帳號',
@@ -2085,6 +2166,10 @@ const MGMT_HELP_TEXT = [
   '🏘 里民生活資訊',
   '・新增：貼推薦（店名、推薦原因、地址或地圖連結）→「全全 生活資訊新增」',
   '・撤下：全全 撤下生活資訊 店名',
+  '',
+  '🧧 2027 春節商家懶人包',
+  '・全全 春節懶人包：看狀況、拿測試連結（開放前大家都可以試填）',
+  '・新登記會推到這個群組，按「✅ 上架」才會出現在網站；撤下：全全 春節撤下 編號或店名',
   '',
   '🤖 自動回覆（有人私訊官方 LINE 問到關鍵字，就自動回）',
   '・先傳要回的圖片，再打：全全 自動回覆 停班停課、颱風假 到 10/31：要回的文字',
@@ -2102,7 +2187,7 @@ const MGMT_HELP_TEXT = [
   '',
   '💡 長按某則公告或推薦按「回覆」，再打「全全 特約新增」或「全全 生活資訊新增」，就會用那一則。',
   '',
-  '只有里長能用：網站公告（發布、撤下）、公告特約（發給所有好友）、通知評審、快速報修開放、查個人報名資料、備份、更新社群聊天紀錄（私訊傳檔案給全全）。',
+  '只有里長能用：網站公告（發布、撤下）、公告特約（發給所有好友）、通知評審、快速報修開放、春節懶人包開放、查個人報名資料、備份、更新社群聊天紀錄（私訊傳檔案給全全）。',
 ].join('\n');
 
 // ───────────────────────── 自動回覆 ─────────────────────────
@@ -5670,6 +5755,8 @@ SCHEDULED_BROADCASTS.push({ id: 'bind-rep-z-1016', at: '2026-10-16T12:55:00+08:0
 // 里長 11/3 16:2x 問「今天有沒有人預約」：把今天的律師諮詢預約（遮名）存到系統檢查給 Claude 看
 // 里長 11/4 17:50（官方 LINE 聊天截圖）：工作人員跟里民約好改到今晚（週三）19:30–20:00 裕國豐展，「再請幫我通知，且取消下周預約」
 // 里長 11/4：「F0013 幫我交給黃健豪和賴順仁」
+// 里長 11/6 春節商家懶人包：部署後確認網站 API、測試連結、noindex（結果在雲端硬碟「系統檢查」）
+SCHEDULED_BROADCASTS.push({ id: 'probe-cny-1106', at: '2026-11-06T15:49:00+08:00', title: '春節懶人包上線檢查', kind: 'webProbe', cnyCheck: true });
 SCHEDULED_BROADCASTS.push({ id: 'repair-assign-f0013', at: '2026-11-04T20:53:00+08:00', title: 'F0013 交給黃健豪立委、賴順仁議員', kind: 'repairAssign', repair: 'F0013', reps: ['H', 'L'] });
 SCHEDULED_BROADCASTS.push({ id: 'probe-lawyer-today-1104', at: '2026-11-04T17:52:00+08:00', title: '今晚律師諮詢預約檢查', kind: 'webProbe', lawyerDay: '2026-11-04' });
 SCHEDULED_BROADCASTS.push({ id: 'lawyer-move-1104', at: '2026-11-04T17:49:00+08:00', title: '律師諮詢改到今晚 19:30', kind: 'lawyerMove',
@@ -6922,6 +7009,20 @@ function runScheduledBroadcasts() {
         props.setProperty(key, 'sent ' + now_());
         const out = [];
         // 地圖短網址：看 mapLinkPlace_ 在 Apps Script 查不查得到店名、地址
+        // 春節懶人包：網站 API、測試連結（token 只寫長度）、頁面的 noindex
+        if (b.cnyCheck) {
+          try {
+            const p = cnyApi_({ action: 'preview' });
+            if (p.test) p.test = p.test.replace(/pt=([0-9a-f]+)/, (x, t) => 'pt=（' + t.length + ' 字）');
+            out.push('════ 春節懶人包 preview', JSON.stringify(p));
+          } catch (err) { out.push('════ 春節懶人包 preview 失敗：' + err.message); }
+          try {
+            const r = UrlFetchApp.fetch(CCS_BASE + '/api/cny', { muteHttpExceptions: true });
+            out.push('GET /api/cny：HTTP ' + r.getResponseCode() + ' ' + r.getContentText().slice(0, 300));
+            const pg = UrlFetchApp.fetch(CCS_BASE + '/cny/', { muteHttpExceptions: true }), h = pg.getHeaders() || {};
+            out.push('/cny/：HTTP ' + pg.getResponseCode() + '｜X-Robots-Tag：' + (h['X-Robots-Tag'] || h['x-robots-tag'] || '（沒有）') + '｜' + ((pg.getContentText().match(/<title>([^<]*)/) || [])[1] || ''), '');
+          } catch (err) { out.push('/cny/ 失敗：' + err.message, ''); }
+        }
         // 律師諮詢某天的預約（跟律師群組看到的一樣：姓名遮一半）
         if (b.lawyerDay) out.push('════ 律師諮詢', lawyerDayAnswerText_(b.lawyerDay), '');
         // 網站特約商家：找名稱有 shopFind 的，列出完整資料，照片連結看打不打得開
