@@ -152,6 +152,10 @@ function doPost(e) {
   } catch (_) {
     return json_({ ok: false, error: '無效的請求' });
   }
+  // 春節懶人包：網站上傳完 DM 叫這裡來讀（不用登入：只處理網站上還沒讀的那一則，資料都用匯出密碼跟網站拿）
+  if (body.action === 'cnyRead') {
+    try { return json_({ ok: true, data: cnyReadEntry_(body.id) }); } catch (err) { return json_({ ok: false, error: String(err.message || err) }); }
+  }
   if (Array.isArray(body.events)) {
     // 先由里辦系統處理，再轉給 aibus：每則訊息只能回覆一次，
     // 若先轉發，aibus 的自動回覆可能先用掉 reply token，全全就回不了。
@@ -2095,6 +2099,105 @@ function cnyApi_(payload) {
   return ccsApi_('/api/cny-admin', payload);
 }
 
+// ── 上傳 DM 就完成（里長 11/6：「我原本的想法是 DM 上有資訊可以直接對照格式產出資訊」「上傳 DM 就完成」）──
+// 網站收到 DM（kind dm、status reading）→ POST 這裡 {action:'cnyRead', id} → 跟網站拿照片（審核 token 網址）→ Claude 看 DM 照格式整理
+// → 寫回網站（fill：改成待審核，網站推播管理群，註明系統讀的、請對照 DM 核對）。沒有 AI 金鑰或讀失敗：照樣推，請管理員看照片。
+// 網站叫不到這裡的話，每小時同步時補讀上傳超過 3 分鐘還沒讀的（cnyReadPending_）
+const CNY_CATS = ['餐廳小吃', '飲料甜點', '烘焙伴手禮', '生鮮市場', '生活百貨', '美容美髮', '醫療藥局', '其他'];
+const CNY_DM_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['is_relevant', 'name', 'category', 'address', 'phone', 'social', 'cny_hours', 'cny_closed', 'note', 'has_preorder',
+    'preorder_items', 'price', 'preorder_period', 'pickup', 'order_method', 'missing'],
+  properties: {
+    is_relevant: { type: 'boolean' }, name: { type: 'string' }, category: { type: 'string', enum: CNY_CATS.concat(['']) },
+    address: { type: 'string' }, phone: { type: 'string' }, social: { type: 'string' },
+    cny_hours: { type: 'string' }, cny_closed: { type: 'string' }, note: { type: 'string' },
+    has_preorder: { type: 'boolean' }, preorder_items: { type: 'string' }, price: { type: 'string' }, preorder_period: { type: 'string' },
+    pickup: { type: 'string' }, order_method: { type: 'string' }, missing: { type: 'string' },
+  },
+};
+const CNY_DM_PROMPT = [
+  '你是里辦的資料整理助手。照片是店家的 DM、春節營業公告或菜單（可能好幾張是同一家店）。請照「春節商家懶人包」的格式整理成欄位。',
+  '- 只用照片上看得到的資訊，看不到或看不清楚的欄位填空字串，不要猜、不要自己補。電話、網址要一字不差。',
+  '- name：店名（有分店寫分店，例如「鴨大哥港式脆皮烤鴨｜太平育賢店」）。category：選最接近的類型，看不出來填空字串。',
+  '- cny_hours：春節（除夕到初五左右）的營業時段，照 DM 寫的整理成一句，例如「除夕 10:00–14:00，初四起正常營業」。DM 上沒寫春節營業就填空字串（平常的營業時間不算）。',
+  '- cny_closed：春節公休日。note：特殊備註（僅供外帶、需先預約、加收服務費等）。',
+  '- has_preorder：有沒有年菜或年節商品預購。preorder_items：年菜／商品內容與價格，一項一行。price：整體價格區間。preorder_period：預購期間與最後收單日。pickup：取貨方式與日期。order_method：訂購方式（電話、LINE、表單…）。',
+  '- social：粉專網址或 LINE ID。is_relevant：照片是不是店家的 DM、公告或菜單。',
+  '- missing：用一句話說還缺什麼重要資訊（例如「DM 上沒有寫春節營業時間」「字太小看不清楚價格」），都有就空字串。',
+].join('\n');
+
+/** 讀一則 DM、寫回網站。回傳結果（給呼叫的人看）。 */
+function cnyReadEntry_(id) {
+  id = Number(id);
+  if (!(id > 0)) return { error: '編號不對' };
+  const cache = CacheService.getScriptCache(), ck = 'cnyread_' + id;
+  if (cache.get(ck)) return { skipped: '正在讀' };   // 網站叫的和每小時補讀同時到：只讀一次
+  cache.put(ck, '1', 600);
+  const g = cnyApi_({ action: 'dmGet', id });
+  if (!g.ok) return { skipped: g.error };
+  const imgs = (g.images || []).slice(0, 3).map(u => {
+    try {
+      const res = UrlFetchApp.fetch(u, { muteHttpExceptions: true });
+      return res.getResponseCode() === 200 ? Utilities.base64Encode(res.getBlob().getBytes()) : null;
+    } catch (err) { return null; }
+  }).filter(Boolean);
+  let fields = {}, notes = [];
+  const j = imgs.length ? cnyReadDm_(imgs, g.name) : null;
+  if (!imgs.length) notes.push('系統拿不到 DM 照片，請管理員看照片核對');
+  else if (!j) notes.push('系統沒讀到 DM（可能還沒設定 AI 金鑰或暫時連不上），請管理員看照片核對');
+  else {
+    if (!j.is_relevant) notes.push('照片看起來不是店家的 DM 或公告');
+    if (!j.cny_hours) notes.push('DM 上沒有寫春節營業時間');
+    if (j.missing && !/春節營業/.test(j.missing)) notes.push(j.missing);
+    fields = { name: j.name, cat: j.category, address: j.address, tel: j.phone, social: j.social, a_hours: j.cny_hours, a_closed: j.cny_closed,
+      a_note: j.note, has_preorder: j.has_preorder, b_items: j.preorder_items, b_price: j.price, b_period: j.preorder_period, b_pickup: j.pickup, b_order: j.order_method };
+  }
+  const r = cnyApi_({ action: 'fill', id, fields, note: notes.join('\n') });
+  return { filled: !!r.ok, pushed: r.pushed || '', error: r.ok ? '' : r.error };
+}
+
+/** Claude 看 DM 照片（base64 JPEG），回傳整理好的欄位；沒有金鑰或失敗回傳 null。 */
+function cnyReadDm_(imgs, hint) {
+  const key = prop_('ANTHROPIC_API_KEY');
+  if (!key) return null;
+  try {
+    const content = imgs.map(b64 => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } }))
+      .concat([{ type: 'text', text: '請整理這家店的春節資訊。' + (hint ? '上傳的人寫的店名：' + String(hint).slice(0, 40) : '') }]);
+    const res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'server-side-fallback-2026-07-01' },
+      payload: JSON.stringify({
+        model: prop_('AI_MODEL') || AI_DEFAULT_MODEL,
+        max_tokens: 6000,
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: CNY_DM_SCHEMA } },
+        fallbacks: 'default',
+        system: CNY_DM_PROMPT,
+        messages: [{ role: 'user', content }],
+      }),
+      muteHttpExceptions: true,
+    });
+    if (res.getResponseCode() !== 200) { logAiError_('春節 DM', res); return null; }
+    const data = JSON.parse(res.getContentText());
+    if (data.stop_reason !== 'end_turn') return null;
+    const j = JSON.parse((data.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
+    logAi_('', '春節 DM', 'DM ' + imgs.length + ' 張', (j.name || '') + '｜' + (j.cny_hours || '沒寫春節營業'), data.usage);
+    return j;
+  } catch (err) {
+    console.error('Claude 讀春節 DM 失敗：' + err.message);
+    return null;
+  }
+}
+
+/** 每小時：網站上傳超過 3 分鐘還沒讀的 DM 補讀（網站叫不到這裡時的備援）。 */
+function cnyReadPending_() {
+  if (!String(prop_('CCS_EXPORT_KEY') || '').trim()) return 0;
+  const r = cnyApi_({ action: 'dmPending' });
+  (r.ids || []).forEach(id => { try { cnyReadEntry_(id); } catch (err) { console.error('補讀 DM #' + id + ' 失敗：' + err.message); } });
+  return (r.ids || []).length;
+}
+
 /** 管理群：上架／不上架／撤下（編號或店名）。 */
 function cnyReviewCommand_(verb, arg, uid) {
   const by = lineDisplayName_(uid) || '管理群';
@@ -2169,7 +2272,8 @@ const MGMT_HELP_TEXT = [
   '',
   '🧧 2027 春節商家懶人包',
   '・全全 春節懶人包：看狀況、拿測試連結（開放前大家都可以試填）',
-  '・新登記會推到這個群組，按「✅ 上架」才會出現在網站；撤下：全全 春節撤下 編號或店名',
+  '・店家、里民上傳 DM，系統自動讀成懶人包格式推到這裡；對照 DM 核對後按「✅ 上架」才會出現在網站',
+  '・撤下：全全 春節撤下 編號或店名',
   '',
   '🤖 自動回覆（有人私訊官方 LINE 問到關鍵字，就自動回）',
   '・先傳要回的圖片，再打：全全 自動回覆 停班停課、颱風假 到 10/31：要回的文字',
@@ -4807,6 +4911,7 @@ const SIGNUP_SYNC_FORMS = [
 function syncSignups() {
   checkBroadcasts_();  // 每小時順便檢查預約推播（一次性排程的備援）
   try { flushLawyerNotices_(false); } catch (err) { console.error('律師通知補發失敗：' + err.message); }
+  try { cnyReadPending_(); } catch (err) { console.error('春節懶人包補讀 DM 失敗：' + err.message); }
   // 雲端硬碟有新的健保署名單就匯入，匯入好通知里長
   try { const r = importNhiIfNew_(); if (r) notifyOwner_(r); } catch (err) { console.error('健保院所名單匯入失敗：' + err.message); }
   const n = syncSignupsNow_();
