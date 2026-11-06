@@ -5863,6 +5863,9 @@ SCHEDULED_BROADCASTS.push({ id: 'bind-rep-z-1016', at: '2026-10-16T12:55:00+08:0
 // 里長 11/6 春節商家懶人包：部署後確認網站 API、測試連結、noindex（結果在雲端硬碟「系統檢查」）
 SCHEDULED_BROADCASTS.push({ id: 'probe-cny-dm-1106', at: '2026-11-06T16:42:00+08:00', title: '春節懶人包 DM 讀取檢查', kind: 'webProbe', cnyCheck: true, cnyDm: true });
 SCHEDULED_BROADCASTS.push({ id: 'probe-cny-1106', at: '2026-11-06T15:49:00+08:00', title: '春節懶人包上線檢查', kind: 'webProbe', cnyCheck: true });
+// 里長 11/6：F0014（修剪樹木｜軍福十三路與祥順路二段）「完成照片補上」，3 張（修剪前、修剪中、修剪後）
+SCHEDULED_BROADCASTS.push({ id: 'repair-done-photos-f0014', at: '2026-11-06T18:17:00+08:00', title: 'F0014 補上處理照片', kind: 'repairDonePhotos', repair: 'F0014',
+  urls: [1, 2, 3].map(i => 'https://raw.githubusercontent.com/d75405-stack/financial-report-system/tmp-f0014-done-photos/tmp-photos/F0014-done-' + i + '.jpg') });
 SCHEDULED_BROADCASTS.push({ id: 'repair-assign-f0013', at: '2026-11-04T20:53:00+08:00', title: 'F0013 交給黃健豪立委、賴順仁議員', kind: 'repairAssign', repair: 'F0013', reps: ['H', 'L'] });
 SCHEDULED_BROADCASTS.push({ id: 'probe-lawyer-today-1104', at: '2026-11-04T17:52:00+08:00', title: '今晚律師諮詢預約檢查', kind: 'webProbe', lawyerDay: '2026-11-04' });
 SCHEDULED_BROADCASTS.push({ id: 'lawyer-move-1104', at: '2026-11-04T17:49:00+08:00', title: '律師諮詢改到今晚 19:30', kind: 'lawyerMove',
@@ -7073,6 +7076,33 @@ function runScheduledBroadcasts() {
         const msg = setRepairOpen_(true);
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_('🔧 ' + msg + '\n\n要暫停：私訊輸入「關閉快速報修」。');
+        return;
+      }
+      if (b.kind === 'repairDonePhotos') {
+        // 里長請 Claude 補上的處理照片：從網址下載（GitHub 暫存分支，照片的位置資料已經拿掉），照「報修照片」的方式存、記到 donePhotoId
+        const r0 = findRepair_(b.repair);
+        if (!r0) { props.setProperty(key, 'failed ' + now_()); notifyOwner_(`⚠️ 找不到報修 ${b.repair}，處理照片沒有補上。`); return; }
+        const files = [], errs = [];
+        (b.urls || []).forEach((u, i) => {
+          try {
+            const res = UrlFetchApp.fetch(u, { muteHttpExceptions: true });
+            if (res.getResponseCode() !== 200) throw new Error('HTTP ' + res.getResponseCode());
+            files.push(storePhotoFile_('報修處理_' + r0.category, res.getBlob().setName(r0.id + '-處理-' + (i + 1) + '.jpg')));
+          } catch (err) { errs.push(`第 ${i + 1} 張：${err.message}`); }
+        });
+        const n = withLock_(() => {
+          const cur = findRepair_(b.repair);
+          const ids = repairDonePhotoIds_(cur), before = ids.length;
+          files.forEach(f => { if (ids.length < REPAIR_MAX_PHOTOS) ids.push(f.getId()); else { try { f.setTrashed(true); } catch (_) {} errs.push('超過 ' + REPAIR_MAX_PHOTOS + ' 張，多的沒放'); } });
+          ensureRepairHeader_();
+          update_('報修', cur._row, { donePhotoId: ids.join(','), updatedAt: now_() });
+          return { before, after: ids.length };
+        });
+        clearRepairCache_();
+        auditRepair_(r0.id, '', '新增處理照片（里長交代）', `${n.before} 張`, `${n.after} 張`);
+        props.setProperty(key, 'sent ' + now_() + ` ${n.before}→${n.after}`);
+        notifyOwner_(`📷 ${r0.id}（${r0.category}｜${r0.location}）處理照片已補上：${n.after - n.before} 張，現在共 ${n.after} 張。\n網站處理進度看得到：${REPAIR_PAGE_URL}#${r0.id}` +
+          (errs.length ? '\n⚠️ ' + errs.join('；') : ''));
         return;
       }
       if (b.kind === 'repairAssign') {
