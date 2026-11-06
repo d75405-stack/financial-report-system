@@ -5864,6 +5864,9 @@ SCHEDULED_BROADCASTS.push({ id: 'bind-rep-z-1016', at: '2026-10-16T12:55:00+08:0
 SCHEDULED_BROADCASTS.push({ id: 'probe-cny-dm-1106', at: '2026-11-06T16:42:00+08:00', title: '春節懶人包 DM 讀取檢查', kind: 'webProbe', cnyCheck: true, cnyDm: true });
 SCHEDULED_BROADCASTS.push({ id: 'probe-cny-1106', at: '2026-11-06T15:49:00+08:00', title: '春節懶人包上線檢查', kind: 'webProbe', cnyCheck: true });
 // 里長 11/6：F0014（修剪樹木｜軍福十三路與祥順路二段）「完成照片補上」，3 張（修剪前、修剪中、修剪後）
+// F0014 原本 18:01 已經從案件網頁傳了同樣 3 張處理照片，上面補的第 1 張重複了 → 拿掉
+SCHEDULED_BROADCASTS.push({ id: 'repair-drop-dup-f0014', at: '2026-11-06T18:19:00+08:00', title: 'F0014 拿掉重複的處理照片', kind: 'repairDropDonePhoto', repair: 'F0014',
+  fileId: '1div6F9doAwmN3bpLBQuI__0vgUZiHVIb', message: '📷 更正：F0014 在 18:01 已經從案件網頁傳過這 3 張處理照片了，剛剛重複補上的 1 張已經拿掉，現在共 {n} 張，網站看得到：' + REPAIR_PAGE_URL + '#F0014' });
 SCHEDULED_BROADCASTS.push({ id: 'repair-done-photos-f0014', at: '2026-11-06T18:17:00+08:00', title: 'F0014 補上處理照片', kind: 'repairDonePhotos', repair: 'F0014',
   urls: [1, 2, 3].map(i => 'https://raw.githubusercontent.com/d75405-stack/financial-report-system/tmp-f0014-done-photos/tmp-photos/F0014-done-' + i + '.jpg') });
 SCHEDULED_BROADCASTS.push({ id: 'repair-assign-f0013', at: '2026-11-04T20:53:00+08:00', title: 'F0013 交給黃健豪立委、賴順仁議員', kind: 'repairAssign', repair: 'F0013', reps: ['H', 'L'] });
@@ -7076,6 +7079,22 @@ function runScheduledBroadcasts() {
         const msg = setRepairOpen_(true);
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_('🔧 ' + msg + '\n\n要暫停：私訊輸入「關閉快速報修」。');
+        return;
+      }
+      if (b.kind === 'repairDropDonePhoto') {
+        // 拿掉重複的處理照片（檔案 ID），檔案丟到垃圾桶
+        const r0 = findRepair_(b.repair);
+        const left = withLock_(() => {
+          const cur = findRepair_(b.repair);
+          const ids = repairDonePhotoIds_(cur), keep = ids.filter(x => x !== b.fileId);
+          if (keep.length !== ids.length) update_('報修', cur._row, { donePhotoId: keep.join(','), updatedAt: now_() });
+          return { before: ids.length, after: keep.length };
+        });
+        try { if (left.after < left.before) DriveApp.getFileById(b.fileId).setTrashed(true); } catch (err) { console.error('重複照片丟垃圾桶失敗：' + err.message); }
+        clearRepairCache_();
+        if (left.after < left.before) auditRepair_(r0.id, '', '移除重複的處理照片', `${left.before} 張`, `${left.after} 張`);
+        props.setProperty(key, 'sent ' + now_() + ` ${left.before}→${left.after}`);
+        if (b.message && left.after < left.before) notifyOwner_(b.message.replace('{n}', left.after));
         return;
       }
       if (b.kind === 'repairDonePhotos') {
