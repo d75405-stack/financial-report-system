@@ -5861,6 +5861,7 @@ SCHEDULED_BROADCASTS.push({ id: 'bind-rep-z-1016', at: '2026-10-16T12:55:00+08:0
 // 里長 11/4 17:50（官方 LINE 聊天截圖）：工作人員跟里民約好改到今晚（週三）19:30–20:00 裕國豐展，「再請幫我通知，且取消下周預約」
 // 里長 11/4：「F0013 幫我交給黃健豪和賴順仁」
 // 里長 11/6 春節商家懶人包：部署後確認網站 API、測試連結、noindex（結果在雲端硬碟「系統檢查」）
+SCHEDULED_BROADCASTS.push({ id: 'probe-cny-dm-1106', at: '2026-11-06T16:42:00+08:00', title: '春節懶人包 DM 讀取檢查', kind: 'webProbe', cnyCheck: true, cnyDm: true });
 SCHEDULED_BROADCASTS.push({ id: 'probe-cny-1106', at: '2026-11-06T15:49:00+08:00', title: '春節懶人包上線檢查', kind: 'webProbe', cnyCheck: true });
 SCHEDULED_BROADCASTS.push({ id: 'repair-assign-f0013', at: '2026-11-04T20:53:00+08:00', title: 'F0013 交給黃健豪立委、賴順仁議員', kind: 'repairAssign', repair: 'F0013', reps: ['H', 'L'] });
 SCHEDULED_BROADCASTS.push({ id: 'probe-lawyer-today-1104', at: '2026-11-04T17:52:00+08:00', title: '今晚律師諮詢預約檢查', kind: 'webProbe', lawyerDay: '2026-11-04' });
@@ -7127,6 +7128,11 @@ function runScheduledBroadcasts() {
             const pg = UrlFetchApp.fetch(CCS_BASE + '/cny/', { muteHttpExceptions: true }), h = pg.getHeaders() || {};
             out.push('/cny/：HTTP ' + pg.getResponseCode() + '｜X-Robots-Tag：' + (h['X-Robots-Tag'] || h['x-robots-tag'] || '（沒有）') + '｜' + ((pg.getContentText().match(/<title>([^<]*)/) || [])[1] || ''), '');
           } catch (err) { out.push('/cny/ 失敗：' + err.message, ''); }
+          if (b.cnyDm) {
+            try { out.push('dmPending：' + JSON.stringify(cnyApi_({ action: 'dmPending' }))); } catch (err) { out.push('dmPending 失敗：' + err.message); }
+            try { out.push('cnyRead 不存在的編號：' + JSON.stringify(cnyReadEntry_(987654))); } catch (err) { out.push('cnyRead 失敗：' + err.message); }
+            out.push('AI 金鑰：' + (prop_('ANTHROPIC_API_KEY') ? '有設定' : '沒有'), '');
+          }
         }
         // 律師諮詢某天的預約（跟律師群組看到的一樣：姓名遮一半）
         if (b.lawyerDay) out.push('════ 律師諮詢', lawyerDayAnswerText_(b.lawyerDay), '');
