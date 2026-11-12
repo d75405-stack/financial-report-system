@@ -5867,6 +5867,7 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-cny-1106', at: '2026-11-06T15:49:00+08:00
 // F0014 原本 18:01 已經從案件網頁傳了同樣 3 張處理照片，上面補的第 1 張重複了 → 拿掉
 // 里長 11/12：「鴨大哥特約內容改成隨機送一樣菜或餅皮」（原本 9 折）
 // 里長 11/12：「特約 翎軒有鍋 下架」（網站內建名單的，撤下是隱藏）
+SCHEDULED_BROADCASTS.push({ id: 'probe-lingxuan-1112c', at: '2026-11-12T18:28:00+08:00', title: '翎軒有鍋撤下排查', kind: 'webProbe', propKeys: ['BC_shop-remove-lingxuan-1112', 'BCERR_shop-remove-lingxuan-1112'], shopGet: '翎軒有鍋' });
 SCHEDULED_BROADCASTS.push({ id: 'shop-remove-lingxuan-1112', at: '2026-11-12T18:26:00+08:00', title: '撤下特約商家 翎軒有鍋', kind: 'shopRemove', name: '翎軒有鍋' });
 SCHEDULED_BROADCASTS.push({ id: 'probe-shops-1112b', at: '2026-11-12T18:26:00+08:00', title: '特約商家公開資料檢查（翎軒有鍋）', kind: 'webProbe', urls: [CCS_BASE + '/api/shops'] });
 SCHEDULED_BROADCASTS.push({ id: 'probe-shops-1112', at: '2026-11-12T14:16:00+08:00', title: '特約商家公開資料檢查', kind: 'webProbe', urls: [CCS_BASE + '/api/shops'] });
@@ -7233,6 +7234,9 @@ function runScheduledBroadcasts() {
           b.repairCheck.forEach(id => { const x = list.find(r => r.id === id); out.push('════ ' + id + '：' + (x ? JSON.stringify({ status: x.status, rep: x.rep, photos: x.photos, donePhotos: x.donePhotos, log: (x.log || []).length }) : '網站上沒有')); });
           out.push('');
         }
+        // 排程執行狀態、特約商家查一家（排查用）
+        (b.propKeys || []).forEach(k => out.push(k + '：' + (prop_(k) || '（沒有）')));
+        if (b.shopGet) { try { out.push('特約 get ' + b.shopGet + '：' + JSON.stringify(ccsApi_('/api/shops', { action: 'get', name: b.shopGet }))); } catch (err) { out.push('特約 get 失敗：' + err.message); } }
         // 律師諮詢某天的預約（跟律師群組看到的一樣：姓名遮一半）
         if (b.lawyerDay) out.push('════ 律師諮詢', lawyerDayAnswerText_(b.lawyerDay), '');
         // 網站特約商家：找名稱有 shopFind 的，列出完整資料，照片連結看打不打得開
