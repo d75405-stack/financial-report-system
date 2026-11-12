@@ -5866,6 +5866,7 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-cny-1106', at: '2026-11-06T15:49:00+08:00
 // 里長 11/6：F0014（修剪樹木｜軍福十三路與祥順路二段）「完成照片補上」，3 張（修剪前、修剪中、修剪後）
 // F0014 原本 18:01 已經從案件網頁傳了同樣 3 張處理照片，上面補的第 1 張重複了 → 拿掉
 // 里長 11/12：「鴨大哥特約內容改成隨機送一樣菜或餅皮」（原本 9 折）
+SCHEDULED_BROADCASTS.push({ id: 'probe-shops-1112', at: '2026-11-12T14:16:00+08:00', title: '特約商家公開資料檢查', kind: 'webProbe', urls: [CCS_BASE + '/api/shops'] });
 SCHEDULED_BROADCASTS.push({ id: 'shop-offer-duck-1112', at: '2026-11-12T14:14:00+08:00', title: '鴨大哥特約優惠改內容', kind: 'shopOffer', name: '鴨大哥', offer: '隨機送一樣菜或餅皮' });
 SCHEDULED_BROADCASTS.push({ id: 'probe-repair-f14-f15', at: '2026-11-06T18:22:00+08:00', title: 'F0014、F0015 處理照片檢查', kind: 'webProbe', repairCheck: ['F0014', 'F0015'] });
 SCHEDULED_BROADCASTS.push({ id: 'repair-drop-dup-f0014', at: '2026-11-06T18:19:00+08:00', title: 'F0014 拿掉重複的處理照片', kind: 'repairDropDonePhoto', repair: 'F0014',
