@@ -5866,6 +5866,9 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-cny-1106', at: '2026-11-06T15:49:00+08:00
 // 里長 11/6：F0014（修剪樹木｜軍福十三路與祥順路二段）「完成照片補上」，3 張（修剪前、修剪中、修剪後）
 // F0014 原本 18:01 已經從案件網頁傳了同樣 3 張處理照片，上面補的第 1 張重複了 → 拿掉
 // 里長 11/12：「鴨大哥特約內容改成隨機送一樣菜或餅皮」（原本 9 折）
+// 里長 11/12：「特約 翎軒有鍋 下架」（網站內建名單的，撤下是隱藏）
+SCHEDULED_BROADCASTS.push({ id: 'shop-remove-lingxuan-1112', at: '2026-11-12T18:26:00+08:00', title: '撤下特約商家 翎軒有鍋', kind: 'shopRemove', name: '翎軒有鍋' });
+SCHEDULED_BROADCASTS.push({ id: 'probe-shops-1112b', at: '2026-11-12T18:26:00+08:00', title: '特約商家公開資料檢查（翎軒有鍋）', kind: 'webProbe', urls: [CCS_BASE + '/api/shops'] });
 SCHEDULED_BROADCASTS.push({ id: 'probe-shops-1112', at: '2026-11-12T14:16:00+08:00', title: '特約商家公開資料檢查', kind: 'webProbe', urls: [CCS_BASE + '/api/shops'] });
 SCHEDULED_BROADCASTS.push({ id: 'shop-offer-duck-1112', at: '2026-11-12T14:14:00+08:00', title: '鴨大哥特約優惠改內容', kind: 'shopOffer', name: '鴨大哥', offer: '隨機送一樣菜或餅皮' });
 SCHEDULED_BROADCASTS.push({ id: 'probe-repair-f14-f15', at: '2026-11-06T18:22:00+08:00', title: 'F0014、F0015 處理照片檢查', kind: 'webProbe', repairCheck: ['F0014', 'F0015'] });
@@ -7083,6 +7086,22 @@ function runScheduledBroadcasts() {
         const msg = setRepairOpen_(true);
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_('🔧 ' + msg + '\n\n要暫停：私訊輸入「關閉快速報修」。');
+        return;
+      }
+      if (b.kind === 'shopRemove') {
+        // 撤下特約商家（跟管理群「全全 撤下特約 店名」一樣；內建名單的是隱藏，重新「特約新增」可以恢復）
+        let msg;
+        try {
+          const r = ccsApi_('/api/shops', { action: 'remove', name: b.name });
+          if (!r.ok) throw new Error(r.error || '沒有撤下成功');
+          msg = `✅ 已從網站撤下特約商家「${r.name}」（現在 ${r.total} 家）\n要再上架：重貼公告後「全全 特約新增」。`;
+          props.setProperty(key, 'sent ' + now_() + ' ' + r.name);
+          logShop_(prop_('SHOP_GROUP_ID') || '', '', '撤下特約 ' + b.name + '（里長請 Claude）', msg.split('\n')[0]);
+        } catch (err) {
+          msg = `⚠️ 特約商家「${b.name}」沒有撤下：${err.message}`;
+          props.setProperty(key, 'failed ' + now_() + ' ' + err.message);
+        }
+        notifyOwner_(msg);
         return;
       }
       if (b.kind === 'shopOffer') {
