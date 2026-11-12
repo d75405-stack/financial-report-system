@@ -5865,6 +5865,8 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-cny-dm-1106', at: '2026-11-06T16:42:00+08
 SCHEDULED_BROADCASTS.push({ id: 'probe-cny-1106', at: '2026-11-06T15:49:00+08:00', title: '春節懶人包上線檢查', kind: 'webProbe', cnyCheck: true });
 // 里長 11/6：F0014（修剪樹木｜軍福十三路與祥順路二段）「完成照片補上」，3 張（修剪前、修剪中、修剪後）
 // F0014 原本 18:01 已經從案件網頁傳了同樣 3 張處理照片，上面補的第 1 張重複了 → 拿掉
+// 里長 11/12：「鴨大哥特約內容改成隨機送一樣菜或餅皮」（原本 9 折）
+SCHEDULED_BROADCASTS.push({ id: 'shop-offer-duck-1112', at: '2026-11-12T14:14:00+08:00', title: '鴨大哥特約優惠改內容', kind: 'shopOffer', name: '鴨大哥', offer: '隨機送一樣菜或餅皮' });
 SCHEDULED_BROADCASTS.push({ id: 'probe-repair-f14-f15', at: '2026-11-06T18:22:00+08:00', title: 'F0014、F0015 處理照片檢查', kind: 'webProbe', repairCheck: ['F0014', 'F0015'] });
 SCHEDULED_BROADCASTS.push({ id: 'repair-drop-dup-f0014', at: '2026-11-06T18:19:00+08:00', title: 'F0014 拿掉重複的處理照片', kind: 'repairDropDonePhoto', repair: 'F0014',
   fileId: '1div6F9doAwmN3bpLBQuI__0vgUZiHVIb', message: '📷 更正：F0014 在 18:01 已經從案件網頁傳過這 3 張處理照片了，剛剛重複補上的 1 張已經拿掉，現在共 {n} 張，網站看得到：' + REPAIR_PAGE_URL + '#F0014' });
@@ -7080,6 +7082,26 @@ function runScheduledBroadcasts() {
         const msg = setRepairOpen_(true);
         props.setProperty(key, 'sent ' + now_());
         notifyOwner_('🔧 ' + msg + '\n\n要暫停：私訊輸入「關閉快速報修」。');
+        return;
+      }
+      if (b.kind === 'shopOffer') {
+        // 改特約商家的優惠內容（其他欄位、照片照舊）：先查這家，只換 o 再存回去（同名就是更新）
+        let msg;
+        try {
+          const g = ccsApi_('/api/shops', { action: 'get', name: b.name });
+          if (!g.ok) throw new Error(g.error || '找不到這家');
+          const shop = Object.assign({}, g.shop, { o: b.offer });
+          shop.links = (shop.links || []).filter(l => /^https:\/\//.test(l[1] || ''));   // 照片連結（網站自己的）不要當成一般連結存回去
+          const r = ccsApi_('/api/shops', { action: 'add', shop, by: '里長（Claude 代改）' });
+          if (!r.ok) throw new Error(r.error || '沒有存成功');
+          const v = ccsApi_('/api/shops', { action: 'get', name: g.name });
+          msg = `✅ 已更新特約商家「${g.name}」的優惠：\n🎁 ${v.shop && v.shop.o}\n（原本：${g.shop.o}）\n👉 ${r.url}`;
+          props.setProperty(key, 'sent ' + now_() + ' ' + String(v.shop && v.shop.o).slice(0, 60));
+        } catch (err) {
+          msg = `⚠️ 特約商家「${b.name}」的優惠沒有改成功：${err.message}`;
+          props.setProperty(key, 'failed ' + now_() + ' ' + err.message);
+        }
+        notifyOwner_(msg);
         return;
       }
       if (b.kind === 'repairDropDonePhoto') {
