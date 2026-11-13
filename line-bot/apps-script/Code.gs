@@ -5867,6 +5867,8 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-cny-1106', at: '2026-11-06T15:49:00+08:00
 // F0014 原本 18:01 已經從案件網頁傳了同樣 3 張處理照片，上面補的第 1 張重複了 → 拿掉
 // 里長 11/12：「鴨大哥特約內容改成隨機送一樣菜或餅皮」（原本 9 折）
 // 里長 11/12：「特約 翎軒有鍋 下架」（網站內建名單的，撤下是隱藏）
+// 里長 11/13：「能增加垃圾車諮詢嗎？」→ 先試抓臺中市垃圾車開放資料
+SCHEDULED_BROADCASTS.push({ id: 'probe-garbage-1113', at: '2026-11-13T22:09:00+08:00', title: '垃圾車開放資料檢查', kind: 'webProbe', garbage: true });
 SCHEDULED_BROADCASTS.push({ id: 'probe-lingxuan-1112c', at: '2026-11-12T18:28:00+08:00', title: '翎軒有鍋撤下排查', kind: 'webProbe', propKeys: ['BC_shop-remove-lingxuan-1112', 'BCERR_shop-remove-lingxuan-1112'], shopGet: '翎軒有鍋' });
 SCHEDULED_BROADCASTS.push({ id: 'shop-remove-lingxuan-1112', at: '2026-11-12T18:26:00+08:00', title: '撤下特約商家 翎軒有鍋', kind: 'shopRemove', name: '翎軒有鍋' });
 SCHEDULED_BROADCASTS.push({ id: 'probe-shops-1112b', at: '2026-11-12T18:26:00+08:00', title: '特約商家公開資料檢查（翎軒有鍋）', kind: 'webProbe', urls: [CCS_BASE + '/api/shops'] });
@@ -7233,6 +7235,24 @@ function runScheduledBroadcasts() {
           const list = (publicRepairs_().list || []);
           b.repairCheck.forEach(id => { const x = list.find(r => r.id === id); out.push('════ ' + id + '：' + (x ? JSON.stringify({ status: x.status, rep: x.rep, photos: x.photos, donePhotos: x.donePhotos, log: (x.log || []).length }) : '網站上沒有')); });
           out.push('');
+        }
+        // 垃圾車：臺中市開放資料（班表 CSV、車輛 GPS）抓不抓得到、廍子里有哪些清運點
+        if (b.garbage) {
+          const dl = rid => UrlFetchApp.fetch('https://newdatacenter.taichung.gov.tw/api/v1/no-auth/resource.download?rid=' + rid, { muteHttpExceptions: true, headers: { 'User-Agent': 'Mozilla/5.0' } });
+          try {
+            const r = dl('3275290e-2375-437e-b7b1-998a4b4907b8'), body = r.getContentText('UTF-8'), h = r.getHeaders() || {};
+            const lines = body.split(/\r?\n/);
+            out.push('════ 垃圾車班表：HTTP ' + r.getResponseCode() + '｜' + (h['Content-Type'] || h['content-type'] || '') + '｜' + body.length + ' 字｜' + lines.length + ' 行', '欄位：' + lines[0]);
+            const mine = lines.filter(l => /北屯/.test(l) && /廍子/.test(l));
+            out.push('北屯區廍子里 ' + mine.length + ' 行：', mine.join('\n'));
+            const near = lines.filter(l => /北屯/.test(l) && /(太順|祥順|軍福|太原|東山|松竹)/.test(l) && !/廍子/.test(l)).slice(0, 15);
+            out.push('北屯區附近路名（不是廍子里）' + near.length + ' 行（前 15）：', near.join('\n'));
+            const plates = mine.map(l => (l.match(/"?[^",]+"?,"?[^",]+"?,"?([^",]+)"?/) || [])[1]).filter(Boolean);
+            const g = dl('c923ad20-2ec6-43b9-b3ab-54527e99f7bc'), gb = g.getContentText('UTF-8');
+            out.push('════ 車輛 GPS：HTTP ' + g.getResponseCode() + '｜' + gb.length + ' 字｜前 300 字：' + gb.slice(0, 300));
+            let arr = []; try { const j = JSON.parse(gb); arr = Array.isArray(j) ? j : (j.data || j.records || j.result || []); } catch (err) { out.push('GPS 不是 JSON：' + err.message); }
+            out.push('GPS 筆數：' + arr.length + '｜廍子里的車：' + JSON.stringify(arr.filter(x => plates.indexOf(x.car) >= 0)).slice(0, 3000), '');
+          } catch (err) { out.push('垃圾車資料失敗：' + err.message, ''); }
         }
         // 排程執行狀態、特約商家查一家（排查用）
         (b.propKeys || []).forEach(k => out.push(k + '：' + (prop_(k) || '（沒有）')));
