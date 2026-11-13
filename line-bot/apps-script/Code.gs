@@ -4525,6 +4525,8 @@ function garbageGps_() {
 }
 
 const GARBAGE_SITE_URL = 'https://cleaner.epb.taichung.gov.tw/';
+// 網站的「垃圾車幾點來」(里長 11/13「上線到網站上」):可以點路名、看一週的時間
+const GARBAGE_WEB_URL = 'https://ccs2024taiwan.pages.dev/garbage/';
 // 問垃圾車：有說垃圾車／回收車／倒垃圾…，或「垃圾」加上問時間；太長的句子（在講別的事）不算
 const GARBAGE_Q_RE = /垃圾車|回收車|清潔車|倒垃圾|收垃圾|丟垃圾|資源回收.{0,6}(幾點|時間|什麼時候|來|到|嗎|有沒有)|垃圾.{0,8}(幾點|時間|什麼時候|來了|到了|收嗎|有收|有沒有收|會來)/;
 function garbageQuestion_(t) {
@@ -4585,34 +4587,36 @@ function garbageAnswerText_(q) {
   }
   const todays = rows.filter(r => gs(r, day.wd)).sort((a, b) => gs(a, day.wd).localeCompare(gs(b, day.wd)));
   const nowHm = Utilities.formatDate(new Date(), TZ, 'HH:mm');
+  const mins = hm => { const m = String(hm).match(/(\d+):(\d+)/); return m ? +m[1] * 60 + +m[2] : 0; };
   const short = a => String(a).replace(/[0-9０-９之\-–]+號.*$/, '').replace(/[0-9]+巷[0-9]+弄.*$/, '').replace(/\(.*?\)|（.*?）/g, '').trim();
   if (place.road) {
     if (!lines.length) lines.push(`🚛 ${where}的垃圾車｜${day.label}`);
     todays.slice(0, 15).forEach(r => {
       const rec = rs(r, day.wd);
-      lines.push(`・${gs(r, day.wd)}　${r[C.addr]}` + (rec && rec !== gs(r, day.wd) ? `（回收 ${rec}）` : ''));
+      lines.push(`・${gs(r, day.wd)}　${r[C.addr]}` + (rec && Math.abs(mins(rec) - mins(gs(r, day.wd))) > 10 ? `（回收 ${rec}）` : ''));
     });
     if (todays.length > 15) lines.push(`…還有 ${todays.length - 15} 個點`);
-    if (todays.some(r => !rs(r, day.wd))) lines.push('有些點這天沒有資源回收');
+    if (todays.length && todays.every(r => !rs(r, day.wd))) lines.push('♻️ 這天沒有資源回收車，只收一般垃圾');
+    else if (todays.some(r => !rs(r, day.wd))) lines.push('有些點這天沒有資源回收');
   } else {
     if (!lines.length) lines.push(`🚛 ${where}垃圾車｜${day.label}`);
-    // 同一台車、時間接在一起（間隔 15 分鐘內）的點合成一段：時段＋經過的路
+    // 同一台車、時間接在一起（間隔 15 分鐘內）的點合成一段：時段＋經過的路；一段最多 30 分鐘（一台車連收整個下午的拆開）
     const segs = [];
-    const mins = hm => { const m = String(hm).match(/(\d+):(\d+)/); return m ? +m[1] * 60 + +m[2] : 0; };
     todays.slice().sort((a, b) => (a[C.car] + gs(a, day.wd)).localeCompare(b[C.car] + gs(b, day.wd))).forEach(r => {
       const last = segs[segs.length - 1], t = gs(r, day.wd);
-      if (last && last.car === r[C.car] && mins(t) - mins(last.end) <= 15) { last.end = ge(r, day.wd) || t; last.roads.push(short(r[C.addr])); }
-      else segs.push({ car: r[C.car], start: t, end: ge(r, day.wd) || t, roads: [short(r[C.addr])] });
+      if (last && last.car === r[C.car] && mins(t) - mins(last.end) <= 15 && mins(t) - mins(last.start) <= 30) { last.end = ge(r, day.wd) || t; last.last = t; last.roads.push(short(r[C.addr])); }
+      else segs.push({ car: r[C.car], start: t, last: t, end: ge(r, day.wd) || t, roads: [short(r[C.addr])] });
     });
     segs.sort((a, b) => a.start.localeCompare(b.start)).forEach(sg => {
       const roads = sg.roads.filter((v, i, a) => v && a.indexOf(v) === i);
-      lines.push(`・${sg.start}–${sg.end}　${roads.slice(0, 5).join('、')}${roads.length > 5 ? '…' : ''}`);
+      // 時段寫第一站到最後一站的時間（只有一站的，寫那一站停多久）
+      lines.push(`・${sg.start}–${sg.last > sg.start ? sg.last : sg.end}　${roads.slice(0, 5).join('、')}${roads.length > 5 ? '…' : ''}`);
     });
     if (day.off === 0) {
       const next = segs.filter(sg => sg.end >= nowHm).sort((a, b) => a.start.localeCompare(b.start))[0];
       lines.push('', next ? `⏰ 下一班：${next.start} ${next.roads[0] || ''}一帶` : '⏰ 今天的垃圾車都收完了');
     }
-    lines.push('資源回收大多跟垃圾車同一班。', '查自己家附近更準：傳「垃圾車 太和三街」（換成您家的路名）');
+    lines.push(todays.every(r => !rs(r, day.wd)) ? '♻️ 這天沒有資源回收車，只收一般垃圾' : '資源回收大多跟垃圾車同一班。', '查自己家附近更準：傳「垃圾車 太和三街」（換成您家的路名）');
   }
   // 今天、正在收的車：最後回報的位置（約 10 分鐘更新一次）
   if (day.off === 0) {
@@ -4631,7 +4635,7 @@ function garbageAnswerText_(q) {
       });
     } catch (err) { console.error('垃圾車 GPS：' + err.message); }
   }
-  lines.push('', '🗺 即時位置：臺中垃圾清運大車隊 ' + GARBAGE_SITE_URL, '（臺中市政府開放資料，時間會前後差幾分鐘）');
+  lines.push('', '🌐 網站查（點路名、看一週）：' + GARBAGE_WEB_URL + (place.road ? '?q=' + encodeURIComponent(place.road) : ''), '🗺 即時位置：臺中垃圾清運大車隊 ' + GARBAGE_SITE_URL, '（臺中市政府開放資料，時間會前後差幾分鐘）');
   return lines.join('\n').slice(0, 4900);
 }
 
