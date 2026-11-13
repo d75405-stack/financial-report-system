@@ -1,0 +1,27 @@
+name: Peek public data
+# 手動執行：看 LINE 小幫手公開查詢的結果（只有政府開放資料等公開資料，例如垃圾車班表），給維護的 Claude 對照用
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 公開查詢
+        type: choice
+        options: [garbage]
+        default: garbage
+      q:
+        description: 關鍵字（選填）
+        required: false
+        default: ''
+jobs:
+  peek:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOYMENT_ID: AKfycbyLrB-sGBnyeOktxkbATRpmJEO2NlR2auGaol8nK7gMU1MZSwczN-IbqD3fWq2HmVNjwg
+    steps:
+      - name: Fetch
+        env:
+          ACTION: ${{ inputs.action }}
+          Q: ${{ inputs.q }}
+        run: |
+          curl -sSL --max-time 120 -G "https://script.google.com/macros/s/${DEPLOYMENT_ID}/exec" --data-urlencode "action=${ACTION}" --data-urlencode "q=${Q}" -o out.json -w "HTTP %{http_code} %{size_download} bytes\n"
+          head -c 30000 out.json; echo

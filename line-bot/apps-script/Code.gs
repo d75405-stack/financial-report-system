@@ -136,6 +136,7 @@ function doGet(e) {
   if (p.action === 'repairs') return json_({ ok: true, data: publicRepairs_() });
   if (p.action === 'repairPhoto') return json_(publicRepairPhoto_(p.id, p.k, p.n));
   if (p.action === 'lawyerSlots') return json_({ ok: true, data: publicLawyerSlots_() });
+  if (p.action === 'garbage') return json_(garbagePublic_(p.q));
   // 部署完成時 GitHub Actions 會打一次這個網址，讓已到時間的預約推播馬上發出、律師資料馬上更新
   ensureLawyers_();
   ensureKnowledgePatch_();
@@ -4453,6 +4454,80 @@ function setupMapsKey() {
 // 網路搜尋讀不到氣象署網頁上的數字（網頁打開後才載入），所以問到天氣時，先用授權碼抓「臺中市 36 小時預報」和「北屯區鄉鎮預報」，
 // 附在問題前面給 AI。授權碼在試算表選單「LINE 系統 → 設定氣象署授權碼」輸入（指令碼屬性 CWA_API_KEY），不經過聊天室。
 const CWA_API = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/';
+// ───────────────────────── 垃圾車（里長 11/13：「能增加垃圾車諮詢嗎？」）─────────────────────────
+// 臺中市政府開放資料（免金鑰）：清運點班表 CSV（區、里、車牌、地址、方式、週一到週日的垃圾／回收時間）、垃圾車 GPS（約 10 分鐘更新）
+const GARBAGE_SCHEDULE_URL = 'https://newdatacenter.taichung.gov.tw/api/v1/no-auth/resource.download?rid=3275290e-2375-437e-b7b1-998a4b4907b8';
+const GARBAGE_GPS_URL = 'https://newdatacenter.taichung.gov.tw/api/v1/no-auth/resource.download?rid=c923ad20-2ec6-43b9-b3ab-54527e99f7bc';
+
+/** 一行 CSV 拆欄位（有引號的欄位可以有逗號）；格式壞掉回傳 null。 */
+function csvLine_(line) {
+  const out = [];
+  let cur = '', q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (q) {
+      if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ',') { out.push(cur.trim()); cur = ''; }
+    else cur += ch;
+  }
+  if (q) return null;
+  out.push(cur.trim());
+  return out;
+}
+
+/** 北屯區的清運點班表（原始欄位）。整份 CSV 很大，只留北屯區，快取 6 小時（分段存）。 */
+function garbageBeitun_() {
+  const cache = CacheService.getScriptCache();
+  const n = Number(cache.get('gb_n') || 0);
+  if (n) {
+    const parts = cache.getAll(Array.from({ length: n }, (_, i) => 'gb_' + i));
+    const txt = Array.from({ length: n }, (_, i) => parts['gb_' + i] || '').join('');
+    if (Object.keys(parts).length === n) { try { return JSON.parse(txt); } catch (_) { /* 重抓 */ } }
+  }
+  const res = UrlFetchApp.fetch(GARBAGE_SCHEDULE_URL, { muteHttpExceptions: true, headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (res.getResponseCode() !== 200) throw new Error('垃圾車班表 HTTP ' + res.getResponseCode());
+  const lines = res.getContentText('UTF-8').replace(/^﻿/, '').split(/\r?\n/);
+  const head = csvLine_(lines[0]) || [];
+  const rows = lines.slice(1).filter(l => l.indexOf('北屯') >= 0).map(csvLine_).filter(r => r && r.length >= Math.min(head.length, 6));
+  const data = { head, rows, at: now_() };
+  const txt = JSON.stringify(data), size = 90000, chunks = {};
+  for (let i = 0; i * size < txt.length; i++) chunks['gb_' + i] = txt.slice(i * size, (i + 1) * size);
+  try { cache.putAll(chunks, 21600); cache.put('gb_n', String(Object.keys(chunks).length), 21600); } catch (err) { console.error('垃圾車班表快取失敗：' + err.message); }
+  return data;
+}
+
+/** 垃圾車 GPS（全部的車），快取 5 分鐘。回傳 { 車牌: {time, location, x, y} }。 */
+function garbageGps_() {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('gb_gps');
+  if (hit) { try { return JSON.parse(hit); } catch (_) { /* 重抓 */ } }
+  const res = UrlFetchApp.fetch(GARBAGE_GPS_URL, { muteHttpExceptions: true, headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (res.getResponseCode() !== 200) throw new Error('垃圾車 GPS HTTP ' + res.getResponseCode());
+  let arr = JSON.parse(res.getContentText('UTF-8'));
+  if (!Array.isArray(arr)) arr = arr.data || arr.records || arr.result || [];
+  const by = {};
+  arr.forEach(x => { if (x && x.car) by[x.car] = { time: x.time, location: x.location, x: x.X, y: x.Y }; });
+  try { cache.put('gb_gps', JSON.stringify(by), 300); } catch (_) { /* 太大放不進快取就算了 */ }
+  return by;
+}
+
+/** 公開查詢（doGet action=garbage）：北屯區班表的欄位、廍子里的清運點（或 q 關鍵字找到的）、這些車的 GPS。都是政府公開資料。 */
+function garbagePublic_(q) {
+  try {
+    const d = garbageBeitun_();
+    const kw = String(q || '').trim().slice(0, 20);
+    const hit = d.rows.filter(r => kw ? r.join(' ').indexOf(kw) >= 0 : r.join(' ').indexOf('廍子') >= 0).slice(0, 60);
+    const plates = hit.map(r => r[2]).filter((v, i, a) => v && a.indexOf(v) === i);
+    let gps = {};
+    try { const all = garbageGps_(); plates.forEach(p => { if (all[p]) gps[p] = all[p]; }); } catch (err) { gps = { error: err.message }; }
+    return { ok: true, at: d.at, head: d.head, beitunRows: d.rows.length, rows: hit, gps };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 const CWA_WEATHER_Q_RE = /天氣|氣溫|溫度|下雨|降雨|雨量|颱風|寒流|冷氣團|好冷|好熱|帶傘|紫外線|氣象|晴天|陰天|會不會雨|穿什麼|穿多少/;
 
 function cwaFetch_(dataset, query) {
