@@ -4594,12 +4594,12 @@ function garbageAnswerText_(q) {
     if (todays.some(r => !rs(r, day.wd))) lines.push('有些點這天沒有資源回收');
   } else {
     if (!lines.length) lines.push(`🚛 ${where}垃圾車｜${day.label}`);
-    // 同一台車、時間接在一起（間隔 30 分鐘內）的點合成一段：時段＋經過的路
+    // 同一台車、時間接在一起（間隔 15 分鐘內）的點合成一段：時段＋經過的路
     const segs = [];
     const mins = hm => { const m = String(hm).match(/(\d+):(\d+)/); return m ? +m[1] * 60 + +m[2] : 0; };
     todays.slice().sort((a, b) => (a[C.car] + gs(a, day.wd)).localeCompare(b[C.car] + gs(b, day.wd))).forEach(r => {
       const last = segs[segs.length - 1], t = gs(r, day.wd);
-      if (last && last.car === r[C.car] && mins(t) - mins(last.end) <= 30) { last.end = ge(r, day.wd) || t; last.roads.push(short(r[C.addr])); }
+      if (last && last.car === r[C.car] && mins(t) - mins(last.end) <= 15) { last.end = ge(r, day.wd) || t; last.roads.push(short(r[C.addr])); }
       else segs.push({ car: r[C.car], start: t, end: ge(r, day.wd) || t, roads: [short(r[C.addr])] });
     });
     segs.sort((a, b) => a.start.localeCompare(b.start)).forEach(sg => {
