@@ -6,7 +6,7 @@ on:
       action:
         description: 公開查詢
         type: choice
-        options: [garbage]
+        options: [garbage, garbageText]
         default: garbage
       q:
         description: 關鍵字（選填）

@@ -137,6 +137,8 @@ function doGet(e) {
   if (p.action === 'repairPhoto') return json_(publicRepairPhoto_(p.id, p.k, p.n));
   if (p.action === 'lawyerSlots') return json_({ ok: true, data: publicLawyerSlots_() });
   if (p.action === 'garbage') return json_(garbagePublic_(p.q));
+  // 垃圾車回答長什麼樣子（跟官方 LINE 回的一樣，只有政府公開資料）：給維護的人對照
+  if (p.action === 'garbageText') return json_({ ok: true, text: garbageAnswerText_(String(p.q || '垃圾車幾點來')) });
   // 部署完成時 GitHub Actions 會打一次這個網址，讓已到時間的預約推播馬上發出、律師資料馬上更新
   ensureLawyers_();
   ensureKnowledgePatch_();
@@ -198,6 +200,7 @@ const HELP_TEXT = [
   '・我的預約：活動報名＋法律諮詢預約',
   '・律師諮詢：免費律師諮詢介紹與預約',
   '・公告：萬聖節活動與最新消息',
+  '・垃圾車：廍子里垃圾車今天幾點來（加路名更準，例：垃圾車 太和三街）',
   '',
   '🎃 北屯鬧起來萬聖節活動：https://ccs2024taiwan.pages.dev',
 ].join('\n');
@@ -304,6 +307,11 @@ function handleEvent_(ev) {
   // 颱風停班停課：問到就回臺中市政府的公告圖（里長 10/22）
   if (typhoonQuestion_(t)) {
     reply_(ev.replyToken, typhoonMessages_());
+    return;
+  }
+  // 垃圾車幾點來（里長 11/13）：臺中市開放資料的班表＋垃圾車位置
+  if (garbageQuestion_(t)) {
+    reply_(ev.replyToken, [text_(garbageAnswerText_(t))]);
     return;
   }
 
@@ -3804,6 +3812,7 @@ function handleAssistant_(ev, uid, member, text, inGroup) {
   const q = text.slice(ASSISTANT_NAME.length).replace(/^[\s,，:：、!！~]+/, '').trim();
   // 颱風停班停課：群組裡問全全也回公告圖（里長 10/22）
   if (typhoonQuestion_(q)) return reply_(ev.replyToken, typhoonMessages_());
+  if (garbageQuestion_(q)) return reply_(ev.replyToken, [text_(garbageAnswerText_(q))]);
   const ar = autoReplyFor_(q);
   if (ar) return reply_(ev.replyToken, ar);
   // 群組裡一律當成一般里民，避免把內部資料或個資回覆到群組
@@ -4492,7 +4501,7 @@ function garbageBeitun_() {
   const head = csvLine_(lines[0]) || [];
   const rows = lines.slice(1).filter(l => l.indexOf('北屯') >= 0).map(csvLine_).filter(r => r && r.length >= Math.min(head.length, 6));
   const data = { head, rows, at: now_() };
-  const txt = JSON.stringify(data), size = 90000, chunks = {};
+  const txt = JSON.stringify(data), size = 30000, chunks = {};   // 中文字一個 3 bytes，一格快取 100KB
   for (let i = 0; i * size < txt.length; i++) chunks['gb_' + i] = txt.slice(i * size, (i + 1) * size);
   try { cache.putAll(chunks, 21600); cache.put('gb_n', String(Object.keys(chunks).length), 21600); } catch (err) { console.error('垃圾車班表快取失敗：' + err.message); }
   return data;
@@ -4511,6 +4520,124 @@ function garbageGps_() {
   arr.forEach(x => { if (x && x.car) by[x.car] = { time: x.time, location: x.location, x: x.X, y: x.Y }; });
   try { cache.put('gb_gps', JSON.stringify(by), 300); } catch (_) { /* 太大放不進快取就算了 */ }
   return by;
+}
+
+const GARBAGE_SITE_URL = 'https://cleaner.epb.taichung.gov.tw/';
+// 問垃圾車：有說垃圾車／回收車／倒垃圾…，或「垃圾」加上問時間；太長的句子（在講別的事）不算
+const GARBAGE_Q_RE = /垃圾車|回收車|清潔車|倒垃圾|收垃圾|丟垃圾|資源回收.{0,6}(幾點|時間|什麼時候|來|到|嗎|有沒有)|垃圾.{0,8}(幾點|時間|什麼時候|來了|到了|收嗎|有收|有沒有收|會來)/;
+function garbageQuestion_(t) {
+  const s = String(t || '').trim();
+  return !!s && s.length <= 60 && GARBAGE_Q_RE.test(s);
+}
+
+/** 問的是哪一天：今天、明天、後天、週X。回傳 { ymd, wd(1=週一…7=週日), label }。 */
+function garbageDay_(q) {
+  const s = String(q || '');
+  let off = 0, m;
+  if (/明天|明日|明早/.test(s)) off = 1;
+  else if (/後天/.test(s)) off = 2;
+  else if ((m = s.match(/(?:星期|週|周|禮拜)([一二三四五六日天])/))) {
+    const tw = new Date(ymdAfter_(0) + 'T12:00:00+08:00').getUTCDay();
+    const w = m[1] === '天' ? 0 : '日一二三四五六'.indexOf(m[1]);
+    off = (w - tw + 7) % 7;
+  }
+  const ymd = ymdAfter_(off), js = new Date(ymd + 'T12:00:00+08:00').getUTCDay();
+  return { ymd, wd: js === 0 ? 7 : js, label: (off === 0 ? '今天 ' : off === 1 ? '明天 ' : off === 2 ? '後天 ' : '') + ymd.slice(5).replace('-', '/') + '（' + weekdayOf_(ymd) + '）', off };
+}
+
+/** 問句裡的路名或里名（拿掉問句的字之後找「…路／街／巷／大道（…段）」或「…里」）。 */
+function garbagePlace_(q) {
+  const s = String(q || '').replace(/垃圾車|回收車|清潔車|資源回收|垃圾|回收|倒|收|幾點|時間|什麼時候|會|來|到|了|嗎|呢|今天|明天|後天|今日|明日|(?:星期|週|周|禮拜)[一二三四五六日天]|請問|我家|我們|附近|有沒有|是|在|的|台中市?|臺中市?|北屯區?|[?？,，。!！\s]/g, '');
+  const road = (s.match(/[一-鿿0-9]{1,8}?(?:路|街|巷|大道)(?:[一二三四五六七八九十]段)?/) || [''])[0];
+  if (road) return { road };
+  const li = (s.match(/[一-鿿]{1,3}里/) || [''])[0];
+  return li ? { li } : {};
+}
+
+/** 回答「垃圾車幾點來」：預設廍子里各班車的時段；有路名就列那條路的清運點；問今天時加上下一班、正在收的車在哪。 */
+function garbageAnswerText_(q) {
+  let d;
+  try { d = garbageBeitun_(); } catch (err) {
+    console.error('垃圾車班表：' + err.message);
+    return '🚛 現在查不到垃圾車班表（臺中市政府的資料暫時連不上），可以到「臺中垃圾清運大車隊」查：\n' + GARBAGE_SITE_URL;
+  }
+  const col = name => d.head.indexOf(name);
+  const C = { li: col('village'), car: col('car_licence'), addr: col('caption'), type: col('task_type') };
+  let day = garbageDay_(q);
+  const place = garbagePlace_(q);
+  const gs = (r, wd) => r[col('g_d' + wd + '_time_s')] || '', ge = (r, wd) => r[col('g_d' + wd + '_time_e')] || '';
+  const rs = (r, wd) => r[col('r_d' + wd + '_time_s')] || '';
+  let rows = place.road ? d.rows.filter(r => String(r[C.addr]).indexOf(place.road) >= 0)
+    : place.li ? d.rows.filter(r => r[C.li] === place.li) : d.rows.filter(r => r[C.li] === '廍子里');
+  const where = place.road || place.li || '廍子里';
+  if (!rows.length) return `🚛 北屯區找不到「${where}」的垃圾車清運點。\n可以換個寫法（例：垃圾車 太和三街），或到臺中垃圾清運大車隊查：\n${GARBAGE_SITE_URL}`;
+  const lines = [];
+  // 那天沒有收（臺中市週三、週日停收）：改說下一個有收的日子
+  if (!rows.some(r => gs(r, day.wd))) {
+    lines.push(`🚛 ${day.label}${where}沒有收垃圾（臺中市週三、週日停收）。`);
+    for (let k = 1; k <= 6; k++) {
+      const ymd = ymdAfter_(day.off + k), js = new Date(ymd + 'T12:00:00+08:00').getUTCDay(), wd = js === 0 ? 7 : js;
+      if (rows.some(r => gs(r, wd))) { day = { ymd, wd, label: (day.off + k === 1 ? '明天 ' : '') + ymd.slice(5).replace('-', '/') + '（' + weekdayOf_(ymd) + '）', off: day.off + k }; break; }
+    }
+    lines.push(`下一次是 ${day.label}：`, '');
+  }
+  const todays = rows.filter(r => gs(r, day.wd)).sort((a, b) => gs(a, day.wd).localeCompare(gs(b, day.wd)));
+  const nowHm = Utilities.formatDate(new Date(), TZ, 'HH:mm');
+  const short = a => String(a).replace(/[0-9０-９之\-–]+號.*$/, '').replace(/[0-9]+巷[0-9]+弄.*$/, '').replace(/\(.*?\)|（.*?）/g, '').trim();
+  if (place.road) {
+    if (!lines.length) lines.push(`🚛 ${where}的垃圾車｜${day.label}`);
+    todays.slice(0, 15).forEach(r => {
+      const rec = rs(r, day.wd);
+      lines.push(`・${gs(r, day.wd)}　${r[C.addr]}` + (rec && rec !== gs(r, day.wd) ? `（回收 ${rec}）` : ''));
+    });
+    if (todays.length > 15) lines.push(`…還有 ${todays.length - 15} 個點`);
+    if (todays.some(r => !rs(r, day.wd))) lines.push('有些點這天沒有資源回收');
+  } else {
+    if (!lines.length) lines.push(`🚛 ${where}垃圾車｜${day.label}`);
+    // 同一台車、時間接在一起（間隔 30 分鐘內）的點合成一段：時段＋經過的路
+    const segs = [];
+    const mins = hm => { const m = String(hm).match(/(\d+):(\d+)/); return m ? +m[1] * 60 + +m[2] : 0; };
+    todays.slice().sort((a, b) => (a[C.car] + gs(a, day.wd)).localeCompare(b[C.car] + gs(b, day.wd))).forEach(r => {
+      const last = segs[segs.length - 1], t = gs(r, day.wd);
+      if (last && last.car === r[C.car] && mins(t) - mins(last.end) <= 30) { last.end = ge(r, day.wd) || t; last.roads.push(short(r[C.addr])); }
+      else segs.push({ car: r[C.car], start: t, end: ge(r, day.wd) || t, roads: [short(r[C.addr])] });
+    });
+    segs.sort((a, b) => a.start.localeCompare(b.start)).forEach(sg => {
+      const roads = sg.roads.filter((v, i, a) => v && a.indexOf(v) === i);
+      lines.push(`・${sg.start}–${sg.end}　${roads.slice(0, 5).join('、')}${roads.length > 5 ? '…' : ''}`);
+    });
+    if (day.off === 0) {
+      const next = segs.filter(sg => sg.end >= nowHm).sort((a, b) => a.start.localeCompare(b.start))[0];
+      lines.push('', next ? `⏰ 下一班：${next.start} ${next.roads[0] || ''}一帶` : '⏰ 今天的垃圾車都收完了');
+    }
+    lines.push('資源回收大多跟垃圾車同一班。', '查自己家附近更準：傳「垃圾車 太和三街」（換成您家的路名）');
+  }
+  // 今天、正在收的車：最後回報的位置（約 10 分鐘更新一次）
+  if (day.off === 0) {
+    try {
+      const gps = garbageGps_();
+      const active = todays.map(r => r[C.car]).filter((v, i, a) => a.indexOf(v) === i).filter(car => {
+        const ts = todays.filter(r => r[C.car] === car).map(r => gs(r, day.wd)).sort();
+        return ts.length && nowHm >= garbageShiftHm_(ts[0], -20) && nowHm <= garbageShiftHm_(ts[ts.length - 1], 20);
+      });
+      active.forEach(car => {
+        const g = gps[car];
+        const m = g && String(g.time).match(/^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)/);
+        if (!m) return;
+        const ago = Math.round((Date.now() - new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00+08:00`).getTime()) / 60000);
+        if (ago >= 0 && ago <= 40) lines.push(`🚛 垃圾車（${car}）${ago} 分鐘前在：${g.location || '路上'}`);
+      });
+    } catch (err) { console.error('垃圾車 GPS：' + err.message); }
+  }
+  lines.push('', '🗺 即時位置：臺中垃圾清運大車隊 ' + GARBAGE_SITE_URL, '（臺中市政府開放資料，時間會前後差幾分鐘）');
+  return lines.join('\n').slice(0, 4900);
+}
+
+function garbageShiftHm_(hm, delta) {
+  const m = String(hm).match(/(\d+):(\d+)/);
+  if (!m) return hm;
+  const t = Math.max(0, Math.min(1439, +m[1] * 60 + +m[2] + delta));
+  return ('0' + Math.floor(t / 60)).slice(-2) + ':' + ('0' + (t % 60)).slice(-2);
 }
 
 /** 公開查詢（doGet action=garbage）：北屯區班表的欄位、廍子里的清運點（或 q 關鍵字找到的）、這些車的 GPS。都是政府公開資料。 */
