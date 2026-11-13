@@ -6,7 +6,7 @@ on:
       action:
         description: 公開查詢
         type: choice
-        options: [garbage, garbageText, garbageWeb]
+        options: [garbage, garbageText, garbageWeb, siteGarbage]
         default: garbage
       q:
         description: 關鍵字（選填）
@@ -23,5 +23,13 @@ jobs:
           ACTION: ${{ inputs.action }}
           Q: ${{ inputs.q }}
         run: |
+          if [ "$ACTION" = "siteGarbage" ]; then
+            # 網站上線後的檢查：/garbage/ 頁面和 /api/garbage（公開資料）
+            curl -sSL --max-time 60 "https://ccs2024taiwan.pages.dev/garbage/" -o page.html -w "PAGE HTTP %{http_code} %{size_download} bytes\n"
+            grep -o "<title>[^<]*</title>" page.html || true
+            curl -sSL --max-time 120 -G "https://ccs2024taiwan.pages.dev/api/garbage" --data-urlencode "q=${Q}" -o out.json -w "API HTTP %{http_code} %{size_download} bytes\n"
+            head -c 1500 out.json; echo
+            exit 0
+          fi
           curl -sSL --max-time 120 -G "https://script.google.com/macros/s/${DEPLOYMENT_ID}/exec" --data-urlencode "action=${ACTION}" --data-urlencode "q=${Q}" -o out.json -w "HTTP %{http_code} %{size_download} bytes\n"
           head -c 120000 out.json; echo
