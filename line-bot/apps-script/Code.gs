@@ -137,6 +137,8 @@ function doGet(e) {
   if (p.action === 'repairPhoto') return json_(publicRepairPhoto_(p.id, p.k, p.n));
   if (p.action === 'lawyerSlots') return json_({ ok: true, data: publicLawyerSlots_() });
   if (p.action === 'garbage') return json_(garbagePublic_(p.q));
+  // 網站 /garbage/（垃圾車幾點來）：北屯區清運點的班表＋這些車的 GPS，政府公開資料
+  if (p.action === 'garbageWeb') return json_(garbageWeb_(p.q));
   // 垃圾車回答長什麼樣子（跟官方 LINE 回的一樣，只有政府公開資料）：給維護的人對照
   if (p.action === 'garbageText') return json_({ ok: true, text: garbageAnswerText_(String(p.q || '垃圾車幾點來')) });
   // 部署完成時 GitHub Actions 會打一次這個網址，讓已到時間的預約推播馬上發出、律師資料馬上更新
@@ -4652,6 +4654,43 @@ function garbagePublic_(q) {
     return { ok: true, at: d.at, head: d.head, beitunRows: d.rows.length, rows: hit, gps };
   } catch (err) {
     return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * 網站「垃圾車幾點來」（ccs2024taiwan 網站 /garbage/，里長 11/13「上線到網站上」）用的公開查詢（doGet action=garbageWeb）。
+ * q 空白：廍子里的清運點；q 是「○○里」：那個里；其他：地址有這幾個字的北屯區清運點（找不到時改用裡面的路名再找一次）。
+ * 每個點只給網頁要用的：里、車牌、地址、週一到週日的垃圾時間「開始-結束」、回收時間；再加這些車的 GPS。都是臺中市政府開放資料。
+ */
+function garbageWeb_(q) {
+  try {
+    const d = garbageBeitun_();
+    const col = name => d.head.indexOf(name);
+    const C = { li: col('village'), car: col('car_licence'), addr: col('caption') };
+    const G = [1, 2, 3, 4, 5, 6, 7].map(w => [col('g_d' + w + '_time_s'), col('g_d' + w + '_time_e'), col('r_d' + w + '_time_s')]);
+    const hm = v => { const m = String(v || '').match(/^(\d{1,2}):(\d{2})/); return m ? ('0' + m[1]).slice(-2) + ':' + m[2] : ''; };
+    const kw = String(q || '').replace(/\s+/g, '').replace(/^(?:臺|台)中市/, '').replace(/^北屯區/, '').slice(0, 20);
+    const has = (r, k) => { const a = String(r[C.addr] || ''); return a.indexOf(k) >= 0 || a.indexOf(k.replace(/台/g, '臺')) >= 0 || a.indexOf(k.replace(/臺/g, '台')) >= 0; };
+    let used = kw, hit;
+    if (!kw) { used = '廍子里'; hit = d.rows.filter(r => r[C.li] === '廍子里'); }
+    else if (/^[一-鿿]{1,3}里$/.test(kw)) hit = d.rows.filter(r => r[C.li] === kw);
+    else {
+      hit = d.rows.filter(r => has(r, kw));
+      const road = (kw.match(/[一-鿿0-9]{1,8}?(?:路|街|巷|大道)(?:[一二三四五六七八九十]段)?/) || [''])[0];
+      if (!hit.length && road && road !== kw) { used = road; hit = d.rows.filter(r => has(r, road)); }
+    }
+    const rows = hit.slice(0, 400).map(r => ({
+      li: String(r[C.li] || ''), car: String(r[C.car] || ''), a: String(r[C.addr] || ''),
+      g: G.map(x => { const s = hm(r[x[0]]); return s ? s + '-' + (hm(r[x[1]]) || s) : ''; }),
+      r: G.map(x => hm(r[x[2]])),
+    }));
+    const plates = rows.map(r => r.car).filter((v, i, a) => v && a.indexOf(v) === i);
+    let gps = {}, gpsError = '';
+    try { const all = garbageGps_(); plates.forEach(p => { if (all[p]) gps[p] = all[p]; }); } catch (err) { gpsError = err.message; }
+    return { ok: true, at: d.at, q: kw, used, total: hit.length, rows, gps, gpsError, now: now_() };
+  } catch (err) {
+    console.error('垃圾車網站查詢：' + err.message);
+    return { ok: false, error: '臺中市政府的垃圾車資料暫時連不上' };
   }
 }
 

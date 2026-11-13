@@ -6,7 +6,7 @@ on:
       action:
         description: 公開查詢
         type: choice
-        options: [garbage, garbageText]
+        options: [garbage, garbageText, garbageWeb]
         default: garbage
       q:
         description: 關鍵字（選填）
@@ -24,4 +24,4 @@ jobs:
           Q: ${{ inputs.q }}
         run: |
           curl -sSL --max-time 120 -G "https://script.google.com/macros/s/${DEPLOYMENT_ID}/exec" --data-urlencode "action=${ACTION}" --data-urlencode "q=${Q}" -o out.json -w "HTTP %{http_code} %{size_download} bytes\n"
-          head -c 30000 out.json; echo
+          head -c 120000 out.json; echo
