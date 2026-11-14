@@ -4527,6 +4527,13 @@ function garbageGps_() {
 const GARBAGE_SITE_URL = 'https://cleaner.epb.taichung.gov.tw/';
 // 網站的「垃圾車幾點來」(里長 11/13「上線到網站上」):可以點路名、看一週的時間
 const GARBAGE_WEB_URL = 'https://ccs2024taiwan.pages.dev/garbage/';
+// 廍子里附近的定點（里長 11/14「一併放上去」）：隔壁東山里大坑圓環早上的定點（週一二四六 08:10–08:30 收垃圾、週五同時間只收資源回收）。
+// 時間照市政府資料，改了會自動跟著變；問廍子里（沒寫路名）時跟廍子里的定點一起列
+const GARBAGE_NEAR_FIXED = [{ li: '東山里', a: '東山路二段31號' }];
+function garbageNear_(d) {
+  const li = d.head.indexOf('village'), ad = d.head.indexOf('caption');
+  return d.rows.filter(r => GARBAGE_NEAR_FIXED.some(k => r[li] === k.li && String(r[ad] || '').indexOf(k.a) >= 0));
+}
 // 問垃圾車：有說垃圾車／回收車／倒垃圾…，或「垃圾」加上問時間；太長的句子（在講別的事）不算
 const GARBAGE_Q_RE = /垃圾車|回收車|清潔車|倒垃圾|收垃圾|丟垃圾|資源回收.{0,6}(幾點|時間|什麼時候|來|到|嗎|有沒有)|垃圾.{0,8}(幾點|時間|什麼時候|來了|到了|收嗎|有收|有沒有收|會來)/;
 function garbageQuestion_(t) {
@@ -4570,7 +4577,7 @@ function garbageAnswerText_(q) {
   let day = garbageDay_(q);
   const place = garbagePlace_(q);
   const gs = (r, wd) => r[col('g_d' + wd + '_time_s')] || '', ge = (r, wd) => r[col('g_d' + wd + '_time_e')] || '';
-  const rs = (r, wd) => r[col('r_d' + wd + '_time_s')] || '';
+  const rs = (r, wd) => r[col('r_d' + wd + '_time_s')] || '', re = (r, wd) => r[col('r_d' + wd + '_time_e')] || '';
   let rows = place.road ? d.rows.filter(r => String(r[C.addr]).indexOf(place.road) >= 0)
     : place.li ? d.rows.filter(r => r[C.li] === place.li) : d.rows.filter(r => r[C.li] === '廍子里');
   const where = place.road || place.li || '廍子里';
@@ -4615,15 +4622,21 @@ function garbageAnswerText_(q) {
     });
     // 定點（里長 11/14「定點部分有嗎」）：垃圾車會停幾分鐘到十幾分鐘，沿街錯過了可以拿去
     const fixedRows = todays.filter(fixed).sort((a, b) => gs(a, day.wd).localeCompare(gs(b, day.wd)));
-    if (fixedRows.length) {
+    const near = place.li ? [] : garbageNear_(d).filter(r => gs(r, day.wd) || rs(r, day.wd));
+    if (fixedRows.length || near.length) {
       lines.push('', '📍 定點（車會停一下，錯過可以拿過去）：');
-      fixedRows.forEach(r => lines.push(`・${gs(r, day.wd)}–${ge(r, day.wd) || gs(r, day.wd)}　${r[C.addr]}`));
+      // 照時間排（隔壁大坑圓環是早上，排最前面）
+      fixedRows.map(r => `・${gs(r, day.wd)}–${ge(r, day.wd) || gs(r, day.wd)}　${r[C.addr]}`)
+        .concat(near.map(r => gs(r, day.wd) ? `・${gs(r, day.wd)}–${ge(r, day.wd) || gs(r, day.wd)}　${r[C.addr]}（隔壁${r[C.li]}）`
+          : `・${rs(r, day.wd)}–${re(r, day.wd) || rs(r, day.wd)}　${r[C.addr]}（隔壁${r[C.li]}，只收資源回收）`))
+        .sort().forEach(l => lines.push(l));
     }
     if (day.off === 0) {
       const next = segs.filter(sg => sg.end >= nowHm).sort((a, b) => a.start.localeCompare(b.start))[0];
       lines.push('', next ? `⏰ 下一班：${next.start} ${next.roads[0] || ''}一帶` : '⏰ 今天的垃圾車都收完了');
     }
-    lines.push(todays.every(r => !rs(r, day.wd)) ? '♻️ 這天沒有資源回收車，只收一般垃圾' : '資源回收大多跟垃圾車同一班。', '查自己家附近更準：傳「垃圾車 太和三街」（換成您家的路名）');
+    const nearRec = near.filter(r => !gs(r, day.wd) && rs(r, day.wd));
+    lines.push(todays.every(r => !rs(r, day.wd)) ? '♻️ 這天沒有資源回收車，只收一般垃圾' + (nearRec.length ? `（資源回收可以拿到${nearRec[0][C.addr]}，${rs(nearRec[0], day.wd)} 起）` : '') : '資源回收大多跟垃圾車同一班。', '查自己家附近更準：傳「垃圾車 太和三街」（換成您家的路名）');
   }
   // 今天、正在收的車：最後回報的位置（約 10 分鐘更新一次）
   if (day.off === 0) {
@@ -4678,7 +4691,7 @@ function garbageWeb_(q) {
     const d = garbageBeitun_();
     const col = name => d.head.indexOf(name);
     const C = { li: col('village'), car: col('car_licence'), addr: col('caption'), type: col('task_type') };
-    const G = [1, 2, 3, 4, 5, 6, 7].map(w => [col('g_d' + w + '_time_s'), col('g_d' + w + '_time_e'), col('r_d' + w + '_time_s')]);
+    const G = [1, 2, 3, 4, 5, 6, 7].map(w => [col('g_d' + w + '_time_s'), col('g_d' + w + '_time_e'), col('r_d' + w + '_time_s'), col('r_d' + w + '_time_e')]);
     const hm = v => { const m = String(v || '').match(/^(\d{1,2}):(\d{2})/); return m ? ('0' + m[1]).slice(-2) + ':' + m[2] : ''; };
     const kw = String(q || '').replace(/\s+/g, '').replace(/^(?:臺|台)中市/, '').replace(/^北屯區/, '').slice(0, 20);
     const has = (r, k) => { const a = String(r[C.addr] || ''); return a.indexOf(k) >= 0 || a.indexOf(k.replace(/台/g, '臺')) >= 0 || a.indexOf(k.replace(/臺/g, '台')) >= 0; };
@@ -4690,15 +4703,18 @@ function garbageWeb_(q) {
       const road = (kw.match(/[一-鿿0-9]{1,8}?(?:路|街|巷|大道)(?:[一二三四五六七八九十]段)?/) || [''])[0];
       if (!hit.length && road && road !== kw) { used = road; hit = d.rows.filter(r => has(r, road)); }
     }
-    const rows = hit.slice(0, 400).map(r => ({
+    const pack = r => ({
       li: String(r[C.li] || ''), car: String(r[C.car] || ''), a: String(r[C.addr] || ''), t: String(r[C.type] || ''),
       g: G.map(x => { const s = hm(r[x[0]]); return s ? s + '-' + (hm(r[x[1]]) || s) : ''; }),
       r: G.map(x => hm(r[x[2]])),
-    }));
-    const plates = rows.map(r => r.car).filter((v, i, a) => v && a.indexOf(v) === i);
+    });
+    const rows = hit.slice(0, 400).map(pack);
+    // 查廍子里（空白）時，加上附近的定點；回收時間給「開始-結束」（大坑圓環週五只收資源回收）
+    const near = kw ? [] : garbageNear_(d).map(r => Object.assign(pack(r), { rw: G.map(x => { const s = hm(r[x[2]]); return s ? s + '-' + (hm(r[x[3]]) || s) : ''; }) }));
+    const plates = rows.concat(near).map(r => r.car).filter((v, i, a) => v && a.indexOf(v) === i);
     let gps = {}, gpsError = '';
     try { const all = garbageGps_(); plates.forEach(p => { if (all[p]) gps[p] = all[p]; }); } catch (err) { gpsError = err.message; }
-    return { ok: true, at: d.at, q: kw, used, total: hit.length, rows, gps, gpsError, now: now_() };
+    return { ok: true, at: d.at, q: kw, used, total: hit.length, rows, near, gps, gpsError, now: now_() };
   } catch (err) {
     console.error('垃圾車網站查詢：' + err.message);
     return { ok: false, error: '臺中市政府的垃圾車資料暫時連不上' };
