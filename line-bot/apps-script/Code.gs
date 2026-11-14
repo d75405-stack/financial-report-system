@@ -4588,12 +4588,13 @@ function garbageAnswerText_(q) {
   const todays = rows.filter(r => gs(r, day.wd)).sort((a, b) => gs(a, day.wd).localeCompare(gs(b, day.wd)));
   const nowHm = Utilities.formatDate(new Date(), TZ, 'HH:mm');
   const mins = hm => { const m = String(hm).match(/(\d+):(\d+)/); return m ? +m[1] * 60 + +m[2] : 0; };
+  const fixed = r => /定點/.test(String(r[C.type] || '')) || /[（(]定點[)）]/.test(String(r[C.addr] || ''));
   const short = a => String(a).replace(/[0-9０-９之\-–]+號.*$/, '').replace(/[0-9]+巷[0-9]+弄.*$/, '').replace(/\(.*?\)|（.*?）/g, '').trim();
   if (place.road) {
     if (!lines.length) lines.push(`🚛 ${where}的垃圾車｜${day.label}`);
     todays.slice(0, 15).forEach(r => {
       const rec = rs(r, day.wd);
-      lines.push(`・${gs(r, day.wd)}　${r[C.addr]}` + (rec && Math.abs(mins(rec) - mins(gs(r, day.wd))) > 10 ? `（回收 ${rec}）` : ''));
+      lines.push(`・${gs(r, day.wd)}　${r[C.addr]}` + (fixed(r) ? `（📍定點，停到 ${ge(r, day.wd) || gs(r, day.wd)}）` : '') + (rec && Math.abs(mins(rec) - mins(gs(r, day.wd))) > 10 ? `（回收 ${rec}）` : ''));
     });
     if (todays.length > 15) lines.push(`…還有 ${todays.length - 15} 個點`);
     if (todays.length && todays.every(r => !rs(r, day.wd))) lines.push('♻️ 這天沒有資源回收車，只收一般垃圾');
@@ -4612,6 +4613,12 @@ function garbageAnswerText_(q) {
       // 時段寫第一站到最後一站的時間（只有一站的，寫那一站停多久）
       lines.push(`・${sg.start}–${sg.last > sg.start ? sg.last : sg.end}　${roads.slice(0, 5).join('、')}${roads.length > 5 ? '…' : ''}`);
     });
+    // 定點（里長 11/14「定點部分有嗎」）：垃圾車會停幾分鐘到十幾分鐘，沿街錯過了可以拿去
+    const fixedRows = todays.filter(fixed).sort((a, b) => gs(a, day.wd).localeCompare(gs(b, day.wd)));
+    if (fixedRows.length) {
+      lines.push('', '📍 定點（車會停一下，錯過可以拿過去）：');
+      fixedRows.forEach(r => lines.push(`・${gs(r, day.wd)}–${ge(r, day.wd) || gs(r, day.wd)}　${r[C.addr]}`));
+    }
     if (day.off === 0) {
       const next = segs.filter(sg => sg.end >= nowHm).sort((a, b) => a.start.localeCompare(b.start))[0];
       lines.push('', next ? `⏰ 下一班：${next.start} ${next.roads[0] || ''}一帶` : '⏰ 今天的垃圾車都收完了');
@@ -4670,7 +4677,7 @@ function garbageWeb_(q) {
   try {
     const d = garbageBeitun_();
     const col = name => d.head.indexOf(name);
-    const C = { li: col('village'), car: col('car_licence'), addr: col('caption') };
+    const C = { li: col('village'), car: col('car_licence'), addr: col('caption'), type: col('task_type') };
     const G = [1, 2, 3, 4, 5, 6, 7].map(w => [col('g_d' + w + '_time_s'), col('g_d' + w + '_time_e'), col('r_d' + w + '_time_s')]);
     const hm = v => { const m = String(v || '').match(/^(\d{1,2}):(\d{2})/); return m ? ('0' + m[1]).slice(-2) + ':' + m[2] : ''; };
     const kw = String(q || '').replace(/\s+/g, '').replace(/^(?:臺|台)中市/, '').replace(/^北屯區/, '').slice(0, 20);
@@ -4684,7 +4691,7 @@ function garbageWeb_(q) {
       if (!hit.length && road && road !== kw) { used = road; hit = d.rows.filter(r => has(r, road)); }
     }
     const rows = hit.slice(0, 400).map(r => ({
-      li: String(r[C.li] || ''), car: String(r[C.car] || ''), a: String(r[C.addr] || ''),
+      li: String(r[C.li] || ''), car: String(r[C.car] || ''), a: String(r[C.addr] || ''), t: String(r[C.type] || ''),
       g: G.map(x => { const s = hm(r[x[0]]); return s ? s + '-' + (hm(r[x[1]]) || s) : ''; }),
       r: G.map(x => hm(r[x[2]])),
     }));
