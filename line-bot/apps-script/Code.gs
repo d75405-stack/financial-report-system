@@ -5609,6 +5609,9 @@ SCHEDULED_BROADCASTS.push({ id: 'ai-med-check-vaccine-10262156', at: '2026-10-26
 // 里長 10/21：網站公告的「賴順仁議員印章」那則取消，改為萬聖節回顧、免費法律諮詢、快速報修（三個連結各有名稱）
 SCHEDULED_BROADCASTS.push({ id: 'notice-services-1021', at: '2026-10-21T13:00:00+08:00', title: '網站公告：萬聖節回顧、法律諮詢、快速報修', kind: 'siteNotice',
   text: '🎃 萬聖節活動圓滿結束，謝謝大家！[看成績・活動回顧](/halloween/)　⚖️ 免費律師諮詢，律師 1 對 1、絕對隱私 [立即預約](/lawyer/)　🔧 路燈、水溝、坑洞 [快速報修](/repair/)' });
+// 里長 11/15「橘色框框改成法律諮詢」：網站最上面的公告還是 10/17 賴順仁議員印章那則，換成免費律師諮詢
+SCHEDULED_BROADCASTS.push({ id: 'notice-lawyer-1115', at: '2026-11-15T12:00:00+08:00', title: '網站公告：免費律師諮詢', kind: 'siteNotice',
+  text: '⚖️ 免費律師諮詢開放預約中！宣品法律事務所律師 1 對 1、絕對隱私，婚姻家事、繼承、不動產、勞資、刑事都能問。每週二、三、四晚上 6–8 點，用官方 LINE 預約 [看時間地點・立即預約](/lawyer/)' });
 // 里長 10/17 13:55 指示：開放組成績發到管理群（網站陀螺賽頁也已公布）
 SCHEDULED_BROADCASTS.push({ id: 'mgmt-results-open-1017', at: '2026-10-17T13:50:00+08:00', title: '開放組成績', kind: 'mgmtGroup',
   text: [
