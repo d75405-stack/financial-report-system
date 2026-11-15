@@ -5615,6 +5615,9 @@ SCHEDULED_BROADCASTS.push({ id: 'notice-lawyer-1115', at: '2026-11-15T12:00:00+0
 // 里長 11/15「還有快速報修也一起」：公告改成律師諮詢＋快速報修（兩個連結各有名稱）
 SCHEDULED_BROADCASTS.push({ id: 'notice-lawyer-repair-1115', at: '2026-11-15T12:40:00+08:00', title: '網站公告：免費律師諮詢、快速報修', kind: 'siteNotice',
   text: '⚖️ 免費律師諮詢：宣品法律事務所律師 1 對 1、絕對隱私，婚姻家事、繼承、不動產、勞資、刑事都能問，每週二、三、四晚上 6–8 點 [立即預約](/lawyer/)　🔧 快速報修：路燈、水溝、坑洞、雜草，用官方 LINE 拍照報修，處理進度網站公開 [我要報修](/repair/)' });
+// 里長 11/15「垃圾車也加進公告」：律師諮詢＋快速報修＋垃圾車幾點來
+SCHEDULED_BROADCASTS.push({ id: 'notice-lawyer-repair-garbage-1115', at: '2026-11-15T12:00:00+08:00', title: '網站公告：律師諮詢、快速報修、垃圾車', kind: 'siteNotice',
+  text: '⚖️ 免費律師諮詢：宣品法律事務所律師 1 對 1、絕對隱私，每週二、三、四晚上 6–8 點 [立即預約](/lawyer/)　🔧 快速報修：路燈、水溝、坑洞、雜草，LINE 拍照就能報修 [我要報修](/repair/)　🚛 垃圾車幾點來、現在在哪 [查垃圾車](/garbage/)' });
 // 里長 10/17 13:55 指示：開放組成績發到管理群（網站陀螺賽頁也已公布）
 SCHEDULED_BROADCASTS.push({ id: 'mgmt-results-open-1017', at: '2026-10-17T13:50:00+08:00', title: '開放組成績', kind: 'mgmtGroup',
   text: [
