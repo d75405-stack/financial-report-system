@@ -441,6 +441,13 @@ function handleEvent_(ev) {
       reply_(ev.replyToken, [text_(privateCannedText_())]);
       return;
   }
+  // 里長 11/15：「要預約諮詢律師」這種說法也回律師諮詢介紹（原本只認「律師諮詢」「法律諮詢」「預約」）；要取消、改時間的留給人回
+  if (LAWYER_ASK_RE.test(t) && t.length <= 30 && !/取消|改時間|改時段|改期|不能/.test(t)) {
+    if (!reply_(ev.replyToken, lawyerIntroMessages_())) {
+      reply_(ev.replyToken, [lawyerOpen_() ? linkButton_('免費律師諮詢，請選擇時段預約。', '查看時段並預約', liffUrl_('booking')) : text_(lawyerInfoText_())]);
+    }
+    return;
+  }
   // 管理群設定的自動回覆（內建的關鍵字優先，上面都沒處理到才看）
   const ar = autoReplyFor_(t);
   if (ar) {
@@ -458,6 +465,8 @@ function handleEvent_(ev) {
  * 3. 問「有報名成功嗎」「繳費了嗎」「沒收到通知」這類的話 → 先用綁定的資料查，查不到就回覆查詢方式
  */
 const LOOKUP_PHONE_RE = /0?9\d{2}[-\s]?\d{3}[-\s]?\d{3}/;
+// 想預約律師的說法：有「律師／法律」，也有預約、諮詢、想問、怎麼約、時間地點這類字（「謝謝律師」不算）
+const LAWYER_ASK_RE = /(?=.*(律師|法律))(?=.*(預約|約|諮詢|想問|請教|怎麼|如何|時間|時段|哪裡|地點|免費))/;
 function lookupLike_(t) {
   const s = String(t).replace(/[：:]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!s || s.length > 60 || /預約|律師/.test(s)) return null;
@@ -5615,6 +5624,10 @@ SCHEDULED_BROADCASTS.push({ id: 'notice-lawyer-1115', at: '2026-11-15T12:00:00+0
 // 里長 11/15「還有快速報修也一起」：公告改成律師諮詢＋快速報修（兩個連結各有名稱）
 SCHEDULED_BROADCASTS.push({ id: 'notice-lawyer-repair-1115', at: '2026-11-15T12:40:00+08:00', title: '網站公告：免費律師諮詢、快速報修', kind: 'siteNotice',
   text: '⚖️ 免費律師諮詢：宣品法律事務所律師 1 對 1、絕對隱私，婚姻家事、繼承、不動產、勞資、刑事都能問，每週二、三、四晚上 6–8 點 [立即預約](/lawyer/)　🔧 快速報修：路燈、水溝、坑洞、雜草，用官方 LINE 拍照報修，處理進度網站公開 [我要報修](/repair/)' });
+// 里長 11/15「提供她法律諮詢」：Sunny 私訊「要預約諮詢律師」當時沒有自動回覆，補傳律師諮詢介紹和預約按鈕
+SCHEDULED_BROADCASTS.push({ id: 'chat-lawyer-intro-1115', at: '2026-11-15T12:00:00+08:00', title: '補傳律師諮詢介紹', kind: 'chatLawyerIntro',
+  texts: ['要預約諮詢律師'], greeting: '您好，謝謝您的訊息！' });
+SCHEDULED_BROADCASTS.push({ id: 'probe-chat-lawyer-intro-1115', at: '2026-11-15T12:00:00+08:00', title: '補傳律師諮詢介紹結果', kind: 'webProbe', propKeys: ['BC_chat-lawyer-intro-1115', 'BCERR_chat-lawyer-intro-1115'] });
 // 里長 11/15「垃圾車也加進公告」：律師諮詢＋快速報修＋垃圾車幾點來
 SCHEDULED_BROADCASTS.push({ id: 'notice-lawyer-repair-garbage-1115', at: '2026-11-15T12:00:00+08:00', title: '網站公告：律師諮詢、快速報修、垃圾車', kind: 'siteNotice',
   text: '⚖️ 免費律師諮詢：宣品法律事務所律師 1 對 1、絕對隱私，每週二、三、四晚上 6–8 點 [立即預約](/lawyer/)　🔧 快速報修：路燈、水溝、坑洞、雜草，LINE 拍照就能報修 [我要報修](/repair/)　🚛 垃圾車幾點來、現在在哪 [查垃圾車](/garbage/)' });
@@ -7464,6 +7477,12 @@ function runScheduledBroadcasts() {
         try { multicast_(ownerIds_(), msgs.slice(0, 5)); } catch (err) { console.error('通知里長分派結果失敗：' + err.message); }
         return;
       }
+      if (b.kind === 'chatLawyerIntro') {
+        const r = lawyerIntroByChat_(b);
+        props.setProperty(key, 'sent ' + now_() + ' ' + String(r).slice(0, 120));
+        notifyOwner_(r);
+        return;
+      }
       if (b.kind === 'lawyerMove') {
         const r = moveBookingByChat_(b);
         props.setProperty(key, 'sent ' + now_() + ' ' + String(r).slice(0, 120));
@@ -8851,6 +8870,23 @@ function sendLawyerNotices_(entries) {
  * 程式裡不寫里民的名字或 LINE ID：用他在官方 LINE 傳過的話（m.texts，3 天內）找人，再找他還沒到的預約。
  * m：{ texts: [...], toDate, toStart, onlyAfter（原本的預約要在這天之後）, label }
  */
+/**
+ * 里長 11/15「提供她法律諮詢」：私訊說要預約律師、當時沒有自動回覆的里民，補傳律師諮詢介紹和預約按鈕。
+ * 用她在「未回覆訊息」裡的原話（最近 3 天、一字不差）找人，找到剛好一位才傳。
+ */
+function lawyerIntroByChat_(m) {
+  const since = Utilities.formatDate(new Date(Date.now() - 3 * 864e5), TZ, 'yyyy-MM-dd HH:mm');
+  const rows = readAll_('未回覆訊息').filter(x => String(x.at) >= since && x.userId && (m.texts || []).indexOf(String(x.text || '').trim()) >= 0);
+  const uids = rows.map(x => x.userId).filter((u, i, a) => a.indexOf(u) === i);
+  if (uids.length !== 1) return `⚠️ 律師諮詢介紹沒有傳出：最近 3 天傳過「${(m.texts || [])[0]}」的有 ${uids.length} 位，請在官方帳號聊天室直接回覆，或跟 Claude 說是哪一位。`;
+  const name = (rows.find(x => x.displayName) || {}).displayName || '';
+  const hi = text_((m.greeting || '您好，謝謝您的訊息！') + '以下是免費律師諮詢的介紹，點「預約時段」就能選時間預約 👇');
+  const ok = push_(uids[0], [hi].concat(lawyerIntroMessages_()).slice(0, 5)) ||
+    push_(uids[0], [hi, lawyerOpen_() ? linkButton_('免費律師諮詢，請選擇時段預約。', '查看時段並預約', liffUrl_('booking')) : text_(lawyerInfoText_())]);
+  return ok ? `✅ 已私訊${name ? '「' + name + '」' : '這位里民'}律師諮詢的介紹和預約按鈕（里民自己選時段預約，預約後律師會收到通知）`
+    : `⚠️ 律師諮詢介紹沒有傳出（LINE 拒收${name ? '，' + name : ''}），請在官方帳號聊天室直接回覆。`;
+}
+
 function moveBookingByChat_(m) {
   return withLock_(() => {
     const since = Utilities.formatDate(new Date(Date.now() - 3 * 864e5), TZ, 'yyyy-MM-dd HH:mm');
