@@ -6163,6 +6163,13 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-lingxuan-1112c', at: '2026-11-12T18:28:00
 SCHEDULED_BROADCASTS.push({ id: 'shop-remove-lingxuan-1112', at: '2026-11-12T18:26:00+08:00', title: '撤下特約商家 翎軒有鍋', kind: 'shopRemove', name: '翎軒有鍋' });
 SCHEDULED_BROADCASTS.push({ id: 'probe-shops-1112b', at: '2026-11-12T18:26:00+08:00', title: '特約商家公開資料檢查（翎軒有鍋）', kind: 'webProbe', urls: [CCS_BASE + '/api/shops'] });
 SCHEDULED_BROADCASTS.push({ id: 'probe-repair-f0020', at: '2026-11-16T09:00:00+08:00', title: 'F0020 狀態檢查', kind: 'webProbe', repairCheck: ['F0020', 'F0019', 'F0021'] });
+// 里長 11/16「F0020 報修已完成 麻煩台中市政府養工處處理完成」：先補處理照片（2 張，位置資料已拿掉），再標記完成（通知報修的里民），最後檢查
+SCHEDULED_BROADCASTS.push({ id: 'repair-done-photos-f0020', at: '2026-11-16T09:50:00+08:00', title: 'F0020 補上處理照片', kind: 'repairDonePhotos', repair: 'F0020',
+  urls: [1, 2].map(i => 'https://raw.githubusercontent.com/d75405-stack/financial-report-system/tmp-f0014-done-photos/tmp-photos/F0020-done-' + i + '.jpg') });
+SCHEDULED_BROADCASTS.push({ id: 'repair-complete-f0020', at: '2026-11-16T09:50:00+08:00', title: 'F0020 標記完成', kind: 'repairComplete', repair: 'F0020',
+  note: '已請臺中市政府養護工程處處理完成' });
+SCHEDULED_BROADCASTS.push({ id: 'probe-repair-f0020-done', at: '2026-11-16T09:50:00+08:00', title: 'F0020 完成後檢查', kind: 'webProbe', repairCheck: ['F0020'],
+  propKeys: ['BC_repair-done-photos-f0020', 'BCERR_repair-done-photos-f0020', 'BC_repair-complete-f0020', 'BCERR_repair-complete-f0020'] });
 SCHEDULED_BROADCASTS.push({ id: 'probe-shops-1112', at: '2026-11-12T14:16:00+08:00', title: '特約商家公開資料檢查', kind: 'webProbe', urls: [CCS_BASE + '/api/shops'] });
 SCHEDULED_BROADCASTS.push({ id: 'shop-offer-duck-1112', at: '2026-11-12T14:14:00+08:00', title: '鴨大哥特約優惠改內容', kind: 'shopOffer', name: '鴨大哥', offer: '隨機送一樣菜或餅皮' });
 SCHEDULED_BROADCASTS.push({ id: 'probe-repair-f14-f15', at: '2026-11-06T18:22:00+08:00', title: 'F0014、F0015 處理照片檢查', kind: 'webProbe', repairCheck: ['F0014', 'F0015'] });
@@ -7459,6 +7466,15 @@ function runScheduledBroadcasts() {
         props.setProperty(key, 'sent ' + now_() + ` ${n.before}→${n.after}`);
         notifyOwner_(`📷 ${r0.id}（${r0.category}｜${r0.location}）處理照片已補上：${n.after - n.before} 張，現在共 ${n.after} 張。\n網站處理進度看得到：${REPAIR_PAGE_URL}#${r0.id}` +
           (errs.length ? '\n⚠️ ' + errs.join('；') : ''));
+        return;
+      }
+      if (b.kind === 'repairComplete') {
+        // 里長交代標記完成（跟服務處按「已完成」一樣：處理說明記進進度、通知報修的里民和里長、網站顯示已完成）
+        const r = findRepair_(b.repair);
+        if (!r) { props.setProperty(key, 'failed ' + now_()); notifyOwner_(`⚠️ 找不到報修 ${b.repair}，沒有標記完成。`); return; }
+        if (r.status === '已完成') { props.setProperty(key, 'sent ' + now_() + ' 本來就已完成'); notifyOwner_(`${r.id} 本來就是「已完成」了（${r.rep}），沒有再改。`); return; }
+        const told = withLock_(() => completeRepair_(findRepair_(b.repair), b.note || '', '', false));
+        props.setProperty(key, 'sent ' + now_() + (told ? ' 已通知里民' : ' 里民通知沒送出'));
         return;
       }
       if (b.kind === 'repairAssign') {
