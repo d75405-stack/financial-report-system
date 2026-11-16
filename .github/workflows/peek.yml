@@ -6,7 +6,7 @@ on:
       action:
         description: 公開查詢
         type: choice
-        options: [garbage, garbageText, garbageWeb, siteGarbage, siteInfo]
+        options: [garbage, garbageText, garbageWeb, siteGarbage, siteInfo, osmRoads]
         default: garbage
       q:
         description: 關鍵字（選填）
@@ -23,6 +23,63 @@ jobs:
           ACTION: ${{ inputs.action }}
           Q: ${{ inputs.q }}
         run: |
+          if [ "$ACTION" = "osmRoads" ]; then
+            # OpenStreetMap 公開地圖：太原路沿線的路口（哪些在廍子里）、廍子里裡面的路名（排路口拜票、掃街路線用）
+            python3 - <<'PY'
+          import json, urllib.request, urllib.parse
+          def ov(q):
+              d = urllib.parse.urlencode({'data': q}).encode()
+              req = urllib.request.Request('https://overpass-api.de/api/interpreter', data=d, headers={'User-Agent': 'buzi-peek/1.0'})
+              return json.load(urllib.request.urlopen(req, timeout=180))
+          rel = ov('[out:json][timeout:90];rel["boundary"="administrative"]["name"="廍子里"];out geom;')
+          polys = []
+          for r in rel.get('elements', []):
+              print('里界：', r.get('tags', {}).get('name'), r.get('tags', {}).get('admin_level'), len(r.get('members', [])), '段')
+              for m in r.get('members', []):
+                  if m.get('type') == 'way' and m.get('role') in ('outer', '') and m.get('geometry'):
+                      polys.append([(g['lat'], g['lon']) for g in m['geometry']])
+          # 外框的線段串成一圈（簡化：把所有外框點連起來做射線法，邊界附近可能不準）
+          segs = [(a, b) for pl in polys for a, b in zip(pl, pl[1:])]
+          def inside(lat, lon):
+              if not segs: return None
+              c = False
+              for (y1, x1), (y2, x2) in segs:
+                  if (y1 > lat) != (y2 > lat) and lon < (x2 - x1) * (lat - y1) / (y2 - y1) + x1: c = not c
+              return c
+          q = '[out:json][timeout:120];area["name"="北屯區"]["boundary"="administrative"]->.bt;way(area.bt)["highway"]["name"~"^太原路"]->.ty;node(w.ty)->.tn;way(bn.tn)["highway"]->.x;(.ty;.x;);out body;>;out skel qt;'
+          d = ov(q)
+          nodes = {e['id']: (e['lat'], e['lon']) for e in d['elements'] if e['type'] == 'node'}
+          ways = [e for e in d['elements'] if e['type'] == 'way']
+          by = {}
+          for w in ways:
+              for n in w.get('nodes', []): by.setdefault(n, set()).add((w.get('tags', {}).get('name') or w.get('tags', {}).get('highway', ''), w.get('tags', {}).get('highway', '')))
+          seen = {}
+          for w in ways:
+              nm = w.get('tags', {}).get('name', '')
+              if not nm.startswith('太原路'): continue
+              for n in w.get('nodes', []):
+                  others = sorted(x[0] for x in by.get(n, ()) if not x[0].startswith('太原路') and x[1] not in ('service', 'footway', 'path', 'cycleway', 'steps', 'track'))
+                  if not others or n not in nodes: continue
+                  k = (nm, tuple(others))
+                  if k in seen: continue
+                  lat, lon = nodes[n]
+                  seen[k] = (lat, lon, inside(lat, lon))
+          print('════ 太原路的路口（北屯區）：', len(seen))
+          for (nm, others), (lat, lon, ins) in sorted(seen.items(), key=lambda kv: (kv[1][1], kv[1][0])):
+              print(f'{nm} × {"、".join(others)}｜{lat:.5f},{lon:.5f}｜{"廍子里" if ins else ("不在" if ins is False else "?")}')
+          if polys:
+              lats = [p[0] for pl in polys for p in pl]; lons = [p[1] for pl in polys for p in pl]
+              bb = f'{min(lats)},{min(lons)},{max(lats)},{max(lons)}'
+              r2 = ov(f'[out:json][timeout:120];way["highway"]["name"]({bb});out tags center;')
+              names = {}
+              for w in r2['elements']:
+                  c = w.get('center') or {}
+                  if c and inside(c['lat'], c['lon']): names[w['tags']['name']] = names.get(w['tags']['name'], 0) + 1
+              print('════ 廍子里裡面的路名：', len(names))
+              print('、'.join(sorted(names)))
+          PY
+            exit 0
+          fi
           if [ "$ACTION" = "siteInfo" ]; then
             # 網站每一頁最上面的公告、特約家數（公開資料）
             curl -sSL --max-time 60 "https://ccs2024taiwan.pages.dev/api/site-info" -w "\nAPI HTTP %{http_code}\n"
