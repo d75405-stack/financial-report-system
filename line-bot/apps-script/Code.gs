@@ -5631,6 +5631,7 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-chat-lawyer-intro-1115', at: '2026-11-15T
 // 里長 11/16「出圖用官方 LINE 給我，並給我每個位置 Google 地址」：掃街・路口拜票行程（11/17–11/27）兩張圖＋Google 地圖連結，只私訊里長
 // 路口座標來自 OpenStreetMap（Peek osmRoads），定點、起點用垃圾車清運點地址
 const GMAP_Q_ = q => 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
+SCHEDULED_BROADCASTS.push({ id: 'probe-campaign-schedule-1116', at: '2026-11-16T18:31:00+08:00', title: '拜票行程圖傳送結果', kind: 'webProbe', propKeys: ['BC_owner-campaign-schedule-1116', 'BCERR_owner-campaign-schedule-1116'] });
 SCHEDULED_BROADCASTS.push({ id: 'owner-campaign-schedule-1116', at: '2026-11-16T18:30:00+08:00', title: '掃街・路口拜票行程圖', kind: 'ownerImages',
   driveIds: ['1VLH-3XpyRwueqQ0gcNhaVJj2zXjOe8V_', '1BLkbtbYESWapwKxeh2VMzNl-RzD2AT8z'],
   texts: [
