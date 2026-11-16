@@ -6162,6 +6162,7 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-garbage-1113', at: '2026-11-13T22:09:00+0
 SCHEDULED_BROADCASTS.push({ id: 'probe-lingxuan-1112c', at: '2026-11-12T18:28:00+08:00', title: '翎軒有鍋撤下排查', kind: 'webProbe', propKeys: ['BC_shop-remove-lingxuan-1112', 'BCERR_shop-remove-lingxuan-1112'], shopGet: '翎軒有鍋' });
 SCHEDULED_BROADCASTS.push({ id: 'shop-remove-lingxuan-1112', at: '2026-11-12T18:26:00+08:00', title: '撤下特約商家 翎軒有鍋', kind: 'shopRemove', name: '翎軒有鍋' });
 SCHEDULED_BROADCASTS.push({ id: 'probe-shops-1112b', at: '2026-11-12T18:26:00+08:00', title: '特約商家公開資料檢查（翎軒有鍋）', kind: 'webProbe', urls: [CCS_BASE + '/api/shops'] });
+SCHEDULED_BROADCASTS.push({ id: 'probe-repair-f0020', at: '2026-11-16T09:00:00+08:00', title: 'F0020 狀態檢查', kind: 'webProbe', repairCheck: ['F0020', 'F0019', 'F0021'] });
 SCHEDULED_BROADCASTS.push({ id: 'probe-shops-1112', at: '2026-11-12T14:16:00+08:00', title: '特約商家公開資料檢查', kind: 'webProbe', urls: [CCS_BASE + '/api/shops'] });
 SCHEDULED_BROADCASTS.push({ id: 'shop-offer-duck-1112', at: '2026-11-12T14:14:00+08:00', title: '鴨大哥特約優惠改內容', kind: 'shopOffer', name: '鴨大哥', offer: '隨機送一樣菜或餅皮' });
 SCHEDULED_BROADCASTS.push({ id: 'probe-repair-f14-f15', at: '2026-11-06T18:22:00+08:00', title: 'F0014、F0015 處理照片檢查', kind: 'webProbe', repairCheck: ['F0014', 'F0015'] });
