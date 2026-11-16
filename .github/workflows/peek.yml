@@ -27,10 +27,19 @@ jobs:
             # OpenStreetMap 公開地圖：太原路沿線的路口（哪些在廍子里）、廍子里裡面的路名（排路口拜票、掃街路線用）
             python3 - <<'PY'
           import json, urllib.request, urllib.parse
+          import time
+          EPS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter']
           def ov(q):
               d = urllib.parse.urlencode({'data': q}).encode()
-              req = urllib.request.Request('https://overpass-api.de/api/interpreter', data=d, headers={'User-Agent': 'buzi-peek/1.0'})
-              return json.load(urllib.request.urlopen(req, timeout=180))
+              last = None
+              for k in range(8):
+                  ep = EPS[k % len(EPS)]
+                  try:
+                      req = urllib.request.Request(ep, data=d, headers={'User-Agent': 'buzi-peek/1.0'})
+                      return json.load(urllib.request.urlopen(req, timeout=180))
+                  except Exception as e:
+                      last = e; print('（重試）', ep, e); time.sleep(5)
+              raise last
           rel = ov('[out:json][timeout:90];rel["boundary"="administrative"]["name"="廍子里"];out geom;')
           polys = []
           for r in rel.get('elements', []):
