@@ -5628,6 +5628,27 @@ SCHEDULED_BROADCASTS.push({ id: 'notice-lawyer-repair-1115', at: '2026-11-15T12:
 SCHEDULED_BROADCASTS.push({ id: 'chat-lawyer-intro-1115', at: '2026-11-15T12:00:00+08:00', title: '補傳律師諮詢介紹', kind: 'chatLawyerIntro',
   texts: ['要預約諮詢律師'], greeting: '您好，謝謝您的訊息！' });
 SCHEDULED_BROADCASTS.push({ id: 'probe-chat-lawyer-intro-1115', at: '2026-11-15T12:00:00+08:00', title: '補傳律師諮詢介紹結果', kind: 'webProbe', propKeys: ['BC_chat-lawyer-intro-1115', 'BCERR_chat-lawyer-intro-1115'] });
+// 里長 11/16「出圖用官方 LINE 給我，並給我每個位置 Google 地址」：掃街・路口拜票行程（11/17–11/27）兩張圖＋Google 地圖連結，只私訊里長
+// 路口座標來自 OpenStreetMap（Peek osmRoads），定點、起點用垃圾車清運點地址
+const GMAP_Q_ = q => 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
+SCHEDULED_BROADCASTS.push({ id: 'owner-campaign-schedule-1116', at: '2026-11-16T18:30:00+08:00', title: '掃街・路口拜票行程圖', kind: 'ownerImages',
+  driveIds: ['1VLH-3XpyRwueqQ0gcNhaVJj2zXjOe8V_', '1BLkbtbYESWapwKxeh2VMzNl-RzD2AT8z'],
+  texts: [
+    ['📍 早上 7–8 路口（點連結開 Google 地圖）',
+      ['太原路×太和路（11/17、11/24）', '24.16153,120.72499'], ['太原路×祥順路（11/18）', '24.16093,120.72767'],
+      ['太原路×建和路一段（11/20）', '24.16244,120.72148'], ['太原路×樹孝路（11/23）', '24.16201,120.72311'],
+      ['太原路×祥順東路一段（11/25）', '24.16102,120.72893'], ['太原路×廍子路（11/27）', '24.16107,120.73328']]
+      .map(x => typeof x === 'string' ? x : '\n・' + x[0] + '\n' + GMAP_Q_(x[1])).join('\n'),
+    ['🌆 傍晚定點（週一二四五六）',
+      ['17:55 軍福十三路375號', '臺中市北屯區軍福十三路375號'], ['18:50–19:05 大坑圓環（東山路二段27號）', '臺中市北屯區東山路二段27號'],
+      ['19:18 廍子巷86之5號（阿山哥檳榔攤）', '臺中市北屯區廍子巷86之5號'], ['19:25 太順二街62號', '臺中市北屯區太順二街62號'],
+      '\n🚶 下午掃街起點',
+      ['太和社區：太和路二段28號（15:08）', '臺中市北屯區太和路二段28號'], ['太順社區：太原路三段1581號（15:10）', '臺中市北屯區太原路三段1581號'],
+      ['建和・和祥・松竹：太和路一段2巷40號（15:24）', '臺中市北屯區太和路一段2巷40號'], ['　接著：建和路二段28號（15:44）', '臺中市北屯區建和路二段28號'],
+      ['建軍・軍功：軍功路二段722巷66-1號（15:44）', '臺中市北屯區軍功路二段722巷66-1號'], ['祥順・太祥：祥順十街120號', '臺中市北屯區祥順十街120號'],
+      ['廍子路・廍子巷：廍子巷86之5號', '臺中市北屯區廍子巷86之5號']]
+      .map(x => typeof x === 'string' ? x : '\n・' + x[0] + '\n' + GMAP_Q_(x[1])).join('\n'),
+  ] });
 // 里長 11/15「垃圾車也加進公告」：律師諮詢＋快速報修＋垃圾車幾點來
 SCHEDULED_BROADCASTS.push({ id: 'notice-lawyer-repair-garbage-1115', at: '2026-11-15T12:00:00+08:00', title: '網站公告：律師諮詢、快速報修、垃圾車', kind: 'siteNotice',
   text: '⚖️ 免費律師諮詢：宣品法律事務所律師 1 對 1、絕對隱私，每週二、三、四晚上 6–8 點 [立即預約](/lawyer/)　🔧 快速報修：路燈、水溝、坑洞、雜草，LINE 拍照就能報修 [我要報修](/repair/)　🚛 垃圾車幾點來、現在在哪 [查垃圾車](/garbage/)' });
@@ -7466,6 +7487,20 @@ function runScheduledBroadcasts() {
         props.setProperty(key, 'sent ' + now_() + ` ${n.before}→${n.after}`);
         notifyOwner_(`📷 ${r0.id}（${r0.category}｜${r0.location}）處理照片已補上：${n.after - n.before} 張，現在共 ${n.after} 張。\n網站處理進度看得到：${REPAIR_PAGE_URL}#${r0.id}` +
           (errs.length ? '\n⚠️ ' + errs.join('；') : ''));
+        return;
+      }
+      if (b.kind === 'ownerImages') {
+        // 里長交代的圖（例：11/16 拜票行程表）：從雲端硬碟（系統檢查資料夾）讀圖，存到網站 /api/reply-img（LINE 要用網址抓圖），私訊里長
+        const urls = (b.driveIds || []).map(id => {
+          const blob = DriveApp.getFileById(id).getBlob();
+          const r = ccsApi_('/api/reply-img', { action: 'add', mime: blob.getContentType() || 'image/jpeg', data: Utilities.base64Encode(blob.getBytes()), by: '里長' });
+          if (!r.ok) throw new Error(r.error || '圖片存不進網站');
+          return CCS_BASE + '/api/reply-img?id=' + r.id;
+        });
+        const chief = readAll_('成員').filter(isActiveMember_).filter(m => m.role === '里長').map(m => m.userId);
+        const ids = chief.length ? chief : ownerIds_();
+        multicast_(ids, urls.map(u => ({ type: 'image', originalContentUrl: u, previewImageUrl: u })).concat((b.texts || []).map(t => text_(t))).slice(0, 5));
+        props.setProperty(key, 'sent ' + now_() + ` ${ids.length} 人 ${urls.length} 張 ` + urls.map(u => u.split('id=')[1]).join(','));
         return;
       }
       if (b.kind === 'repairComplete') {
