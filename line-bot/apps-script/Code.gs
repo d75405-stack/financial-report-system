@@ -5632,7 +5632,7 @@ SCHEDULED_BROADCASTS.push({ id: 'probe-chat-lawyer-intro-1115', at: '2026-11-15T
 // 路口座標來自 OpenStreetMap（Peek osmRoads），定點、起點用垃圾車清運點地址
 const GMAP_Q_ = q => 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
 SCHEDULED_BROADCASTS.push({ id: 'probe-campaign-schedule-1116', at: '2026-11-16T18:31:00+08:00', title: '拜票行程圖傳送結果', kind: 'webProbe', propKeys: ['BC_owner-campaign-schedule-1116', 'BCERR_owner-campaign-schedule-1116'] });
-SCHEDULED_BROADCASTS.push({ id: 'owner-campaign-schedule-1116', at: '2026-11-16T18:30:00+08:00', title: '掃街・路口拜票行程圖', kind: 'ownerImages',
+SCHEDULED_BROADCASTS.push({ id: 'owner-campaign-schedule-1116', at: '2026-11-16T18:30:00+08:00', title: '掃街・路口拜票行程圖', kind: 'chiefDriveImages',
   driveIds: ['1VLH-3XpyRwueqQ0gcNhaVJj2zXjOe8V_', '1BLkbtbYESWapwKxeh2VMzNl-RzD2AT8z'],
   texts: [
     ['📍 早上 7–8 路口（點連結開 Google 地圖）',
@@ -5650,6 +5650,23 @@ SCHEDULED_BROADCASTS.push({ id: 'owner-campaign-schedule-1116', at: '2026-11-16T
       ['廍子路・廍子巷：廍子巷86之5號', '臺中市北屯區廍子巷86之5號']]
       .map(x => typeof x === 'string' ? x : '\n・' + x[0] + '\n' + GMAP_Q_(x[1])).join('\n'),
   ] });
+// 里長 11/16「站路口傳 LINE 給我」：週一、二、三、五要站路口的早上 6:30，私訊里長當天的路口（Google 地圖）、下午掃街、傍晚定點
+(() => {
+  const EVE = '🌆 傍晚定點：17:55 軍福十三路375號 → 18:50 大坑圓環（停 15 分鐘）→ 19:18 廍子巷86之5號 → 19:25 太順二街62號';
+  const days = [
+    ['2026-11-17', '11/17（二）', '太原路×太和路', '24.16153,120.72499', '太和社區（15:08 垃圾車到太和路二段28號，跟著車走）', true],
+    ['2026-11-18', '11/18（三）', '太原路×祥順路', '24.16093,120.72767', '祥順・太祥（週三停收，挨家拜訪；起點祥順十街120號）', false],
+    ['2026-11-20', '11/20（五）', '太原路×建和路一段', '24.16244,120.72148', '建和・和祥・松竹（15:24 太和路一段2巷40號、15:44 建和路二段28號、16:00 軍福十五路80號）', true],
+    ['2026-11-23', '11/23（一）', '太原路×樹孝路', '24.16201,120.72311', '太順社區（15:10 太原路三段1581號、15:15 太順路8號）', true],
+    ['2026-11-24', '11/24（二）', '太原路×太和路', '24.16153,120.72499', '太和社區（15:08 垃圾車到太和路二段28號，跟著車走）', true],
+    ['2026-11-25', '11/25（三）', '太原路×祥順東路一段', '24.16102,120.72893', '祥順・太祥（週三停收，挨家拜訪；起點祥順十街120號）', false],
+    ['2026-11-27', '11/27（五）', '太原路×廍子路', '24.16107,120.73328', '廍子路・廍子巷（起點廍子巷86之5號）', true],
+  ];
+  days.forEach(([ymd, label, spot, ll, walk, eve]) => SCHEDULED_BROADCASTS.push({ id: 'chief-corner-' + ymd.slice(5).replace('-', ''), at: ymd + 'T06:30:00+08:00',
+    title: '站路口提醒 ' + label, kind: 'chiefText',
+    text: [`⏰ 早安！今天 ${label}早上 7:00–8:00 站路口`, `📍 ${spot}`, GMAP_Q_(ll), '', '今天其他行程：', `🚶 下午 3 點起掃街：${walk}`]
+      .concat(eve ? [EVE + (ymd === '2026-11-27' ? '（最後一晚，加油！）' : '')] : ['🌆 傍晚：週三停收，沒有定點']).join('\n') }));
+})();
 // 里長 11/15「垃圾車也加進公告」：律師諮詢＋快速報修＋垃圾車幾點來
 SCHEDULED_BROADCASTS.push({ id: 'notice-lawyer-repair-garbage-1115', at: '2026-11-15T12:00:00+08:00', title: '網站公告：律師諮詢、快速報修、垃圾車', kind: 'siteNotice',
   text: '⚖️ 免費律師諮詢：宣品法律事務所律師 1 對 1、絕對隱私，每週二、三、四晚上 6–8 點 [立即預約](/lawyer/)　🔧 快速報修：路燈、水溝、坑洞、雜草，LINE 拍照就能報修 [我要報修](/repair/)　🚛 垃圾車幾點來、現在在哪 [查垃圾車](/garbage/)' });
@@ -7490,7 +7507,15 @@ function runScheduledBroadcasts() {
           (errs.length ? '\n⚠️ ' + errs.join('；') : ''));
         return;
       }
-      if (b.kind === 'ownerImages') {
+      if (b.kind === 'chiefText') {
+        // 只私訊里長本人（不給其他管理員）：例如里長 11/16「站路口傳 LINE 給我」的每天早上行程提醒
+        const chief = readAll_('成員').filter(isActiveMember_).filter(m => m.role === '里長').map(m => m.userId);
+        const ids = chief.length ? chief : ownerIds_();
+        multicast_(ids, [text_(b.text)]);
+        props.setProperty(key, 'sent ' + now_() + ' ' + ids.length + ' 人');
+        return;
+      }
+      if (b.kind === 'chiefDriveImages') {
         // 里長交代的圖（例：11/16 拜票行程表）：從雲端硬碟（系統檢查資料夾）讀圖，存到網站 /api/reply-img（LINE 要用網址抓圖），私訊里長
         const urls = (b.driveIds || []).map(id => {
           const blob = DriveApp.getFileById(id).getBlob();
