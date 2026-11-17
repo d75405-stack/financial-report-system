@@ -26,6 +26,13 @@ jobs:
         run: |
           if [ -z "$CLASPRC_JSON" ]; then echo "::error::尚未設定 GitHub secret CLASPRC_JSON"; exit 1; fi
           printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
+      - name: List versions
+        # Apps Script 一個專案最多 200 個版本（滿了要在「專案記錄」刪舊版本）：先印出目前有幾個，方便看有沒有清掉
+        working-directory: line-bot/apps-script
+        run: |
+          clasp versions > /tmp/v.txt 2>&1 || true
+          head -4 /tmp/v.txt; echo '...'; tail -3 /tmp/v.txt
+          echo "版本數：$(grep -cE '^[0-9]+ - ' /tmp/v.txt)"
       - name: Push code and update deployment
         working-directory: line-bot/apps-script
         run: |
