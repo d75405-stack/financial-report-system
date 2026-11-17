@@ -5663,7 +5663,7 @@ SCHEDULED_BROADCASTS.push({ id: 'owner-campaign-schedule-1116', at: '2026-11-16T
     ['2026-11-27', '11/27（五）', '太原路×廍子路', '24.16107,120.73328', '廍子路・廍子巷（起點廍子巷86之5號）', true],
   ];
   days.forEach(([ymd, label, spot, ll, walk, eve]) => SCHEDULED_BROADCASTS.push({ id: 'chief-corner-' + ymd.slice(5).replace('-', ''), at: ymd + 'T06:30:00+08:00',
-    title: '站路口提醒 ' + label, kind: 'chiefText',
+    title: '站路口提醒 ' + label, kind: 'chiefText', until: ymd + 'T07:30:00+08:00',
     text: [`⏰ 早安！今天 ${label}早上 7:00–8:00 站路口`, `📍 ${spot}`, GMAP_Q_(ll), '', '今天其他行程：', `🚶 下午 3 點起掃街：${walk}`]
       .concat(eve ? [EVE + (ymd === '2026-11-27' ? '（最後一晚，加油！）' : '')] : ['🌆 傍晚：週三停收，沒有定點']).join('\n') }));
 })();
@@ -7253,6 +7253,8 @@ function runScheduledBroadcasts() {
       props.setProperty('BCERR_' + b.id, String(msg).slice(0, 300));
       try { append_('系統紀錄', { at: now_(), what: b.title, result: '失敗，稍後重試：' + String(msg).slice(0, 500) }); } catch (_) { /* 記錄失敗不影響 */ }
     };
+    // 有 until 的（例如站路口提醒）：過了就悄悄跳過，不發也不通知（免得下午收到「早安！今天 7:00 站路口」）
+    if (b.until && now > new Date(b.until).getTime()) { props.setProperty(key, 'skipped ' + now_() + ' 過時沒發'); return; }
     if (now > at + BROADCAST_WINDOW_MS) {
       const lastErr = prop_('BCERR_' + b.id);
       props.setProperty(key, (lastErr ? 'failed ' : 'skipped ') + now_());
