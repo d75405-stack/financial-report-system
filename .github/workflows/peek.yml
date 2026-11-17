@@ -6,7 +6,7 @@ on:
       action:
         description: 公開查詢
         type: choice
-        options: [garbage, garbageText, garbageWeb, siteGarbage, siteInfo, osmRoads]
+        options: [garbage, garbageText, garbageWeb, siteGarbage, siteInfo, osmRoads, siteRepairs]
         default: garbage
       q:
         description: 關鍵字（選填）
@@ -86,6 +86,21 @@ jobs:
                   if c and inside(c['lat'], c['lon']): names[w['tags']['name']] = names.get(w['tags']['name'], 0) + 1
               print('════ 廍子里裡面的路名：', len(names))
               print('、'.join(sorted(names)))
+          PY
+            exit 0
+          fi
+          if [ "$ACTION" = "siteRepairs" ]; then
+            # 網站「快速報修進度」公開的資料（類別、地點、處理單位、進度，沒有報修人資料）；q 寫單位名稱只列那個單位的
+            curl -sSL --max-time 90 "https://ccs2024taiwan.pages.dev/api/repairs" -o rp.json -w "API HTTP %{http_code}\n"
+            python3 - <<'PY'
+          import json, os
+          d = json.load(open('rp.json')); q = os.environ.get('Q', '')
+          L = [r for r in d.get('list', []) if not q or q in (r.get('rep') or '')]
+          print('open', d.get('open'), '｜全部', len(d.get('list', [])), '件｜符合', len(L), '件')
+          for r in L:
+              last = (r.get('log') or [])[-1:] 
+              print('・', r['id'], r['status'], '｜', r.get('rep'), '｜', r.get('category'), '｜', r.get('location'), '｜報修', r.get('createdAt'), '｜分派', r.get('assignedAt'), '｜完成', r.get('doneAt') or '-', '｜照片', r.get('photos'), '/', r.get('donePhotos'))
+              for x in (r.get('log') or []): print('    ', x.get('at'), x.get('by'), '：', (x.get('text') or '')[:120], '（完成）' if x.get('done') else '')
           PY
             exit 0
           fi
