@@ -119,8 +119,10 @@ jobs:
             'https://www.knews.com.tw/news/5EAE50FD12B78572A1CA112C0B6AD3F6',
             'https://www.genews.tw/10396/',
             'https://www.cw.com.tw/article/5143668',
+            'https://tfc-taiwan.org.tw/election2026/reports/taiwan-2026-election-voting-notice-ballots-guide',
+            'https://news.ltn.com.tw/news/politics/breakingnews/5644999',
           ]
-          OK = ('cec.gov.tw', 'taichung.gov.tw', 'cna.com.tw', 'yam.com', 'ksnews.com.tw', 'knews.com.tw', 'genews.tw', 'cw.com.tw', 'moi.gov.tw', 'ris.gov.tw')
+          OK = ('cec.gov.tw', 'taichung.gov.tw', 'cna.com.tw', 'yam.com', 'ksnews.com.tw', 'knews.com.tw', 'genews.tw', 'cw.com.tw', 'moi.gov.tw', 'ris.gov.tw', 'ltn.com.tw', 'tfc-taiwan.org.tw')
           q = os.environ.get('Q', '').strip()
           if q.startswith('https://') and urllib.parse.urlparse(q).hostname and urllib.parse.urlparse(q).hostname.endswith(OK): URLS.insert(0, q)
           KW = re.compile(r'通知單|顏色|白色|紅色|粉紅|黃色|淺|18歲|18 歲|20歲|20 歲|領票|張|公投票')
