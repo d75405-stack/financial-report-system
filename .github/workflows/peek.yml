@@ -6,7 +6,7 @@ on:
       action:
         description: 公開查詢
         type: choice
-        options: [garbage, garbageText, garbageWeb, siteGarbage, siteInfo, osmRoads, siteRepairs]
+        options: [garbage, garbageText, garbageWeb, siteGarbage, siteInfo, osmRoads, siteRepairs, cecPages]
         default: garbage
       q:
         description: 關鍵字（選填）
@@ -101,6 +101,50 @@ jobs:
               last = (r.get('log') or [])[-1:] 
               print('・', r['id'], r['status'], '｜', r.get('rep'), '｜', r.get('category'), '｜', r.get('location'), '｜報修', r.get('createdAt'), '｜分派', r.get('assignedAt'), '｜完成', r.get('doneAt') or '-', '｜照片', r.get('photos'), '/', r.get('donePhotos'))
               for x in (r.get('log') or []): print('    ', x.get('at'), x.get('by'), '：', (x.get('text') or '')[:120], '（完成）' if x.get('done') else '')
+          PY
+            exit 0
+          fi
+          if [ "$ACTION" = "cecPages" ]; then
+            # 選舉資訊頁核對用：讀中選會、臺中市選委會和新聞的公開頁面，只印出跟票、通知單、顏色、年齡有關的句子
+            # 網址固定在這裡；q 可以多給一個網址，但只接受下面這些網域
+            pip install -q pypdf >/dev/null 2>&1 || true
+            python3 - <<'PY'
+          import os, re, io, urllib.request, urllib.parse, html
+          URLS = [
+            'https://web.cec.gov.tw/api/file/3ea9497f-7945-49a2-bd4b-375e3d6f1ddf.pdf',
+            'https://info.cec.gov.tw/vote2026/static/file/ebook/index.html',
+            'https://www.cna.com.tw/news/aipl/202611105002.aspx',
+            'https://n.yam.com/Article/20261118959736',
+            'https://www.ksnews.com.tw/e/160880',
+            'https://www.knews.com.tw/news/5EAE50FD12B78572A1CA112C0B6AD3F6',
+            'https://www.genews.tw/10396/',
+            'https://www.cw.com.tw/article/5143668',
+          ]
+          OK = ('cec.gov.tw', 'taichung.gov.tw', 'cna.com.tw', 'yam.com', 'ksnews.com.tw', 'knews.com.tw', 'genews.tw', 'cw.com.tw', 'moi.gov.tw', 'ris.gov.tw')
+          q = os.environ.get('Q', '').strip()
+          if q.startswith('https://') and urllib.parse.urlparse(q).hostname and urllib.parse.urlparse(q).hostname.endswith(OK): URLS.insert(0, q)
+          KW = re.compile(r'通知單|顏色|白色|紅色|粉紅|黃色|淺|18歲|18 歲|20歲|20 歲|領票|張|公投票')
+          for u in URLS:
+              print('\n=====', u)
+              try:
+                  req = urllib.request.Request(u, headers={'User-Agent': 'Mozilla/5.0 (buzi-peek)'})
+                  raw = urllib.request.urlopen(req, timeout=60).read()
+              except Exception as e:
+                  print('讀不到：', e); continue
+              if raw[:4] == b'%PDF':
+                  try:
+                      from pypdf import PdfReader
+                      t = '\n'.join((pg.extract_text() or '') for pg in PdfReader(io.BytesIO(raw)).pages)
+                  except Exception as e:
+                      print('PDF 讀不到：', e); continue
+              else:
+                  t = raw.decode('utf-8', 'ignore')
+                  t = re.sub(r'(?is)<(script|style)[^>]*>.*?</\1>', ' ', t)
+                  t = html.unescape(re.sub(r'<[^>]+>', '\n', t))
+              lines = [re.sub(r'\s+', ' ', x).strip() for x in re.split(r'[\n。]', t)]
+              hits = [x for x in lines if x and KW.search(x) and len(x) < 400]
+              print('字數', len(t), '｜符合', len(hits), '句')
+              for x in hits[:60]: print('・', x)
           PY
             exit 0
           fi
