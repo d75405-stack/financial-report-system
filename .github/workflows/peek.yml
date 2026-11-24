@@ -267,6 +267,27 @@ jobs:
               for d in hit[:20]: show(d)
               if hit and not codes:
                   h = hit[0]; codes = [h.get(k) for k in ('prv_code', 'city_code', 'area_code', 'dept_code', 'li_code')]
+              if kind == 'profiles':
+                  # 比較用：臺中市各里的無效票比例、投票率（同額競選＝只有 1 位候選人的里）
+                  import statistics as S
+                  L = [d for d in ds if 'valid_ticket' in d and str(d.get('tbox_no')) == '0000' and str(d.get('li_code')) != '0000' and d.get('vote_ticket')]
+                  def st(name, xs):
+                      if not xs: return
+                      inv = [d['invalid_ticket'] / d['vote_ticket'] * 100 for d in xs]; vt = [d['vote_to_elect'] for d in xs]
+                      print(f'  {name}：{len(xs)} 個里｜無效票比例 平均 {S.mean(inv):.1f}%、中位數 {S.median(inv):.1f}%、最高 {max(inv):.1f}%｜投票率 平均 {S.mean(vt):.1f}%')
+                  one = [d for d in L if d.get('cand_num') == 1]; many = [d for d in L if (d.get('cand_num') or 0) > 1]
+                  print('\n==== 比較')
+                  st('臺中市 全部的里', L); st('臺中市 同額競選（1 位候選人）', one); st('臺中市 有競爭（2 位以上）', many)
+                  bt = [d for d in L if str(d.get('dept_code')) == '080']
+                  st('北屯區 全部的里', bt); st('北屯區 同額競選', [d for d in bt if d.get('cand_num') == 1])
+                  if one:
+                      r = sorted(one, key=lambda d: -d['invalid_ticket'] / d['vote_ticket'])
+                      for i, d in enumerate(r):
+                          if str(d.get('dept_code')) == '080' and str(d.get('li_code')) == '0013':
+                              print(f'  廍子里在臺中市 {len(one)} 個同額競選的里裡面，無效票比例排第 {i + 1} 高'); break
+                  print('  北屯區各里：')
+                  for d in sorted(bt, key=lambda d: d['li_code']):
+                      print(f"    {d['li_code']} {d.get('area_name')}｜候選人 {d.get('cand_num')}｜選舉人 {d['votable_population']}｜投票率 {d['vote_to_elect']}%｜無效票 {d['invalid_ticket']}（{d['invalid_ticket'] / d['vote_ticket'] * 100:.1f}%）")
           print('\n代碼：', codes)
           if codes and all(codes):
               for kind in ('tickets', 'profiles'):
