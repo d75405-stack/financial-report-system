@@ -6,7 +6,7 @@ on:
       action:
         description: 公開查詢
         type: choice
-        options: [garbage, garbageText, garbageWeb, siteGarbage, siteInfo, osmRoads, siteRepairs, cecPages, rawFetch, buziVotes]
+        options: [garbage, garbageText, garbageWeb, siteGarbage, siteInfo, osmRoads, siteRepairs, cecPages, rawFetch, buziVotes, cecDb]
         default: garbage
       q:
         description: 關鍵字（選填）
@@ -228,6 +228,48 @@ jobs:
                   pf = [r for r in rows(d + '/elprof.csv') if len(r) > 12 and key(r)]
                   print('  elprof（keys 後面：有效、無效、投票數、已領未投、發出、用餘、選舉人數、…）')
                   for r in pf: print('  所', r[5], '｜', r[6:])
+          PY
+            exit 0
+          fi
+          if [ "$ACTION" = "cecDb" ]; then
+            # 中選會選舉資料庫 db.cec.gov.tw（公開資料）：某屆村里長選舉，臺中市某個里的得票、投票率，再細到各投開票所
+            # q：「theme_id 里名」，預設 111 年村里長選舉、廍子里
+            python3 - <<'PY'
+          import os, json, urllib.request
+          a = (os.environ.get('Q', '') or '').split()
+          TH = a[0] if a else '0bd11a4b3f092aae2811741428ec3e3d'
+          LI = a[1] if len(a) > 1 else '廍子里'
+          B = 'https://db.cec.gov.tw/static/elections/data/'
+          def get(path):
+              u = B + path
+              try:
+                  return json.load(urllib.request.urlopen(urllib.request.Request(u, headers={'User-Agent': 'Mozilla/5.0 (buzi-peek)'}), timeout=120))
+              except Exception as e:
+                  print('讀不到', u, e); return None
+          def dicts(o):
+              if isinstance(o, dict):
+                  yield o
+                  for v in o.values(): yield from dicts(v)
+              elif isinstance(o, list):
+                  for v in o: yield from dicts(v)
+          def show(d): print('  ', json.dumps({k: v for k, v in d.items() if not isinstance(v, (dict, list))}, ensure_ascii=False))
+          codes = None
+          for kind in ('tickets', 'profiles'):
+              j = get(f'{kind}/ELC/V0/00/{TH}/L/66_000_00_000_0000.json')
+              if j is None: continue
+              hit = [d for d in dicts(j) if any(isinstance(v, str) and LI in v for v in d.values())]
+              print(f'\n==== {kind} 里層級（臺中市），{LI}：{len(hit)} 筆')
+              for d in hit[:20]: show(d)
+              if hit and not codes:
+                  h = hit[0]; codes = [h.get(k) for k in ('prv_code', 'city_code', 'area_code', 'dept_code', 'li_code')]
+          print('\n代碼：', codes)
+          if codes and all(codes):
+              for kind in ('tickets', 'profiles'):
+                  j = get(f'{kind}/ELC/V0/00/{TH}/T/' + '_'.join(codes) + '.json')
+                  if j is None: continue
+                  rows = [d for d in dicts(j) if any(k in d for k in ('ticket_num', 'vote_to_elect', 'elector_num', 'voter_num', 'tbox_no', 'cand_no'))]
+                  print(f'\n==== {kind} 投開票所層級：{len(rows)} 筆')
+                  for d in rows[:120]: show(d)
           PY
             exit 0
           fi
