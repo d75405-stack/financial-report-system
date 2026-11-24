@@ -270,9 +270,13 @@ jobs:
           print('\n代碼：', codes)
           if codes and all(codes):
               for kind in ('tickets', 'profiles'):
-                  j = get(f'{kind}/ELC/V0/00/{TH}/T/' + '_'.join(codes) + '.json')
+                  # 投開票所層級的檔名試幾種：這個里、這個區、整個市
+                  j = None
+                  for fn in ('_'.join(codes), '_'.join(codes[:4] + ['0000']), '_'.join(codes[:2] + ['00', '000', '0000'])):
+                      j = get(f'{kind}/ELC/V0/00/{TH}/T/{fn}.json')
+                      if j is not None: print('用', fn); break
                   if j is None: continue
-                  rows = [d for d in dicts(j) if any(k in d for k in ('ticket_num', 'vote_to_elect', 'elector_num', 'voter_num', 'tbox_no', 'cand_no'))]
+                  rows = [d for d in dicts(j) if 'tbox_no' in d and str(d.get('dept_code')) == codes[3] and str(d.get('li_code')) == codes[4]]
                   print(f'\n==== {kind} 投開票所層級：{len(rows)} 筆')
                   for d in rows[:120]: show(d)
           PY
