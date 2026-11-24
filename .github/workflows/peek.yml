@@ -155,7 +155,10 @@ jobs:
             python3 - <<'PY'
           import os, io, json, zipfile, urllib.request, urllib.parse
           OK = ('cec.gov.tw', 'data.gov.tw')
-          for u in os.environ.get('Q', '').split():
+          import re
+          toks = os.environ.get('Q', '').split()
+          G = [re.compile(t[5:]) for t in toks if t.startswith('grep=')]
+          for u in [t for t in toks if not t.startswith('grep=')]:
               h = urllib.parse.urlparse(u).hostname or ''
               print('\n=====', u)
               if not u.startswith('https://') or not h.endswith(OK): print('不接受這個網域'); continue
@@ -169,7 +172,17 @@ jobs:
                   for i in z.infolist()[:400]: print(' ', i.filename, i.file_size)
                   continue
               t = raw.decode('utf-8', 'ignore')
-              print(t[:8000])
+              if G:
+                  # grep=規則：只印出符合的地方前後一段（找網站程式裡的資料網址用）
+                  seen = set()
+                  for g in G:
+                      for m in g.finditer(t):
+                          k = t[max(0, m.start() - 150): m.end() + 150]
+                          if k in seen: continue
+                          seen.add(k); print('…', k.replace('\\n', ' '), '…')
+                          if len(seen) > 60: break
+              else:
+                  print(t[:8000])
           PY
             exit 0
           fi
@@ -194,11 +207,13 @@ jobs:
                   base = rows(d + '/elbase.csv')
               except KeyError:
                   continue
-              dist = [r for r in base if len(r) >= 6 and r[5] == '北屯區' and r[4] in ('0000', '000', '0')]
+              dist = [r for r in base if len(r) >= 6 and r[5] == '北屯區']
               hit = []
               for dr in dist:
-                  hit += [r for r in base if len(r) >= 6 and r[0] == dr[0] and r[1] == dr[1] and r[3] == dr[3] and r[5] == LI]
-              if not hit: continue
+                  hit += [r for r in base if len(r) >= 6 and r[0] == dr[0] and r[1] == dr[1] and r[3] == dr[3] and r[5] == LI and r not in hit]
+              if not hit:
+                  print('\n（' + d + ' 沒對到）北屯區：', dist[:3], '｜名字有', LI, '的：', [r for r in base if LI in ''.join(r)][:5], '｜elbase 開頭：', base[:3])
+                  continue
               print('\n════════', d)
               for v in hit:
                   key = lambda r: r[0] == v[0] and r[1] == v[1] and r[3] == v[3] and r[4] == v[4]
