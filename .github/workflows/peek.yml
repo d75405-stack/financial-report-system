@@ -6,7 +6,7 @@ on:
       action:
         description: 公開查詢
         type: choice
-        options: [garbage, garbageText, garbageWeb, siteGarbage, siteInfo, osmRoads, siteRepairs, cecPages, rawFetch]
+        options: [garbage, garbageText, garbageWeb, siteGarbage, siteInfo, osmRoads, siteRepairs, cecPages, rawFetch, buziVotes]
         default: garbage
       q:
         description: 關鍵字（選填）
@@ -170,6 +170,49 @@ jobs:
                   continue
               t = raw.decode('utf-8', 'ignore')
               print(t[:8000])
+          PY
+            exit 0
+          fi
+          if [ "$ACTION" = "buziVotes" ]; then
+            # 中選會選舉資料庫（公開資料）：歷屆北屯區廍子里里長選舉，各投開票所的得票、投票率。q 可以換里名（預設廍子里）
+            curl -sSL --max-time 600 -o vd.zip "https://data.cec.gov.tw/%E9%81%B8%E8%88%89%E8%B3%87%E6%96%99%E5%BA%AB/votedata.zip" -w "votedata.zip HTTP %{http_code} %{size_download} bytes\n"
+            python3 - <<'PY'
+          import os, io, csv, zipfile, collections
+          LI = os.environ.get('Q', '').strip() or '廍子里'
+          z = zipfile.ZipFile('vd.zip')
+          names = z.namelist()
+          dirs = sorted({n.rsplit('/', 1)[0] for n in names if n.endswith('elctks.csv') and ('村里長' in n or '里長' in n)})
+          print('村里長的資料夾：'); [print('  ', d) for d in dirs]
+          def rows(path):
+              raw = z.read(path)
+              for enc in ('utf-8-sig', 'big5', 'cp950'):
+                  try: t = raw.decode(enc); break
+                  except Exception: continue
+              return [[c.strip().lstrip("'") for c in r] for r in csv.reader(io.StringIO(t)) if r]
+          for d in dirs:
+              try:
+                  base = rows(d + '/elbase.csv')
+              except KeyError:
+                  continue
+              dist = [r for r in base if len(r) >= 6 and r[5] == '北屯區' and r[4] in ('0000', '000', '0')]
+              hit = []
+              for dr in dist:
+                  hit += [r for r in base if len(r) >= 6 and r[0] == dr[0] and r[1] == dr[1] and r[3] == dr[3] and r[5] == LI]
+              if not hit: continue
+              print('\n════════', d)
+              for v in hit:
+                  key = lambda r: r[0] == v[0] and r[1] == v[1] and r[3] == v[3] and r[4] == v[4]
+                  cand = [r for r in rows(d + '/elcand.csv') if len(r) > 6 and key(r)]
+                  print('里代碼', v[:5], v[5], '｜候選人', len(cand))
+                  for c in cand: print('  號次', c[5], c[6], '｜政黨', c[7], '｜性別', c[8], '｜年齡', c[10] if len(c) > 10 else '', '｜現任', c[13] if len(c) > 13 else '', '｜當選', c[14] if len(c) > 14 else '')
+                  tk = [r for r in rows(d + '/elctks.csv') if len(r) > 7 and key(r)]
+                  st = collections.OrderedDict()
+                  for r in tk: st.setdefault(r[5], {})[r[6]] = (r[7], r[8] if len(r) > 8 else '')
+                  print('  elctks 欄位樣本：', tk[:2])
+                  for s_, m in st.items(): print('  所', s_, '｜', '　'.join(f'{k}號 {a} 票（{b}%）' for k, (a, b) in sorted(m.items())))
+                  pf = [r for r in rows(d + '/elprof.csv') if len(r) > 12 and key(r)]
+                  print('  elprof（keys 後面：有效、無效、投票數、已領未投、發出、用餘、選舉人數、…）')
+                  for r in pf: print('  所', r[5], '｜', r[6:])
           PY
             exit 0
           fi
