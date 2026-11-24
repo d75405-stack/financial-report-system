@@ -151,6 +151,7 @@ jobs:
             exit 0
           fi
           if [ "$ACTION" = "rawFetch" ]; then
+            pip install -q pypdf >/dev/null 2>&1 || true
             # 找中選會開放資料用：q 放一個或多個網址（空白隔開，只接受中選會、政府資料開放平臺），印出開頭的內容；zip 列出裡面的檔案
             python3 - <<'PY'
           import os, io, json, zipfile, urllib.request, urllib.parse
@@ -171,7 +172,15 @@ jobs:
                   z = zipfile.ZipFile(io.BytesIO(raw))
                   for i in z.infolist()[:400]: print(' ', i.filename, i.file_size)
                   continue
-              t = raw.decode('utf-8', 'ignore')
+              if raw[:4] == b'%PDF':
+                  # PDF：抽文字（選舉公報、公告）
+                  try:
+                      from pypdf import PdfReader
+                      t = '\n'.join((pg.extract_text() or '') for pg in PdfReader(io.BytesIO(raw)).pages)
+                  except Exception as e:
+                      print('PDF 讀不到：', e); continue
+              else:
+                  t = raw.decode('utf-8', 'ignore')
               if G:
                   # grep=規則：只印出符合的地方前後一段（找網站程式裡的資料網址用）
                   seen = set()
