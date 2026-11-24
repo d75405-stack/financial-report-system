@@ -6,7 +6,7 @@ on:
       action:
         description: 公開查詢
         type: choice
-        options: [garbage, garbageText, garbageWeb, siteGarbage, siteInfo, osmRoads, siteRepairs, cecPages]
+        options: [garbage, garbageText, garbageWeb, siteGarbage, siteInfo, osmRoads, siteRepairs, cecPages, rawFetch]
         default: garbage
       q:
         description: 關鍵字（選填）
@@ -147,6 +147,29 @@ jobs:
               hits = [x for x in lines if x and KW.search(x) and len(x) < 400]
               print('字數', len(t), '｜符合', len(hits), '句')
               for x in hits[:60]: print('・', x)
+          PY
+            exit 0
+          fi
+          if [ "$ACTION" = "rawFetch" ]; then
+            # 找中選會開放資料用：q 放一個或多個網址（空白隔開，只接受中選會、政府資料開放平臺），印出開頭的內容；zip 列出裡面的檔案
+            python3 - <<'PY'
+          import os, io, json, zipfile, urllib.request, urllib.parse
+          OK = ('cec.gov.tw', 'data.gov.tw')
+          for u in os.environ.get('Q', '').split():
+              h = urllib.parse.urlparse(u).hostname or ''
+              print('\n=====', u)
+              if not u.startswith('https://') or not h.endswith(OK): print('不接受這個網域'); continue
+              try:
+                  r = urllib.request.urlopen(urllib.request.Request(u, headers={'User-Agent': 'Mozilla/5.0 (buzi-peek)'}), timeout=180)
+                  raw = r.read(); print('HTTP', r.status, r.headers.get('Content-Type'), len(raw), 'bytes')
+              except Exception as e:
+                  print('讀不到：', e); continue
+              if raw[:2] == b'PK':
+                  z = zipfile.ZipFile(io.BytesIO(raw))
+                  for i in z.infolist()[:400]: print(' ', i.filename, i.file_size)
+                  continue
+              t = raw.decode('utf-8', 'ignore')
+              print(t[:8000])
           PY
             exit 0
           fi
