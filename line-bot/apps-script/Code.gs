@@ -201,11 +201,18 @@ const HELP_TEXT = [
   '・查詢報名：查看自己的活動報名與繳費狀態',
   '・我的預約：活動報名＋法律諮詢預約',
   '・律師諮詢：免費律師諮詢介紹與預約',
-  '・公告：萬聖節活動與最新消息',
+  '・公告：快速報修、法律諮詢、特約商店',
   '・垃圾車：廍子里垃圾車今天幾點來（加路名更準，例：垃圾車 太和三街）',
   '',
   '🎃 北屯鬧起來萬聖節活動：https://ccs2024taiwan.pages.dev',
 ].join('\n');
+
+// 暫停自動回覆的時段（台灣時間）：里長 11/27「今天晚上 9 點都開始不自動回覆訊息，等 11/28 過後，11/29 凌晨 00:00 再開始回覆」
+const QUIET_FROM = '2026-11-27T21:00:00+08:00', QUIET_TO = '2026-11-29T00:00:00+08:00';
+function quietNow_() {
+  const t = Date.now();
+  return t >= new Date(QUIET_FROM).getTime() && t < new Date(QUIET_TO).getTime();
+}
 
 function handleEvent_(ev) {
   // 官方帳號被拉進／移出群組：記到「群組紀錄」（之後要推播到特定群組才知道群組 ID）
@@ -245,6 +252,15 @@ function handleEvent_(ev) {
     if (ev.type === 'message' && ev.message.type === 'text' && ev.message.text.trim().indexOf(ASSISTANT_NAME) === 0) {
       handleAssistant_(ev, uid, findMember_(uid), ev.message.text.trim(), true);
     }
+    return;
+  }
+
+  // 里長 11/27：今晚 9 點起到 11/29 00:00 不自動回覆里民（11/28 投票日）；訊息照樣記到「未回覆訊息」，11/29 起再補回。
+  // 里長、管理員、報修窗口不受影響（報修照片、全全指令照常）；群組（管理群、律師群）上面已經處理完，也不受影響。
+  if (quietNow_() && !isOwnerUser_(uid) && !repairWindowOf_(uid)) {
+    if (ev.type === 'follow') logFriend_(uid, '加入');
+    else if (ev.type === 'unfollow') { if (readAll_('好友紀錄').some(r => r.userId === uid)) logFriend_(uid, '封鎖'); }
+    else if (ev.type === 'message') logUnanswered_(uid, ev.message.type === 'text' ? ev.message.text.trim() : '（' + ev.message.type + '，暫停自動回覆期間）');
     return;
   }
 
@@ -3783,7 +3799,29 @@ const HALLOWEEN_INFO = [
   '📋 查詢自己的報名與繳費：輸入「查詢報名」',
 ].join('\n');
 
+// 里長 11/27：官方 LINE「最新公告」改成只有快速報修、法律諮詢、特約商店
+const ANNOUNCE_TEXT = [
+  '📢 最新公告',
+  '',
+  '🔧 快速報修',
+  '路燈、水溝、坑洞、雜草，點選單「快速報修」或輸入「報修」，可以附照片和定位。處理進度公開：',
+  REPAIR_PAGE_URL,
+  '',
+  '⚖️ 免費法律諮詢',
+  '律師 1 對 1、絕對隱私，輸入「律師諮詢」看時間並預約：',
+  'https://ccs2024taiwan.pages.dev/lawyer/',
+  '',
+  '🛍 特約商店',
+  '到店出示就有優惠，名單和社群 QR Code：',
+  'https://ccs2024taiwan.pages.dev/shops/',
+].join('\n');
+
 function announceMessages_(member) {
+  return [text_(ANNOUNCE_TEXT)];
+}
+
+// 舊版（萬聖節活動＋律師＋「公告」工作表的最新 5 則），11/27 起不用；留著之後要恢復時參考
+function announceMessagesOld_(member) {
   const messages = [];
   if (ymdAfter_(0) <= HALLOWEEN_INFO_UNTIL) messages.push(text_(HALLOWEEN_INFO));
   const lawyers = publicLawyers_();
@@ -4038,7 +4076,7 @@ const KNOWLEDGE_SEED = [
   ['驅魔小遊戲', '線上小遊戲有「收集闖關版」與「對戰 RPG 版」，從活動網站首頁進入即可遊玩，進度存在手機上。'],
   ['免費律師諮詢', '里辦提供免費律師諮詢，絕對隱私：莊晴全不會到場，由律師與里民 1 對 1 諮詢，無他人介入。在官方 LINE 點圖文選單「律師諮詢」或輸入「律師諮詢」即可查看時段並預約，前一天會收到提醒。輸入「我的預約」可查詢或取消。'],
   ['里民回報', '工作人員可在官方 LINE 點「回報」填寫表單（可附照片與定位）。一般里民遇到路燈、環境、治安等問題，請直接在聊天室留言描述地點與狀況，里辦會處理。'],
-  ['最新公告', '在官方 LINE 輸入「公告」可查看最新宣達事項。'],
+  ['最新公告', '在官方 LINE 輸入「公告」可以看最新公告：快速報修、免費法律諮詢、特約商店。'],
 ];
 
 function knowledgeSheet_() {
